@@ -1,0 +1,58 @@
+[project]
+name = "gpdatacached"
+dynamic = ["version"]
+description = "Redis-based cross-process data sharing and caching library"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [
+    { name = "Linnet Codes", email = "linnet.codes@gmail.com" },
+]
+keywords = ["redis", "cache", "cross-process", "data-sharing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "gpconfig>=0.3.0",
+    "gpclog>=0.2.0",
+    "redis>=5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 120
+
+[project.urls]
+Homepage = "https://github.com/linnetcodes/gpdatacached"
+Documentation = "https://linnetcodes.github.io/gpdatacached"
+Repository = "https://github.com/linnetcodes/gpdatacached"
+Issues = "https://github.com/linnetcodes/gpdatacached/issues"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/gpdatacached/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gpdatacached"]
