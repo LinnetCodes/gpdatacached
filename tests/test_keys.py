@@ -60,6 +60,14 @@ class TestURIUtils:
         uri = make_uri("d", "ns", "obj")
         assert uri_to_redis_key(uri) == make_object_key("d", "ns", "obj")
 
+    def test_uri_to_redis_key_empty_domain(self):
+        with pytest.raises(ValueError):
+            uri_to_redis_key("gpdc:///myns/myobj")
+
+    def test_uri_to_redis_key_reserved_name(self):
+        with pytest.raises(ValueError):
+            uri_to_redis_key("gpdc://domain/ns/__meta__")
+
 
 class TestValidateObjectName:
     def test_valid_names(self):
@@ -107,3 +115,7 @@ class TestValidateDomainAndNamespace:
     def test_invalid_namespace_reserved(self):
         with pytest.raises(ValueError):
             validate_namespace_name("__meta__")
+
+    def test_invalid_domain_reserved(self):
+        with pytest.raises(ValueError):
+            validate_domain_name("__meta__")
