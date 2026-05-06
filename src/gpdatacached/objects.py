@@ -145,7 +145,7 @@ class GPDCScalarObject(GPDCDataObject):
         """Encode and persist a new scalar value; update updated_at and slide TTL."""
         encoded = GPDCScalarCodec.encode_value(new_value)
         key = self._redis_key()
-        now = datetime.datetime.utcnow().isoformat()
+        now = datetime.datetime.now(datetime.UTC).isoformat()
         r = self._redis()
         r.hset(key, mapping={"value": encoded, "updated_at": now})
         if self.cache_mode == "sliding":
