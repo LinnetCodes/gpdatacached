@@ -45,6 +45,7 @@ class TestGPDCDomainInit:
 class TestGPDCDomainGetNamespace:
     def test_get_namespace_returns_namespace(self, domain):
         from gpdatacached.namespace import GPDCNamespace
+
         ns = domain.get_namespace("myns")
         assert isinstance(ns, GPDCNamespace)
         assert ns.name == "myns"

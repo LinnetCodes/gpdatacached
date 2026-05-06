@@ -1,5 +1,6 @@
 # src/gpdatacached/namespace.py
 """GPDC namespace: a dict-like logical isolation space for data objects."""
+
 from __future__ import annotations
 
 import datetime
@@ -44,9 +45,7 @@ class GPDCNamespace:
                 },
             )
         # Always register this namespace in the domain's namespace set
-        self._domain.redis.sadd(
-            make_domain_namespaces_key(self._domain.name), self._name
-        )
+        self._domain.redis.sadd(make_domain_namespaces_key(self._domain.name), self._name)
 
     @property
     def name(self) -> str:
@@ -152,6 +151,6 @@ class GPDCNamespace:
         while True:
             cursor, keys = self._redis().scan(cursor=cursor, match=pattern, count=100)
             for k in keys:
-                yield k[len(prefix):]
+                yield k[len(prefix) :]
             if cursor == 0:
                 break

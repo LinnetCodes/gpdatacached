@@ -103,16 +103,27 @@ class TestGPDCScalarCodecDecode:
 
 
 class TestGPDCScalarCodecRoundtrip:
-    @pytest.mark.parametrize("value", [
-        42, -1, 0,
-        1.5, -0.5, 3.14,
-        "hello", "hello:world", "", "with spaces",
-        True, False,
-        datetime.datetime(2024, 6, 15, 9, 0, 0),
-        datetime.date(2024, 6, 15),
-        datetime.time(9, 0, 0),
-        None,
-    ])
+    @pytest.mark.parametrize(
+        "value",
+        [
+            42,
+            -1,
+            0,
+            1.5,
+            -0.5,
+            3.14,
+            "hello",
+            "hello:world",
+            "",
+            "with spaces",
+            True,
+            False,
+            datetime.datetime(2024, 6, 15, 9, 0, 0),
+            datetime.date(2024, 6, 15),
+            datetime.time(9, 0, 0),
+            None,
+        ],
+    )
     def test_roundtrip(self, value):
         encoded = GPDCScalarCodec.encode_value(value)
         decoded = GPDCScalarCodec.decode_value(encoded)

@@ -1,5 +1,6 @@
 # src/gpdatacached/objects.py
 """GPDC data object hierarchy and scalar type registry."""
+
 from __future__ import annotations
 
 import datetime
@@ -155,6 +156,7 @@ class GPDCScalarObject(GPDCDataObject):
 
 
 # ── Scalar type subclasses ────────────────────────────────────────────────────
+
 
 class IntObject(GPDCScalarObject):
     TYPE = "scalar:int"

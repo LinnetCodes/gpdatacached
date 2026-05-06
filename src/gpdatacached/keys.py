@@ -1,4 +1,5 @@
 """Redis key builders, URI utilities, and name validators for GPDC."""
+
 from __future__ import annotations
 
 import re
@@ -44,12 +45,10 @@ def uri_to_redis_key(uri: str) -> str:
     """Convert gpdc://domain/ns/name → gpdc:domain:ns:obj:name"""
     if not uri.startswith("gpdc://"):
         raise ValueError(f"Invalid GPDC URI (must start with 'gpdc://'): {uri!r}")
-    rest = uri[len("gpdc://"):]
+    rest = uri[len("gpdc://") :]
     parts = rest.split("/")
     if len(parts) != 3:
-        raise ValueError(
-            f"Invalid GPDC URI (must be gpdc://domain/namespace/name): {uri!r}"
-        )
+        raise ValueError(f"Invalid GPDC URI (must be gpdc://domain/namespace/name): {uri!r}")
     domain, ns, name = parts
     validate_domain_name(domain)
     validate_namespace_name(ns)
@@ -63,13 +62,9 @@ _RESERVED_PATTERN = re.compile(r"^__.*__$")
 
 def _validate_name(name: str, label: str) -> None:
     if not _NAME_PATTERN.match(name):
-        raise ValueError(
-            f"Invalid {label} {name!r}: only letters, digits, '.', '_' are allowed"
-        )
+        raise ValueError(f"Invalid {label} {name!r}: only letters, digits, '.', '_' are allowed")
     if _RESERVED_PATTERN.match(name):
-        raise ValueError(
-            f"Invalid {label} {name!r}: names matching __xxx__ are reserved"
-        )
+        raise ValueError(f"Invalid {label} {name!r}: names matching __xxx__ are reserved")
 
 
 def validate_object_name(name: str) -> None:

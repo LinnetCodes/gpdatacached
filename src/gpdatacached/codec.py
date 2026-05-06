@@ -50,7 +50,7 @@ class GPDCScalarCodec(GPDCCodec):
         """Decode 'type_name:encoded_value' back to a Python scalar."""
         colon_idx = encoded.index(":")
         type_name = encoded[:colon_idx]
-        raw = encoded[colon_idx + 1:]
+        raw = encoded[colon_idx + 1 :]
 
         if type_name == "none":
             return None

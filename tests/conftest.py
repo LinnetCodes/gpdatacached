@@ -42,6 +42,7 @@ def domain_config():
 @pytest.fixture
 def domain(clean_redis, domain_config):
     from gpdatacached.domain import GPDCDomain
+
     return GPDCDomain("testdomain", domain_config)
 
 

@@ -45,10 +45,7 @@ class GPDCDomain(GPConfigurable):
         if existing is None:
             self._redis.hset(GLOBAL_META_KEY, "version", GPDC_VERSION)
         elif existing != GPDC_VERSION:
-            raise RuntimeError(
-                f"Incompatible GPDC version in Redis: {existing!r} "
-                f"(expected {GPDC_VERSION!r})"
-            )
+            raise RuntimeError(f"Incompatible GPDC version in Redis: {existing!r} (expected {GPDC_VERSION!r})")
 
     def _init_domain_meta(self) -> None:
         """Initialize domain metadata in Redis."""

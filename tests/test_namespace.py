@@ -95,6 +95,7 @@ class TestNamespaceSetItem:
 
     def test_update_changes_updated_at(self, ns, clean_redis):
         import time
+
         ns["x"] = 1
         key = make_object_key("testdomain", "testns", "x")
         updated1 = clean_redis.hget(key, "updated_at")
@@ -112,6 +113,7 @@ class TestNamespaceSetItem:
 class TestNamespaceGetItem:
     def test_get_int_returns_int_object(self, ns):
         from gpdatacached.objects import IntObject
+
         ns["n"] = 42
         obj = ns["n"]
         assert isinstance(obj, IntObject)
@@ -119,6 +121,7 @@ class TestNamespaceGetItem:
 
     def test_get_str_returns_str_object(self, ns):
         from gpdatacached.objects import StrObject
+
         ns["s"] = "hello"
         obj = ns["s"]
         assert isinstance(obj, StrObject)
@@ -126,6 +129,7 @@ class TestNamespaceGetItem:
 
     def test_get_bool_returns_bool_object(self, ns):
         from gpdatacached.objects import BoolObject
+
         ns["b"] = True
         obj = ns["b"]
         assert isinstance(obj, BoolObject)
@@ -204,6 +208,7 @@ class TestObjectValueSetter:
 
     def test_set_value_updates_updated_at(self, ns, clean_redis):
         import time
+
         ns["x"] = 1
         key = make_object_key("testdomain", "testns", "x")
         first = clean_redis.hget(key, "updated_at")
