@@ -341,3 +341,185 @@ class TestNamespaceInitWithConfig:
         meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "partial_ns"))
         assert meta["default_cache_mode"] == "sliding"
         assert meta["default_ttl_seconds"] == str(domain.get_default_ttl_seconds())
+
+
+class TestNamespaceMutableMapping:
+    """GPDCNamespace 作为 MutableMapping 子类的完整接口测试。"""
+
+    def test_is_mutablemapping(self, ns):
+        from collections.abc import MutableMapping
+
+        assert isinstance(ns, MutableMapping)
+
+    # ── __len__ ─────────────────────────────────────────────────────────────
+
+    def test_len_empty(self, ns):
+        assert len(ns) == 0
+
+    def test_len_after_set(self, ns):
+        ns["a"] = 1
+        ns["b"] = 2
+        ns["c"] = 3
+        assert len(ns) == 3
+
+    def test_len_after_delete(self, ns):
+        ns["a"] = 1
+        ns["b"] = 2
+        del ns["a"]
+        assert len(ns) == 1
+
+    def test_len_excludes_anonymous(self, ns, clean_redis):
+        """直接写入匿名对象 Redis key，验证 __len__ 不计入。"""
+        import datetime
+        from gpdatacached.keys import make_object_key_prefix
+
+        prefix = make_object_key_prefix("testdomain", "testns")
+        anon_key = prefix + "~anon:fake-uuid-0001"
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        clean_redis.hset(
+            anon_key,
+            mapping={
+                "type": "scalar:int",
+                "codec": "native",
+                "value": "int:99",
+                "cache_mode": "permanent",
+                "ttl": "",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        ns["named_obj"] = 42
+        assert len(ns) == 1  # 匿名对象不计入
+
+    # ── __iter__ 匿名过滤 ────────────────────────────────────────────────────
+
+    def test_iter_excludes_anonymous(self, ns, clean_redis):
+        """直接写入匿名对象 Redis key，验证 __iter__ 不 yield 该名称。"""
+        import datetime
+        from gpdatacached.keys import make_object_key_prefix
+
+        prefix = make_object_key_prefix("testdomain", "testns")
+        anon_key = prefix + "~anon:fake-uuid-0002"
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        clean_redis.hset(
+            anon_key,
+            mapping={
+                "type": "scalar:int",
+                "codec": "native",
+                "value": "int:7",
+                "cache_mode": "permanent",
+                "ttl": "",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        ns["real"] = 1
+        assert list(ns) == ["real"]
+
+    # ── MutableMapping mixin 方法 ────────────────────────────────────────────
+
+    def test_keys(self, ns):
+        ns["x"] = 1
+        ns["y"] = 2
+        assert set(ns.keys()) == {"x", "y"}
+
+    def test_values_are_gpdc_objects(self, ns):
+        from gpdatacached.objects import GPDCScalarObject
+
+        ns["x"] = 10
+        vals = list(ns.values())
+        assert len(vals) == 1
+        assert isinstance(vals[0], GPDCScalarObject)
+        assert vals[0].value == 10
+
+    def test_items(self, ns):
+        from gpdatacached.objects import GPDCScalarObject
+
+        ns["a"] = 1
+        ns["b"] = 2
+        items = dict(ns.items())
+        assert set(items.keys()) == {"a", "b"}
+        assert all(isinstance(v, GPDCScalarObject) for v in items.values())
+
+    def test_get_existing(self, ns):
+        from gpdatacached.objects import GPDCScalarObject
+
+        ns["x"] = 42
+        result = ns.get("x")
+        assert isinstance(result, GPDCScalarObject)
+        assert result.value == 42
+
+    def test_get_missing_returns_none(self, ns):
+        assert ns.get("nonexistent") is None
+
+    def test_get_missing_custom_default(self, ns):
+        sentinel = object()
+        assert ns.get("nonexistent", sentinel) is sentinel
+
+    def test_pop_existing(self, ns):
+        from gpdatacached.objects import GPDCScalarObject
+
+        ns["x"] = 55
+        obj = ns.pop("x")
+        assert isinstance(obj, GPDCScalarObject)
+        assert "x" not in ns
+
+    def test_pop_missing_with_default(self, ns):
+        result = ns.pop("nonexistent", None)
+        assert result is None
+
+    def test_pop_missing_no_default_raises(self, ns):
+        import pytest
+
+        with pytest.raises(KeyError):
+            ns.pop("nonexistent")
+
+    def test_update_from_dict(self, ns):
+        ns.update({"a": 1, "b": 2})
+        assert ns["a"].value == 1
+        assert ns["b"].value == 2
+        assert len(ns) == 2
+
+    def test_clear(self, ns):
+        ns["a"] = 1
+        ns["b"] = 2
+        ns.clear()
+        assert len(ns) == 0
+
+    def test_clear_only_named_objects(self, ns, clean_redis):
+        """clear() 不删除匿名对象。"""
+        import datetime
+        from gpdatacached.keys import make_object_key_prefix
+
+        prefix = make_object_key_prefix("testdomain", "testns")
+        anon_key = prefix + "~anon:fake-uuid-0003"
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        clean_redis.hset(
+            anon_key,
+            mapping={
+                "type": "scalar:int",
+                "codec": "native",
+                "value": "int:1",
+                "cache_mode": "permanent",
+                "ttl": "",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        ns["named"] = 99
+        ns.clear()
+        assert len(ns) == 0
+        assert clean_redis.exists(anon_key) == 1
+
+    def test_setdefault_missing(self, ns):
+        # MutableMapping.setdefault() returns the default value itself (not the
+        # stored GPDCScalarObject) when the key is missing. The value IS written.
+        result = ns.setdefault("x", 42)
+        assert result == 42
+        assert "x" in ns
+        assert ns["x"].value == 42
+
+    def test_setdefault_existing(self, ns):
+        ns["x"] = 10
+        result = ns.setdefault("x", 99)
+        assert result.value == 10

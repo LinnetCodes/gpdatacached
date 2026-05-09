@@ -1,8 +1,9 @@
-"""GPDC namespace: a dict-like logical isolation space for data objects."""
+"""GPDC namespace: a MutableMapping-compatible logical isolation space for data objects."""
 
 from __future__ import annotations
 
 import datetime
+from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, Iterator
 
 if TYPE_CHECKING:
@@ -21,8 +22,15 @@ from .keys import (
 from .objects import SCALAR_TYPE_CLASS_MAP, GPDCScalarObject
 
 
-class GPDCNamespace:
-    """Logical isolation space within a GPDCDomain. Provides dict-like access."""
+class GPDCNamespace(MutableMapping):
+    """Logical isolation space within a GPDCDomain.
+
+    Implements the full ``MutableMapping`` interface backed by Redis.
+    Keys are named object names; values are ``GPDCScalarObject`` instances.
+    Anonymous objects (names starting with ``~``) are stored in the same
+    Redis key space but are excluded from all public MutableMapping methods
+    (``__iter__``, ``__len__``, ``__contains__``).
+    """
 
     def __init__(
         self,
@@ -168,13 +176,26 @@ class GPDCNamespace:
         return self._redis().exists(obj_key) > 0
 
     def __iter__(self) -> Iterator[str]:
-        """Iterate over all object names using SCAN (no KEYS)."""
+        """Iterate over named object names using SCAN (no KEYS).
+
+        Anonymous objects (names starting with ``~``) are excluded.
+        """
         pattern = make_object_key(self._domain.name, self._name, "*")
         prefix = make_object_key_prefix(self._domain.name, self._name)
         cursor = 0
         while True:
             cursor, keys = self._redis().scan(cursor=cursor, match=pattern, count=100)
             for k in keys:
-                yield k[len(prefix) :]
+                name = k[len(prefix) :]
+                if not name.startswith("~"):
+                    yield name
             if cursor == 0:
                 break
+
+    def __len__(self) -> int:
+        """Return the number of named objects in this namespace.
+
+        Anonymous objects (names starting with ``~``) are not counted.
+        O(n) — iterates via SCAN.
+        """
+        return sum(1 for _ in self)
