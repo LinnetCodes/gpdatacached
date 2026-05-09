@@ -9,6 +9,7 @@ from .keys import (
     GLOBAL_META_KEY,
     GLOBAL_DOMAINS_KEY,
     make_domain_meta_key,
+    make_domain_namespaces_key,
     validate_domain_name,
 )
 
@@ -75,6 +76,25 @@ class GPDCDomain(GPConfigurable):
         from .namespace import GPDCNamespace
 
         if name not in self._namespaces:
+            self._namespaces[name] = GPDCNamespace(name, self)
+        return self._namespaces[name]
+
+    def __contains__(self, name: object) -> bool:
+        if not isinstance(name, str):
+            return False
+        return self._redis.sismember(make_domain_namespaces_key(self._name), name)
+
+    def __iter__(self):
+        return iter(self._redis.smembers(make_domain_namespaces_key(self._name)))
+
+    def __len__(self) -> int:
+        return self._redis.scard(make_domain_namespaces_key(self._name))
+
+    def __getitem__(self, name: str):
+        if not self._redis.sismember(make_domain_namespaces_key(self._name), name):
+            raise KeyError(name)
+        if name not in self._namespaces:
+            from .namespace import GPDCNamespace
             self._namespaces[name] = GPDCNamespace(name, self)
         return self._namespaces[name]
 

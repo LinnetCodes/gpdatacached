@@ -61,3 +61,121 @@ class TestGPDCDomainGetNamespace:
         assert ns1 is not ns2
         assert ns1.name == "ns1"
         assert ns2.name == "ns2"
+
+
+class TestGPDCDomainContainerProtocol:
+    def test_contains_returns_true_for_existing_namespace(self, domain):
+        domain.get_namespace("myns")
+        assert "myns" in domain
+
+    def test_contains_returns_false_for_nonexistent_namespace(self, domain):
+        assert "nonexistent" not in domain
+
+    def test_iter_yields_namespace_names(self, domain):
+        domain.get_namespace("ns1")
+        domain.get_namespace("ns2")
+        names = list(domain)
+        assert set(names) == {"ns1", "ns2"}
+
+    def test_iter_empty_domain_yields_nothing(self, domain):
+        assert list(domain) == []
+
+    def test_len_returns_namespace_count(self, domain):
+        domain.get_namespace("ns1")
+        domain.get_namespace("ns2")
+        domain.get_namespace("ns3")
+        assert len(domain) == 3
+
+    def test_len_empty_domain_is_zero(self, domain):
+        assert len(domain) == 0
+
+    def test_getitem_returns_existing_namespace(self, domain):
+        from gpdatacached.namespace import GPDCNamespace
+
+        ns = domain.get_namespace("myns")
+        result = domain["myns"]
+        assert result is ns
+        assert isinstance(result, GPDCNamespace)
+
+    def test_getitem_raises_keyerror_for_nonexistent(self, domain):
+        with pytest.raises(KeyError):
+            _ = domain["doesnotexist"]
+
+    def test_getitem_does_not_create_namespace(self, domain):
+        with pytest.raises(KeyError):
+            _ = domain["newns"]
+        assert "newns" not in domain
+
+
+class TestGPDCDomainContainerProtocolRedisSource:
+    """Container protocol methods must use Redis as authoritative source,
+    not just the in-memory session cache."""
+
+    def _make_domain(self, domain_config):
+        return GPDCDomain("testdomain", domain_config)
+
+    def test_contains_sees_namespace_registered_by_previous_session(
+        self, clean_redis, domain_config
+    ):
+        # Session 1: create namespace → writes to Redis
+        d1 = self._make_domain(domain_config)
+        d1.get_namespace("myns")
+
+        # Session 2: fresh memory cache, same Redis data
+        d2 = self._make_domain(domain_config)
+        assert "myns" in d2
+
+    def test_contains_returns_false_for_namespace_absent_from_redis(
+        self, clean_redis, domain_config
+    ):
+        d = self._make_domain(domain_config)
+        assert "ghost" not in d
+
+    def test_iter_yields_namespaces_registered_by_previous_session(
+        self, clean_redis, domain_config
+    ):
+        d1 = self._make_domain(domain_config)
+        d1.get_namespace("ns1")
+        d1.get_namespace("ns2")
+
+        d2 = self._make_domain(domain_config)
+        assert set(d2) == {"ns1", "ns2"}
+
+    def test_len_counts_namespaces_from_redis(self, clean_redis, domain_config):
+        d1 = self._make_domain(domain_config)
+        d1.get_namespace("ns1")
+        d1.get_namespace("ns2")
+
+        d2 = self._make_domain(domain_config)
+        assert len(d2) == 2
+
+    def test_getitem_returns_namespace_registered_by_previous_session(
+        self, clean_redis, domain_config
+    ):
+        from gpdatacached.namespace import GPDCNamespace
+
+        d1 = self._make_domain(domain_config)
+        d1.get_namespace("myns")
+
+        d2 = self._make_domain(domain_config)
+        ns = d2["myns"]
+        assert isinstance(ns, GPDCNamespace)
+        assert ns.name == "myns"
+
+    def test_getitem_raises_keyerror_for_namespace_absent_from_redis(
+        self, clean_redis, domain_config
+    ):
+        d = self._make_domain(domain_config)
+        with pytest.raises(KeyError):
+            _ = d["neverexisted"]
+
+    def test_getitem_does_not_register_namespace_in_redis_on_miss(
+        self, clean_redis, domain_config
+    ):
+        from gpdatacached.keys import make_domain_namespaces_key
+
+        d = self._make_domain(domain_config)
+        with pytest.raises(KeyError):
+            _ = d["ghost"]
+        members = clean_redis.smembers(make_domain_namespaces_key("testdomain"))
+        assert "ghost" not in members
