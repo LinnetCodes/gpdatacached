@@ -199,3 +199,23 @@ class GPDCNamespace(MutableMapping):
         O(n) — iterates via SCAN.
         """
         return sum(1 for _ in self)
+
+    def clear(self) -> None:
+        """Delete all objects in this namespace, including anonymous objects.
+
+        Uses SCAN + DELETE for efficiency instead of the MutableMapping default
+        of repeated ``popitem()`` calls. The namespace ``__meta__`` key is
+        preserved so the namespace remains registered and its configuration
+        intact after the operation.
+        """
+        meta_key = make_namespace_meta_key(self._domain.name, self._name)
+        pattern = f"gpdc:{self._domain.name}:{self._name}:*"
+        r = self._redis()
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match=pattern, count=100)
+            to_delete = [k for k in keys if k != meta_key]
+            if to_delete:
+                r.delete(*to_delete)
+            if cursor == 0:
+                break

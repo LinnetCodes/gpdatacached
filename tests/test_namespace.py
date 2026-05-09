@@ -486,10 +486,10 @@ class TestNamespaceMutableMapping:
         ns.clear()
         assert len(ns) == 0
 
-    def test_clear_only_named_objects(self, ns, clean_redis):
-        """clear() 不删除匿名对象。"""
+    def test_clear_also_deletes_anonymous_objects(self, ns, clean_redis):
+        """clear() 也删除匿名对象（和 namespace 下所有 key，仅保留 __meta__）。"""
         import datetime
-        from gpdatacached.keys import make_object_key_prefix
+        from gpdatacached.keys import make_namespace_meta_key, make_object_key_prefix
 
         prefix = make_object_key_prefix("testdomain", "testns")
         anon_key = prefix + "~anon:fake-uuid-0003"
@@ -509,7 +509,11 @@ class TestNamespaceMutableMapping:
         ns["named"] = 99
         ns.clear()
         assert len(ns) == 0
-        assert clean_redis.exists(anon_key) == 1
+        # 匿名对象也被删除
+        assert clean_redis.exists(anon_key) == 0
+        # __meta__ key 保留
+        meta_key = make_namespace_meta_key("testdomain", "testns")
+        assert clean_redis.exists(meta_key) == 1
 
     def test_setdefault_missing(self, ns):
         # MutableMapping.setdefault() returns the default value itself (not the
