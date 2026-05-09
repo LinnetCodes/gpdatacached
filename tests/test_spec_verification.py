@@ -31,4 +31,3 @@ class TestSpecVerification:
 
         ns["counter"] = 42
         test_ns["test_str"] = "hello, gpdc"
-

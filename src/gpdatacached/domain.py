@@ -10,7 +10,6 @@ from .keys import (
     GLOBAL_DOMAINS_KEY,
     make_domain_meta_key,
     make_domain_namespaces_key,
-    make_namespace_meta_key,
     validate_domain_name,
 )
 
@@ -69,24 +68,20 @@ class GPDCDomain(GPConfigurable):
     def _init_predefined_namespaces(self) -> None:
         """Create predefined namespaces declared in config, applying per-namespace settings.
 
-        Only writes metadata for namespaces that do not yet exist in Redis,
-        so existing namespace configuration is never overwritten.
+        Delegates config-priority logic to GPDCNamespace.__init__: if the
+        namespace does not yet exist in Redis the per-namespace config is used;
+        if it already exists the Redis metadata is left untouched.
         """
-        for ns_name, ns_cfg in self._config.namespaces.items():
-            meta_key = make_namespace_meta_key(self._name, ns_name)
-            if not self._redis.exists(meta_key):
-                cache_mode = ns_cfg.get("default_cache_mode") or self._config.default_cache_mode
-                ttl_raw = ns_cfg.get("default_ttl_seconds")
-                ttl = ttl_raw if ttl_raw is not None else self._config.default_ttl_seconds
-                self._redis.hset(
-                    meta_key,
-                    mapping={
-                        "default_cache_mode": cache_mode,
-                        "default_ttl_seconds": str(ttl),
-                    },
+        from .config import GPDCNamespaceConfig
+        from .namespace import GPDCNamespace
+
+        for ns_name, ns_cfg_dict in self._config.namespaces.items():
+            if ns_name not in self._namespaces:
+                ns_config = GPDCNamespaceConfig(
+                    default_cache_mode=ns_cfg_dict.get("default_cache_mode"),
+                    default_ttl_seconds=ns_cfg_dict.get("default_ttl_seconds"),
                 )
-            # get_namespace registers the name in the Redis namespace set and caches the instance
-            self.get_namespace(ns_name)
+                self._namespaces[ns_name] = GPDCNamespace(ns_name, self, config=ns_config)
 
     @property
     def name(self) -> str:
@@ -119,6 +114,7 @@ class GPDCDomain(GPConfigurable):
             raise KeyError(name)
         if name not in self._namespaces:
             from .namespace import GPDCNamespace
+
             self._namespaces[name] = GPDCNamespace(name, self)
         return self._namespaces[name]
 

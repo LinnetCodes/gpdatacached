@@ -1,4 +1,3 @@
-# src/gpdatacached/namespace.py
 """GPDC namespace: a dict-like logical isolation space for data objects."""
 
 from __future__ import annotations
@@ -7,6 +6,7 @@ import datetime
 from typing import TYPE_CHECKING, Iterator
 
 if TYPE_CHECKING:
+    from .config import GPDCNamespaceConfig
     from .domain import GPDCDomain
 
 from .codec import GPDCScalarCodec
@@ -24,19 +24,43 @@ from .objects import SCALAR_TYPE_CLASS_MAP, GPDCScalarObject
 class GPDCNamespace:
     """Logical isolation space within a GPDCDomain. Provides dict-like access."""
 
-    def __init__(self, name: str, domain: "GPDCDomain") -> None:
+    def __init__(
+        self,
+        name: str,
+        domain: "GPDCDomain",
+        *,
+        config: "GPDCNamespaceConfig | None" = None,
+    ) -> None:
         validate_namespace_name(name)
         self._name = name
         self._domain = domain
+        self._ns_config = config
         self._init_namespace_meta()
 
     def _init_namespace_meta(self) -> None:
-        """Write namespace metadata to Redis if not present."""
+        """Write namespace metadata to Redis if not present.
+
+        Config priority for new namespaces (metadata not yet in Redis):
+          1. Fields explicitly set in the ``config`` argument passed to ``__init__``
+          2. Domain-level defaults
+
+        If metadata already exists in Redis it is left untouched; only the
+        namespace-set registration (``sadd``) is repeated (idempotent).
+        """
         meta_key = make_namespace_meta_key(self._domain.name, self._name)
         existing = self._domain.redis.hgetall(meta_key)
         if not existing:
-            cache_mode = self._domain.get_default_cache_mode()
-            ttl = self._domain.get_default_ttl_seconds()
+            ns_cfg = self._ns_config
+            if ns_cfg is not None and ns_cfg.default_cache_mode is not None:
+                cache_mode = ns_cfg.default_cache_mode
+            else:
+                cache_mode = self._domain.get_default_cache_mode()
+
+            if ns_cfg is not None and ns_cfg.default_ttl_seconds is not None:
+                ttl = ns_cfg.default_ttl_seconds
+            else:
+                ttl = self._domain.get_default_ttl_seconds()
+
             self._domain.redis.hset(
                 meta_key,
                 mapping={

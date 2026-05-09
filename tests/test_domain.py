@@ -114,9 +114,7 @@ class TestGPDCDomainContainerProtocolRedisSource:
     def _make_domain(self, domain_config):
         return GPDCDomain("testdomain", domain_config)
 
-    def test_contains_sees_namespace_registered_by_previous_session(
-        self, clean_redis, domain_config
-    ):
+    def test_contains_sees_namespace_registered_by_previous_session(self, clean_redis, domain_config):
         # Session 1: create namespace → writes to Redis
         d1 = self._make_domain(domain_config)
         d1.get_namespace("myns")
@@ -125,15 +123,11 @@ class TestGPDCDomainContainerProtocolRedisSource:
         d2 = self._make_domain(domain_config)
         assert "myns" in d2
 
-    def test_contains_returns_false_for_namespace_absent_from_redis(
-        self, clean_redis, domain_config
-    ):
+    def test_contains_returns_false_for_namespace_absent_from_redis(self, clean_redis, domain_config):
         d = self._make_domain(domain_config)
         assert "ghost" not in d
 
-    def test_iter_yields_namespaces_registered_by_previous_session(
-        self, clean_redis, domain_config
-    ):
+    def test_iter_yields_namespaces_registered_by_previous_session(self, clean_redis, domain_config):
         d1 = self._make_domain(domain_config)
         d1.get_namespace("ns1")
         d1.get_namespace("ns2")
@@ -149,9 +143,7 @@ class TestGPDCDomainContainerProtocolRedisSource:
         d2 = self._make_domain(domain_config)
         assert len(d2) == 2
 
-    def test_getitem_returns_namespace_registered_by_previous_session(
-        self, clean_redis, domain_config
-    ):
+    def test_getitem_returns_namespace_registered_by_previous_session(self, clean_redis, domain_config):
         from gpdatacached.namespace import GPDCNamespace
 
         d1 = self._make_domain(domain_config)
@@ -162,16 +154,12 @@ class TestGPDCDomainContainerProtocolRedisSource:
         assert isinstance(ns, GPDCNamespace)
         assert ns.name == "myns"
 
-    def test_getitem_raises_keyerror_for_namespace_absent_from_redis(
-        self, clean_redis, domain_config
-    ):
+    def test_getitem_raises_keyerror_for_namespace_absent_from_redis(self, clean_redis, domain_config):
         d = self._make_domain(domain_config)
         with pytest.raises(KeyError):
             _ = d["neverexisted"]
 
-    def test_getitem_does_not_register_namespace_in_redis_on_miss(
-        self, clean_redis, domain_config
-    ):
+    def test_getitem_does_not_register_namespace_in_redis_on_miss(self, clean_redis, domain_config):
         from gpdatacached.keys import make_domain_namespaces_key
 
         d = self._make_domain(domain_config)
@@ -191,25 +179,19 @@ class TestGPDCDomainPredefinedNamespaces:
     def test_predefined_namespace_count_matches_config(self, domain_with_namespaces):
         assert len(domain_with_namespaces) == 2
 
-    def test_predefined_namespace_uses_per_namespace_cache_mode(
-        self, domain_with_namespaces, clean_redis
-    ):
+    def test_predefined_namespace_uses_per_namespace_cache_mode(self, domain_with_namespaces, clean_redis):
         from gpdatacached.keys import make_namespace_meta_key
 
         meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "ns_1"))
         assert meta["default_cache_mode"] == "ttl"
 
-    def test_predefined_namespace_uses_per_namespace_ttl(
-        self, domain_with_namespaces, clean_redis
-    ):
+    def test_predefined_namespace_uses_per_namespace_ttl(self, domain_with_namespaces, clean_redis):
         from gpdatacached.keys import make_namespace_meta_key
 
         meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "ns_1"))
         assert meta["default_ttl_seconds"] == "3600"
 
-    def test_second_predefined_namespace_uses_its_own_config(
-        self, domain_with_namespaces, clean_redis
-    ):
+    def test_second_predefined_namespace_uses_its_own_config(self, domain_with_namespaces, clean_redis):
         from gpdatacached.keys import make_namespace_meta_key
 
         meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "ns_2"))
@@ -223,9 +205,7 @@ class TestGPDCDomainPredefinedNamespaces:
         assert isinstance(ns, GPDCNamespace)
         assert ns.name == "ns_1"
 
-    def test_predefined_namespace_config_not_overwritten_on_reconnect(
-        self, clean_redis, domain_config_with_namespaces
-    ):
+    def test_predefined_namespace_config_not_overwritten_on_reconnect(self, clean_redis, domain_config_with_namespaces):
         """If namespace already exists in Redis, per-namespace config must not
         overwrite the existing metadata on a subsequent domain connection."""
         from gpdatacached.domain import GPDCDomain

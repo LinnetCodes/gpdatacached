@@ -278,3 +278,66 @@ class TestCacheModeAndTTL:
         obj = ns["x"]
         with pytest.raises(ValueError):
             obj.cache_mode = "invalid"
+
+
+class TestNamespaceInitWithConfig:
+    """GPDCNamespace.__init__ accepts an optional GPDCNamespaceConfig that
+    overrides domain defaults for new namespaces."""
+
+    def test_init_with_config_uses_per_namespace_cache_mode(self, domain, clean_redis):
+        from gpdatacached.config import GPDCNamespaceConfig
+        from gpdatacached.namespace import GPDCNamespace
+
+        cfg = GPDCNamespaceConfig(default_cache_mode="ttl", default_ttl_seconds=1800)
+        GPDCNamespace("configured_ns", domain, config=cfg)
+
+        meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "configured_ns"))
+        assert meta["default_cache_mode"] == "ttl"
+
+    def test_init_with_config_uses_per_namespace_ttl(self, domain, clean_redis):
+        from gpdatacached.config import GPDCNamespaceConfig
+        from gpdatacached.namespace import GPDCNamespace
+
+        cfg = GPDCNamespaceConfig(default_cache_mode="ttl", default_ttl_seconds=1800)
+        GPDCNamespace("configured_ns", domain, config=cfg)
+
+        meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "configured_ns"))
+        assert meta["default_ttl_seconds"] == "1800"
+
+    def test_init_without_config_uses_domain_defaults(self, domain, clean_redis):
+        from gpdatacached.namespace import GPDCNamespace
+
+        GPDCNamespace("plain_ns", domain)
+
+        meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "plain_ns"))
+        assert meta["default_cache_mode"] == domain.get_default_cache_mode()
+        assert meta["default_ttl_seconds"] == str(domain.get_default_ttl_seconds())
+
+    def test_init_prefers_redis_over_passed_config_when_namespace_exists(self, domain, clean_redis):
+        """If namespace already exists in Redis, passed-in config must be ignored."""
+        from gpdatacached.config import GPDCNamespaceConfig
+        from gpdatacached.namespace import GPDCNamespace
+
+        # First creation: uses domain defaults (permanent, 0)
+        GPDCNamespace("existing_ns", domain)
+
+        # Second creation with a conflicting config
+        cfg = GPDCNamespaceConfig(default_cache_mode="sliding", default_ttl_seconds=9999)
+        GPDCNamespace("existing_ns", domain, config=cfg)
+
+        # Redis metadata must still reflect the original (first-creation) values
+        meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "existing_ns"))
+        assert meta["default_cache_mode"] == "permanent"
+        assert meta["default_ttl_seconds"] == "0"
+
+    def test_init_partial_config_only_cache_mode_falls_back_to_domain_for_ttl(self, domain, clean_redis):
+        from gpdatacached.config import GPDCNamespaceConfig
+        from gpdatacached.namespace import GPDCNamespace
+
+        # Only cache_mode specified; default_ttl_seconds left as None
+        cfg = GPDCNamespaceConfig(default_cache_mode="sliding")
+        GPDCNamespace("partial_ns", domain, config=cfg)
+
+        meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "partial_ns"))
+        assert meta["default_cache_mode"] == "sliding"
+        assert meta["default_ttl_seconds"] == str(domain.get_default_ttl_seconds())
