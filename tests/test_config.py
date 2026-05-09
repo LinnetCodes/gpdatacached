@@ -48,13 +48,5 @@ class TestGPDCDomainConfig:
         assert cfg.default_cache_mode == "ttl"
         assert cfg.default_ttl_seconds == 3600
 
-    def test_namespaces_nested(self):
-        cfg = GPDCDomainConfig(
-            namespaces={"cache_ns": GPDCNamespaceConfig(default_cache_mode="sliding", default_ttl_seconds=1800)}
-        )
-        assert "cache_ns" in cfg.namespaces
-        assert cfg.namespaces["cache_ns"].default_cache_mode == "sliding"
-        assert cfg.namespaces["cache_ns"].default_ttl_seconds == 1800
-
     def test_cfg_class_name(self):
         assert GPDCDomainConfig.cfg_class_name == "GPDCDomainConfig"

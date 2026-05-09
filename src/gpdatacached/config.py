@@ -36,4 +36,4 @@ class GPDCDomainConfig(GPConfig):
     gc_interval_seconds: int = 300
 
     # Pre-declared namespaces
-    namespaces: dict[str, GPDCNamespaceConfig] = {}
+    namespaces: dict[str, dict] = {}
