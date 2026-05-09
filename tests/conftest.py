@@ -49,3 +49,24 @@ def domain(clean_redis, domain_config):
 @pytest.fixture
 def ns(domain):
     return domain.get_namespace("testns")
+
+
+@pytest.fixture
+def domain_config_with_namespaces():
+    return GPDCDomainConfig(
+        redis_host=REDIS_HOST,
+        redis_port=REDIS_PORT,
+        redis_db=REDIS_DB,
+        redis_password=REDIS_PASSWORD,
+        namespaces={
+            "ns_1": {"default_cache_mode": "ttl", "default_ttl_seconds": 3600},
+            "ns_2": {"default_cache_mode": "sliding", "default_ttl_seconds": 7200},
+        },
+    )
+
+
+@pytest.fixture
+def domain_with_namespaces(clean_redis, domain_config_with_namespaces):
+    from gpdatacached.domain import GPDCDomain
+
+    return GPDCDomain("testdomain", domain_config_with_namespaces)

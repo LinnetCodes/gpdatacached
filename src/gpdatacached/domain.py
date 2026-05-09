@@ -10,6 +10,7 @@ from .keys import (
     GLOBAL_DOMAINS_KEY,
     make_domain_meta_key,
     make_domain_namespaces_key,
+    make_namespace_meta_key,
     validate_domain_name,
 )
 
@@ -39,6 +40,7 @@ class GPDCDomain(GPConfigurable):
         self._redis = redis.Redis(connection_pool=pool)
         self._init_global_meta()
         self._init_domain_meta()
+        self._init_predefined_namespaces()
 
     def _init_global_meta(self) -> None:
         """Initialize or verify global GPDC metadata."""
@@ -63,6 +65,28 @@ class GPDCDomain(GPConfigurable):
             )
         # Always register this domain in the global domains set
         self._redis.sadd(GLOBAL_DOMAINS_KEY, self._name)
+
+    def _init_predefined_namespaces(self) -> None:
+        """Create predefined namespaces declared in config, applying per-namespace settings.
+
+        Only writes metadata for namespaces that do not yet exist in Redis,
+        so existing namespace configuration is never overwritten.
+        """
+        for ns_name, ns_cfg in self._config.namespaces.items():
+            meta_key = make_namespace_meta_key(self._name, ns_name)
+            if not self._redis.exists(meta_key):
+                cache_mode = ns_cfg.get("default_cache_mode") or self._config.default_cache_mode
+                ttl_raw = ns_cfg.get("default_ttl_seconds")
+                ttl = ttl_raw if ttl_raw is not None else self._config.default_ttl_seconds
+                self._redis.hset(
+                    meta_key,
+                    mapping={
+                        "default_cache_mode": cache_mode,
+                        "default_ttl_seconds": str(ttl),
+                    },
+                )
+            # get_namespace registers the name in the Redis namespace set and caches the instance
+            self.get_namespace(ns_name)
 
     @property
     def name(self) -> str:

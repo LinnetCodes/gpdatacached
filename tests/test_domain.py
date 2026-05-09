@@ -179,3 +179,66 @@ class TestGPDCDomainContainerProtocolRedisSource:
             _ = d["ghost"]
         members = clean_redis.smembers(make_domain_namespaces_key("testdomain"))
         assert "ghost" not in members
+
+
+class TestGPDCDomainPredefinedNamespaces:
+    """GPDCDomain should auto-create predefined namespaces from config on init."""
+
+    def test_predefined_namespaces_registered_in_redis(self, domain_with_namespaces):
+        assert "ns_1" in domain_with_namespaces
+        assert "ns_2" in domain_with_namespaces
+
+    def test_predefined_namespace_count_matches_config(self, domain_with_namespaces):
+        assert len(domain_with_namespaces) == 2
+
+    def test_predefined_namespace_uses_per_namespace_cache_mode(
+        self, domain_with_namespaces, clean_redis
+    ):
+        from gpdatacached.keys import make_namespace_meta_key
+
+        meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "ns_1"))
+        assert meta["default_cache_mode"] == "ttl"
+
+    def test_predefined_namespace_uses_per_namespace_ttl(
+        self, domain_with_namespaces, clean_redis
+    ):
+        from gpdatacached.keys import make_namespace_meta_key
+
+        meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "ns_1"))
+        assert meta["default_ttl_seconds"] == "3600"
+
+    def test_second_predefined_namespace_uses_its_own_config(
+        self, domain_with_namespaces, clean_redis
+    ):
+        from gpdatacached.keys import make_namespace_meta_key
+
+        meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "ns_2"))
+        assert meta["default_cache_mode"] == "sliding"
+        assert meta["default_ttl_seconds"] == "7200"
+
+    def test_predefined_namespace_accessible_via_getitem(self, domain_with_namespaces):
+        from gpdatacached.namespace import GPDCNamespace
+
+        ns = domain_with_namespaces["ns_1"]
+        assert isinstance(ns, GPDCNamespace)
+        assert ns.name == "ns_1"
+
+    def test_predefined_namespace_config_not_overwritten_on_reconnect(
+        self, clean_redis, domain_config_with_namespaces
+    ):
+        """If namespace already exists in Redis, per-namespace config must not
+        overwrite the existing metadata on a subsequent domain connection."""
+        from gpdatacached.domain import GPDCDomain
+        from gpdatacached.keys import make_namespace_meta_key
+
+        # First session: namespace created with per-namespace config (ttl=3600)
+        GPDCDomain("testdomain", domain_config_with_namespaces)
+
+        # Simulate a runtime change to namespace metadata in Redis
+        meta_key = make_namespace_meta_key("testdomain", "ns_1")
+        clean_redis.hset(meta_key, "default_ttl_seconds", "9999")
+
+        # Second session with same config: must NOT revert to 3600
+        GPDCDomain("testdomain", domain_config_with_namespaces)
+        meta = clean_redis.hgetall(meta_key)
+        assert meta["default_ttl_seconds"] == "9999"
