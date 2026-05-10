@@ -31,6 +31,16 @@ def make_object_key(domain: str, namespace: str, name: str) -> str:
     return f"gpdc:{domain}:{namespace}:obj:{name}"
 
 
+def make_raw_key(domain: str, namespace: str, name: str) -> str:
+    """Return the Redis key for raw container data."""
+    return f"gpdc:{domain}:{namespace}:raw:{name}"
+
+
+def make_ref_key(domain: str, namespace: str, name: str) -> str:
+    """Return the Redis key for reference tracking (Redis Set)."""
+    return f"gpdc:{domain}:{namespace}:ref:{name}"
+
+
 def make_object_key_prefix(domain: str, namespace: str) -> str:
     """Return the prefix for all object keys in a namespace."""
     return f"gpdc:{domain}:{namespace}:obj:"

@@ -7,6 +7,8 @@ from gpdatacached.keys import (
     make_namespace_meta_key,
     make_object_key,
     make_object_key_prefix,
+    make_raw_key,
+    make_ref_key,
     uri_to_redis_key,
     make_uri,
     validate_object_name,
@@ -38,6 +40,12 @@ class TestKeyBuilders:
 
     def test_object_key_prefix(self):
         assert make_object_key_prefix("mydomain", "myns") == "gpdc:mydomain:myns:obj:"
+
+    def test_raw_key(self):
+        assert make_raw_key("mydomain", "myns", "myobj") == "gpdc:mydomain:myns:raw:myobj"
+
+    def test_ref_key(self):
+        assert make_ref_key("mydomain", "myns", "myobj") == "gpdc:mydomain:myns:ref:myobj"
 
 
 class TestURIUtils:
