@@ -195,6 +195,11 @@ class GPDCNamespace(MutableMapping):
                 },
             )
             ListCodec.create_raw(r, raw_key, value)
+            # Spec §9.3 step 5: "创建空的 ref: set".  Redis returns an empty set
+            # for smembers() on a non-existent key, which is functionally
+            # equivalent to an explicit empty set.  No physical key creation is
+            # needed; the invariant (referrers() == set()) is satisfied by Redis
+            # semantics for missing keys.
             if cache_mode in ("ttl", "sliding") and ttl > 0:
                 r.expire(obj_key, ttl)
             return

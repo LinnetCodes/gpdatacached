@@ -79,6 +79,12 @@ class TestListCreation:
         lst.append(4)
         assert list(ns["mylist"]) == [1, 2, 3, 4]
 
+    def test_new_list_has_empty_referrers(self, ns):
+        """Spec §9.3 step 5: ref: set must be empty immediately after creation."""
+        ns["mylist"] = [1, 2, 3]
+        obj = ns["mylist"]
+        assert obj.referrers() == set()
+
 
 # ── Reference sharing ──────────────────────────────────────────────────────────
 
