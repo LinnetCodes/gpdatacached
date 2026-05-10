@@ -1,6 +1,22 @@
 import datetime
 import pytest
-from gpdatacached.codec import GPDCScalarCodec
+import redis
+from gpdatacached.codec import GPDCScalarCodec, ListCodec
+
+
+@pytest.fixture
+def r():
+    client = redis.Redis(host="127.0.0.1", port=6379, db=1, password="123456", decode_responses=True)
+    yield client
+    # cleanup handled per test
+
+
+@pytest.fixture
+def raw_key(r):
+    key = "test:listcodec:tmp"
+    r.delete(key)
+    yield key
+    r.delete(key)
 
 
 class TestGPDCScalarCodecEncode:
@@ -150,3 +166,41 @@ class TestGPDCScalarCodecTypeOf:
     def test_gpdc_type_of_date(self):
         # date must not match datetime (datetime is checked first)
         assert GPDCScalarCodec.gpdc_type_of(datetime.date(2024, 1, 1)) == "scalar:date"
+
+
+class TestListCodec:
+    def test_create_raw_scalars(self, r, raw_key):
+        ListCodec.create_raw(r, raw_key, [1, 2, 3])
+        items = r.lrange(raw_key, 0, -1)
+        assert items == ["int:1", "int:2", "int:3"]
+
+    def test_create_raw_mixed_types(self, r, raw_key):
+        ListCodec.create_raw(r, raw_key, [1, "hello", True, None])
+        items = r.lrange(raw_key, 0, -1)
+        assert items == ["int:1", "str:hello", "bool:True", "none:None"]
+
+    def test_create_raw_empty_list(self, r, raw_key):
+        ListCodec.create_raw(r, raw_key, [])
+        assert not r.exists(raw_key)
+
+    def test_read_raw_returns_correct_list(self, r, raw_key):
+        ListCodec.create_raw(r, raw_key, [1, 2, 3])
+        result = ListCodec.read_raw(r, raw_key)
+        assert result == [1, 2, 3]
+
+    def test_read_raw_missing_key_returns_empty(self, r, raw_key):
+        result = ListCodec.read_raw(r, raw_key)
+        assert result == []
+
+    def test_read_raw_mixed_types(self, r, raw_key):
+        ListCodec.create_raw(r, raw_key, [1, "hello", True, None])
+        result = ListCodec.read_raw(r, raw_key)
+        assert result == [1, "hello", True, None]
+
+    def test_delete_raw(self, r, raw_key):
+        ListCodec.create_raw(r, raw_key, [1, 2, 3])
+        ListCodec.delete_raw(r, raw_key)
+        assert not r.exists(raw_key)
+
+    def test_delete_raw_missing_key_no_error(self, r, raw_key):
+        ListCodec.delete_raw(r, raw_key)  # should not raise

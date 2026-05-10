@@ -79,3 +79,50 @@ class GPDCScalarCodec(GPDCCodec):
         encoded = cls.encode_value(value)
         type_name = encoded[: encoded.index(":")]
         return f"scalar:{type_name}"
+
+
+class GPDCContainerCodec(ABC):
+    """Abstract base class for container codecs (list, dict, etc.)."""
+
+    @classmethod
+    @abstractmethod
+    def create_raw(cls, redis, raw_key: str, value: object) -> None:
+        """Create raw data storage in Redis for the given value."""
+
+    @classmethod
+    @abstractmethod
+    def read_raw(cls, redis, raw_key: str) -> object:
+        """Restore a Python object from raw data in Redis."""
+
+    @classmethod
+    @abstractmethod
+    def delete_raw(cls, redis, raw_key: str) -> None:
+        """Delete raw data storage from Redis."""
+
+
+class ListCodec(GPDCContainerCodec):
+    """Codec for Python list values stored as Redis lists."""
+
+    @classmethod
+    def create_raw(cls, redis, raw_key: str, value: list) -> None:
+        """RPUSH all encoded elements to raw_key. Empty list → nothing pushed."""
+        if not value:
+            return
+        encoded = [GPDCScalarCodec.encode_value(item) for item in value]
+        redis.rpush(raw_key, *encoded)
+
+    @classmethod
+    def read_raw(cls, redis, raw_key: str) -> list:
+        """LRANGE 0 -1 and decode all elements. Missing key returns []."""
+        items = redis.lrange(raw_key, 0, -1)
+        result = []
+        for item in items:
+            if item.startswith("ref:"):
+                raise NotImplementedError("Reference elements are not supported in this phase")
+            result.append(GPDCScalarCodec.decode_value(item))
+        return result
+
+    @classmethod
+    def delete_raw(cls, redis, raw_key: str) -> None:
+        """DEL raw_key."""
+        redis.delete(raw_key)
