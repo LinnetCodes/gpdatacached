@@ -139,6 +139,8 @@ class GPDCNamespace(MutableMapping):
 
         # Case B: assigning a ListObject (reference sharing)
         if isinstance(value, GPDCContainerObject):
+            if value._namespace is not self:
+                raise ValueError("Cross-namespace container reference sharing is not supported")
             existing = r.hgetall(obj_key)
             if existing:
                 self._cleanup_old_container_ref(key, existing)
@@ -289,28 +291,38 @@ class GPDCNamespace(MutableMapping):
             raise KeyError(f"{key!r} not found in namespace {self._name!r}")
 
         obj_type = meta.get("type", "")
-        if obj_type.startswith("collection:"):
-            stored_raw_key = meta.get("value", "")
-            owner_name = self._owner_name_from_raw_key(stored_raw_key) if stored_raw_key else key
-            ref_key_of_this = make_ref_key(self._domain.name, self._name, key)
 
-            # If key was referencing another object, remove key from that ref set
-            if owner_name != key and stored_raw_key:
-                ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
-                r.srem(ref_owner_key, key)
-
-            # Check if anyone is referencing this object
-            referrers = r.smembers(ref_key_of_this)
+        if not obj_type.startswith("collection:"):
+            # Scalar: just delete the obj: key
             r.delete(obj_key)
+            return
+
+        # Container deletion
+        stored_raw_key = meta.get("value", "")
+        owner_name = self._owner_name_from_raw_key(stored_raw_key) if stored_raw_key else key
+        ref_key_of_this = make_ref_key(self._domain.name, self._name, key)
+
+        # Step 1: If this object is a referrer (not the owner), remove from owner's ref set
+        if owner_name != key and stored_raw_key:
+            ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
+            r.srem(ref_owner_key, key)
+
+        # Step 2: Delete this object's obj: key
+        r.delete(obj_key)
+
+        # Step 3: Only clean up raw: and ref: if this object OWNS the raw data
+        if owner_name == key:
+            # Check if anyone else references this raw data
+            referrers = r.smembers(ref_key_of_this)
             if not referrers:
-                # Safe to delete raw and ref keys
+                # No one references it — safe to delete raw and ref
                 if stored_raw_key:
                     r.delete(stored_raw_key)
                 r.delete(ref_key_of_this)
+            # If referrers exist, leave raw: and ref: intact (referrers still need it)
         else:
-            deleted = r.delete(obj_key)
-            if deleted == 0:
-                raise KeyError(f"{key!r} not found in namespace {self._name!r}")
+            # This was a referrer, not an owner — just delete its own ref: key
+            r.delete(ref_key_of_this)
 
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):

@@ -208,6 +208,23 @@ class TestDeletion:
         ref_a = make_ref_key(DOMAIN, NS, "a")
         assert "b" not in r.smembers(ref_a)
 
+    def test_delete_referrer_leaves_raw_data_intact(self, ns, r):
+        """Deleting a referencing object must NOT delete the shared raw data."""
+        ns["a"] = [1, 2, 3]
+        ns["b"] = ns["a"]
+
+        raw_key_a = r.hget(make_object_key(DOMAIN, NS, "a"), "value")
+
+        del ns["b"]
+
+        # raw:a must still exist
+        assert r.exists(raw_key_a) == 1
+        assert r.lrange(raw_key_a, 0, -1) == ["int:1", "int:2", "int:3"]
+
+        # a is still accessible
+        lst = ns["a"]
+        assert list(lst) == [1, 2, 3]
+
     def test_delete_nonexistent_raises_key_error(self, ns):
         with pytest.raises(KeyError):
             del ns["nonexistent"]

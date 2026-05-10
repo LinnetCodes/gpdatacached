@@ -312,6 +312,9 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         if index < 0 or index >= length:
             raise IndexError("list assignment index out of range")
         sentinel = f"__del_sentinel_{uuid.uuid4().hex}__"
+        # The sentinel is intentionally stored as a raw string (not encoded with GPDCScalarCodec)
+        # so that LREM can match it exactly without knowing element types.
+        # A UUID4 sentinel cannot collide with encoded values (which always start with "type:").
         r.lset(self.raw_key, index, sentinel)
         r.lrem(self.raw_key, 1, sentinel)
         self._touch()
