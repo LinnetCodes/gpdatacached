@@ -1,8 +1,7 @@
 import datetime
-import pytest
 
 from gpdatacached import GPDCNamespace
-from gpdatacached.keys import GLOBAL_META_KEY, make_domain_meta_key, make_namespace_meta_key, make_object_key
+from gpdatacached.keys import GLOBAL_META_KEY
 
 
 class TestSpecVerification:
@@ -40,20 +39,35 @@ class TestSpecVerification:
 
         assert len(ns) == 8
         for name in ns:
-            assert name in {"test_int", "test_float", "test_bool", "test_str",
-                            "test_datetime", "test_date", "test_time", "test_none"}
-        for name in {"test_int", "test_float", "test_bool", "test_str",
-                     "test_datetime", "test_date", "test_time", "test_none"}:
+            assert name in {
+                "test_int",
+                "test_float",
+                "test_bool",
+                "test_str",
+                "test_datetime",
+                "test_date",
+                "test_time",
+                "test_none",
+            }
+        for name in {
+            "test_int",
+            "test_float",
+            "test_bool",
+            "test_str",
+            "test_datetime",
+            "test_date",
+            "test_time",
+            "test_none",
+        }:
             assert name in ns
-        assert ns["test_int"].value == 42
-        assert ns["test_float"].value == 42.2
-        assert ns["test_bool"].value == True
-        assert ns["test_str"].value == "hello, world"
-        assert ns["test_datetime"].value == datetime.datetime(2020, 1, 2)
-        assert ns["test_date"].value == datetime.date(2020, 1, 1)
-        assert ns["test_time"].value == datetime.time(0, 0, 0)
-        assert ns["test_none"].value is None
-
+        assert ns["test_int"] == 42
+        assert ns["test_float"] == 42.2
+        assert ns["test_bool"] is True
+        assert ns["test_str"] == "hello, world"
+        assert ns["test_datetime"] == datetime.datetime(2020, 1, 2)
+        assert ns["test_date"] == datetime.date(2020, 1, 1)
+        assert ns["test_time"] == datetime.time(0, 0, 0)
+        assert ns["test_none"] is None
 
         test_ns.setdefault("test_setdefault", "hello, default")
-        assert test_ns["test_setdefault"].value == "hello, default"
+        assert test_ns["test_setdefault"] == "hello, default"

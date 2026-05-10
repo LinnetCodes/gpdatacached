@@ -51,23 +51,22 @@ class TestNamespaceSetItem:
 
     def test_set_float(self, ns):
         ns["ratio"] = 3.14
-        obj = ns["ratio"]
-        assert abs(obj.value - 3.14) < 1e-9
+        assert abs(ns["ratio"] - 3.14) < 1e-9
 
     def test_set_datetime(self, ns):
         dt = datetime.datetime(2024, 6, 15, 9, 0, 0)
         ns["ts"] = dt
-        assert ns["ts"].value == dt
+        assert ns["ts"] == dt
 
     def test_set_date(self, ns):
         d = datetime.date(2024, 6, 15)
         ns["day"] = d
-        assert ns["day"].value == d
+        assert ns["day"] == d
 
     def test_set_time(self, ns):
         t = datetime.time(9, 30, 0)
         ns["t"] = t
-        assert ns["t"].value == t
+        assert ns["t"] == t
 
     def test_set_invalid_name_raises(self, ns):
         with pytest.raises(ValueError):
@@ -107,54 +106,75 @@ class TestNamespaceSetItem:
     def test_update_changes_value(self, ns):
         ns["x"] = 10
         ns["x"] = 99
-        assert ns["x"].value == 99
+        assert ns["x"] == 99
 
 
 class TestNamespaceGetItem:
-    def test_get_int_returns_int_object(self, ns):
-        from gpdatacached.objects import IntObject
-
+    def test_get_int_returns_native_value(self, ns):
         ns["n"] = 42
-        obj = ns["n"]
-        assert isinstance(obj, IntObject)
-        assert obj.value == 42
+        assert ns["n"] == 42
+        assert isinstance(ns["n"], int)
 
-    def test_get_str_returns_str_object(self, ns):
-        from gpdatacached.objects import StrObject
-
+    def test_get_str_returns_native_value(self, ns):
         ns["s"] = "hello"
-        obj = ns["s"]
-        assert isinstance(obj, StrObject)
-        assert obj.value == "hello"
+        assert ns["s"] == "hello"
+        assert isinstance(ns["s"], str)
 
-    def test_get_bool_returns_bool_object(self, ns):
-        from gpdatacached.objects import BoolObject
-
+    def test_get_bool_returns_native_value(self, ns):
         ns["b"] = True
-        obj = ns["b"]
-        assert isinstance(obj, BoolObject)
-        assert obj.value is True
+        assert ns["b"] is True
+        assert isinstance(ns["b"], bool)
 
     def test_get_missing_key_raises(self, ns):
         with pytest.raises(KeyError):
             _ = ns["nonexistent"]
 
-    def test_get_returns_correct_uri(self, ns):
-        ns["counter"] = 1
-        obj = ns["counter"]
-        assert obj.uri == "gpdc://testdomain/testns/counter"
-
-    def test_get_returns_correct_name(self, ns):
-        ns["counter"] = 1
-        obj = ns["counter"]
-        assert obj.name == "counter"
-
     def test_value_copy_semantics(self, ns):
         ns["a"] = 10
-        ns["b"] = ns["a"]  # ns["a"] is an IntObject; its Python value is copied
-        assert ns["b"].value == 10
+        ns["b"] = ns["a"]
+        assert ns["b"] == 10
         ns["b"] = 20
-        assert ns["a"].value == 10  # a is unaffected
+        assert ns["a"] == 10
+
+
+class TestGetObject:
+    def test_get_object_existing_returns_scalar_object(self, ns):
+        from gpdatacached.objects import IntObject
+
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        assert isinstance(obj, IntObject)
+        assert obj.value == 42
+
+    def test_get_object_missing_raises(self, ns):
+        with pytest.raises(KeyError):
+            ns.get_object("nonexistent")
+
+    def test_get_object_with_native_default_creates_and_returns(self, ns):
+        obj = ns.get_object("new_key", 99)
+        assert obj.value == 99
+        assert "new_key" in ns
+
+    def test_get_object_with_gpdc_object_default_unwraps(self, ns):
+        ns["src"] = 10
+        obj = ns.get_object("copy", ns.get_object("src"))
+        assert obj.value == 10
+        assert "copy" in ns
+
+    def test_get_object_existing_ignores_default(self, ns):
+        ns["x"] = 42
+        obj = ns.get_object("x", 999)
+        assert obj.value == 42
+
+    def test_get_object_returns_correct_uri(self, ns):
+        ns["counter"] = 1
+        obj = ns.get_object("counter")
+        assert obj.uri == "gpdc://testdomain/testns/counter"
+
+    def test_get_object_returns_correct_name(self, ns):
+        ns["counter"] = 1
+        obj = ns.get_object("counter")
+        assert obj.name == "counter"
 
 
 class TestNamespaceDelItem:
@@ -201,10 +221,9 @@ class TestNamespaceIter:
 class TestObjectValueSetter:
     def test_set_value_via_obj(self, ns):
         ns["x"] = 10
-        obj = ns["x"]
+        obj = ns.get_object("x")
         obj.value = 99
-        # Re-read from Redis
-        assert ns["x"].value == 99
+        assert ns["x"] == 99
 
     def test_set_value_updates_updated_at(self, ns, clean_redis):
         import time
@@ -213,7 +232,7 @@ class TestObjectValueSetter:
         key = make_object_key("testdomain", "testns", "x")
         first = clean_redis.hget(key, "updated_at")
         time.sleep(0.01)
-        obj = ns["x"]
+        obj = ns.get_object("x")
         obj.value = 2
         second = clean_redis.hget(key, "updated_at")
         assert second >= first
@@ -222,18 +241,18 @@ class TestObjectValueSetter:
 class TestCacheModeAndTTL:
     def test_default_cache_mode_is_permanent(self, ns):
         ns["x"] = 1
-        obj = ns["x"]
+        obj = ns.get_object("x")
         assert obj.cache_mode == "permanent"
 
     def test_set_cache_mode_ttl(self, ns):
         ns["x"] = 1
-        obj = ns["x"]
+        obj = ns.get_object("x")
         obj.cache_mode = "ttl"
-        assert ns["x"].cache_mode == "ttl"
+        assert ns.get_object("x").cache_mode == "ttl"
 
     def test_set_ttl_applies_expire(self, ns, clean_redis):
         ns["x"] = 1
-        obj = ns["x"]
+        obj = ns.get_object("x")
         obj.cache_mode = "ttl"
         obj.ttl = 60
         key = make_object_key("testdomain", "testns", "x")
@@ -242,21 +261,21 @@ class TestCacheModeAndTTL:
 
     def test_persist_removes_ttl(self, ns, clean_redis):
         ns["x"] = 1
-        obj = ns["x"]
+        obj = ns.get_object("x")
         obj.cache_mode = "ttl"
         obj.ttl = 60
         obj.persist()
         key = make_object_key("testdomain", "testns", "x")
-        assert clean_redis.ttl(key) == -1  # permanent
+        assert clean_redis.ttl(key) == -1
 
     def test_remaining_ttl_permanent(self, ns):
         ns["x"] = 1
-        obj = ns["x"]
+        obj = ns.get_object("x")
         assert obj.remaining_ttl() == -1
 
     def test_expire_in(self, ns, clean_redis):
         ns["x"] = 1
-        obj = ns["x"]
+        obj = ns.get_object("x")
         obj.expire_in(100)
         key = make_object_key("testdomain", "testns", "x")
         remaining = clean_redis.ttl(key)
@@ -264,10 +283,9 @@ class TestCacheModeAndTTL:
 
     def test_sliding_mode_resets_ttl_on_write(self, ns, clean_redis):
         ns["x"] = 1
-        obj = ns["x"]
+        obj = ns.get_object("x")
         obj.cache_mode = "sliding"
         obj.ttl = 300
-        # Write new value → TTL should be reset
         obj.value = 2
         key = make_object_key("testdomain", "testns", "x")
         remaining = clean_redis.ttl(key)
@@ -275,7 +293,7 @@ class TestCacheModeAndTTL:
 
     def test_invalid_cache_mode_raises(self, ns):
         ns["x"] = 1
-        obj = ns["x"]
+        obj = ns.get_object("x")
         with pytest.raises(ValueError):
             obj.cache_mode = "invalid"
 
@@ -423,31 +441,24 @@ class TestNamespaceMutableMapping:
         ns["y"] = 2
         assert set(ns.keys()) == {"x", "y"}
 
-    def test_values_are_gpdc_objects(self, ns):
-        from gpdatacached.objects import GPDCScalarObject
-
+    def test_values_are_native_values(self, ns):
         ns["x"] = 10
         vals = list(ns.values())
         assert len(vals) == 1
-        assert isinstance(vals[0], GPDCScalarObject)
-        assert vals[0].value == 10
+        assert vals[0] == 10
 
     def test_items(self, ns):
-        from gpdatacached.objects import GPDCScalarObject
-
         ns["a"] = 1
         ns["b"] = 2
         items = dict(ns.items())
         assert set(items.keys()) == {"a", "b"}
-        assert all(isinstance(v, GPDCScalarObject) for v in items.values())
+        assert items["a"] == 1
+        assert items["b"] == 2
 
     def test_get_existing(self, ns):
-        from gpdatacached.objects import GPDCScalarObject
-
         ns["x"] = 42
         result = ns.get("x")
-        assert isinstance(result, GPDCScalarObject)
-        assert result.value == 42
+        assert result == 42
 
     def test_get_missing_returns_none(self, ns):
         assert ns.get("nonexistent") is None
@@ -457,11 +468,9 @@ class TestNamespaceMutableMapping:
         assert ns.get("nonexistent", sentinel) is sentinel
 
     def test_pop_existing(self, ns):
-        from gpdatacached.objects import GPDCScalarObject
-
         ns["x"] = 55
-        obj = ns.pop("x")
-        assert isinstance(obj, GPDCScalarObject)
+        result = ns.pop("x")
+        assert result == 55
         assert "x" not in ns
 
     def test_pop_missing_with_default(self, ns):
@@ -476,8 +485,8 @@ class TestNamespaceMutableMapping:
 
     def test_update_from_dict(self, ns):
         ns.update({"a": 1, "b": 2})
-        assert ns["a"].value == 1
-        assert ns["b"].value == 2
+        assert ns["a"] == 1
+        assert ns["b"] == 2
         assert len(ns) == 2
 
     def test_clear(self, ns):
@@ -516,14 +525,12 @@ class TestNamespaceMutableMapping:
         assert clean_redis.exists(meta_key) == 1
 
     def test_setdefault_missing(self, ns):
-        # MutableMapping.setdefault() returns the default value itself (not the
-        # stored GPDCScalarObject) when the key is missing. The value IS written.
         result = ns.setdefault("x", 42)
         assert result == 42
         assert "x" in ns
-        assert ns["x"].value == 42
+        assert ns["x"] == 42
 
     def test_setdefault_existing(self, ns):
         ns["x"] = 10
         result = ns.setdefault("x", 99)
-        assert result.value == 10
+        assert result == 10

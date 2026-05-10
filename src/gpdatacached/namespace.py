@@ -21,12 +21,15 @@ from .keys import (
 )
 from .objects import SCALAR_TYPE_CLASS_MAP, GPDCScalarObject
 
+_MISSING = object()
+
 
 class GPDCNamespace(MutableMapping):
     """Logical isolation space within a GPDCDomain.
 
     Implements the full ``MutableMapping`` interface backed by Redis.
-    Keys are named object names; values are ``GPDCScalarObject`` instances.
+    Keys are named object names; ``__getitem__`` returns Python native values.
+    Use ``get_object()`` to retrieve ``GPDCScalarObject`` instances.
     Anonymous objects (names starting with ``~``) are stored in the same
     Redis key space but are excluded from all public MutableMapping methods
     (``__iter__``, ``__len__``, ``__contains__``).
@@ -147,7 +150,7 @@ class GPDCNamespace(MutableMapping):
                 pipe.expire(obj_key, ttl)
             pipe.execute()
 
-    def __getitem__(self, key: str) -> GPDCScalarObject:
+    def _get_object(self, key: str) -> GPDCScalarObject:
         validate_object_name(key)
         obj_key = make_object_key(self._domain.name, self._name, key)
         type_str = self._redis().hget(obj_key, "type")
@@ -157,6 +160,18 @@ class GPDCNamespace(MutableMapping):
         if cls is None:
             raise ValueError(f"Unknown GPDC type: {type_str!r}")
         return cls(key, self)
+
+    def __getitem__(self, key: str):
+        return self._get_object(key).value
+
+    def get_object(self, key: str, default=_MISSING):
+        try:
+            return self._get_object(key)
+        except KeyError:
+            if default is _MISSING:
+                raise
+            self[key] = default
+            return self._get_object(key)
 
     def __delitem__(self, key: str) -> None:
         validate_object_name(key)

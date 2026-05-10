@@ -44,17 +44,16 @@ class TestSpecSection12ReadScalarObject:
 
     def test_read_type(self, ns):
         ns["counter"] = 42
-        obj = ns["counter"]
+        obj = ns.get_object("counter")
         assert obj.type == "scalar:int"
 
     def test_read_value(self, ns):
         ns["counter"] = 42
-        obj = ns["counter"]
-        assert obj.value == 42
+        assert ns["counter"] == 42
 
     def test_read_uri(self, ns):
         ns["counter"] = 42
-        obj = ns["counter"]
+        obj = ns.get_object("counter")
         assert obj.uri == "gpdc://testdomain/testns/counter"
 
 
@@ -64,13 +63,13 @@ class TestSpecSection12UpdateScalarObject:
     def test_update_via_namespace_setitem(self, ns):
         ns["counter"] = 42
         ns["counter"] = 100
-        assert ns["counter"].value == 100
+        assert ns["counter"] == 100
 
     def test_update_via_obj_value_setter(self, ns):
         ns["counter"] = 42
-        obj = ns["counter"]
+        obj = ns.get_object("counter")
         obj.value = 100
-        assert ns["counter"].value == 100
+        assert ns["counter"] == 100
 
 
 class TestSpecSection12DeleteScalarObject:
@@ -94,14 +93,14 @@ class TestSpecSection9CopySemantics:
     def test_assign_from_object_copies_value(self, ns):
         ns["a"] = 10
         ns["b"] = ns["a"]
-        assert ns["b"].value == 10
+        assert ns["b"] == 10
 
     def test_copies_are_independent(self, ns):
         ns["a"] = 10
         ns["b"] = ns["a"]
         ns["b"] = 20
-        assert ns["a"].value == 10
-        assert ns["b"].value == 20
+        assert ns["a"] == 10
+        assert ns["b"] == 20
 
     def test_copy_creates_separate_redis_keys(self, ns, clean_redis):
         ns["a"] = 10
@@ -118,7 +117,7 @@ class TestSpecSection12CacheModeExamples:
 
     def test_ttl_mode_sets_expiry(self, ns, clean_redis):
         ns["temp"] = 42
-        obj = ns["temp"]
+        obj = ns.get_object("temp")
         obj.cache_mode = "ttl"
         obj.ttl = 60
         key = make_object_key("testdomain", "testns", "temp")
@@ -127,17 +126,17 @@ class TestSpecSection12CacheModeExamples:
 
     def test_sliding_mode_resets_on_write(self, ns, clean_redis):
         ns["temp"] = 42
-        obj = ns["temp"]
+        obj = ns.get_object("temp")
         obj.cache_mode = "sliding"
         obj.ttl = 300
-        obj.value = 43  # Write triggers TTL reset
+        obj.value = 43
         key = make_object_key("testdomain", "testns", "temp")
         remaining = clean_redis.ttl(key)
         assert 295 <= remaining <= 300
 
     def test_permanent_mode_no_expiry(self, ns, clean_redis):
         ns["perm"] = 42
-        obj = ns["perm"]
+        obj = ns.get_object("perm")
         obj.cache_mode = "permanent"
         key = make_object_key("testdomain", "testns", "perm")
         assert clean_redis.ttl(key) == -1
@@ -179,7 +178,7 @@ class TestAllScalarTypes:
     )
     def test_roundtrip(self, ns, key, value):
         ns[key] = value
-        result = ns[key].value
+        result = ns[key]
         assert result == value
         assert type(result) is type(value)
 
