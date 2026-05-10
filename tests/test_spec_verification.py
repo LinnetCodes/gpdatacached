@@ -29,5 +29,31 @@ class TestSpecVerification:
         assert ns is domain["spec_verification"]
         assert isinstance(domain["test_ns"], GPDCNamespace)
 
-        ns["counter"] = 42
-        test_ns["test_str"] = "hello, gpdc"
+        ns["test_int"] = 42
+        ns["test_float"] = 42.2
+        ns["test_bool"] = True
+        ns["test_str"] = "hello, world"
+        ns["test_datetime"] = datetime.datetime(2020, 1, 2)
+        ns["test_date"] = datetime.date(2020, 1, 1)
+        ns["test_time"] = datetime.time(0, 0, 0)
+        ns["test_none"] = None
+
+        assert len(ns) == 8
+        for name in ns:
+            assert name in {"test_int", "test_float", "test_bool", "test_str",
+                            "test_datetime", "test_date", "test_time", "test_none"}
+        for name in {"test_int", "test_float", "test_bool", "test_str",
+                     "test_datetime", "test_date", "test_time", "test_none"}:
+            assert name in ns
+        assert ns["test_int"].value == 42
+        assert ns["test_float"].value == 42.2
+        assert ns["test_bool"].value == True
+        assert ns["test_str"].value == "hello, world"
+        assert ns["test_datetime"].value == datetime.datetime(2020, 1, 2)
+        assert ns["test_date"].value == datetime.date(2020, 1, 1)
+        assert ns["test_time"].value == datetime.time(0, 0, 0)
+        assert ns["test_none"].value is None
+
+
+        test_ns.setdefault("test_setdefault", "hello, default")
+        assert test_ns["test_setdefault"].value == "hello, default"
