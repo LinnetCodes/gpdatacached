@@ -10,16 +10,22 @@ if TYPE_CHECKING:
     from .config import GPDCNamespaceConfig
     from .domain import GPDCDomain
 
-from .codec import GPDCScalarCodec
+from .codec import GPDCScalarCodec, ListCodec
 from .keys import (
     make_domain_namespaces_key,
     make_namespace_meta_key,
     make_object_key,
     make_object_key_prefix,
+    make_raw_key,
+    make_ref_key,
     validate_namespace_name,
     validate_object_name,
 )
-from .objects import SCALAR_TYPE_CLASS_MAP, GPDCScalarObject
+from .objects import (
+    TYPE_CLASS_MAP,
+    GPDCContainerObject,
+    GPDCScalarObject,
+)
 
 _MISSING = object()
 
@@ -105,18 +111,101 @@ class GPDCNamespace(MutableMapping):
 
     # ── Dict-like interface ──────────────────────────────────────────────────
 
+    def _owner_name_from_raw_key(self, raw_key: str) -> str:
+        """Extract object name from a raw key like gpdc:{domain}:{ns}:raw:{name}."""
+        prefix = f"gpdc:{self._domain.name}:{self._name}:raw:"
+        return raw_key[len(prefix) :]
+
+    def _cleanup_old_container_ref(self, key: str, existing_meta: dict) -> None:
+        """If key previously referenced another container, remove key from that ref set."""
+        old_type = existing_meta.get("type", "")
+        if not old_type.startswith("collection:"):
+            return
+        old_raw_key = existing_meta.get("value", "")
+        if not old_raw_key:
+            return
+        owner_name = self._owner_name_from_raw_key(old_raw_key)
+        if owner_name != key:
+            # key was referencing another object's raw data
+            ref_key = make_ref_key(self._domain.name, self._name, owner_name)
+            self._redis().srem(ref_key, key)
+
     def __setitem__(self, key: str, value: object) -> None:
         validate_object_name(key)
 
+        r = self._redis()
+        obj_key = make_object_key(self._domain.name, self._name, key)
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+
+        # Case B: assigning a ListObject (reference sharing)
+        if isinstance(value, GPDCContainerObject):
+            existing = r.hgetall(obj_key)
+            if existing:
+                self._cleanup_old_container_ref(key, existing)
+
+            src_obj_key = make_object_key(self._domain.name, value._namespace.name, value._name)
+            src_meta = r.hgetall(src_obj_key)
+            # raw_key is stored in the "value" field of the source's obj: metadata
+            shared_raw_key = src_meta.get("value", "")
+            # Determine owner name from raw_key (may be src's name or another object's name)
+            owner_name = self._owner_name_from_raw_key(shared_raw_key)
+
+            cache_mode = src_meta.get("cache_mode", self._get_default_cache_mode())
+            ttl_str = src_meta.get("ttl", "")
+            ttl = int(ttl_str) if ttl_str else self._get_default_ttl_seconds()
+
+            # Create obj: entry for key, pointing at same raw key
+            r.hset(
+                obj_key,
+                mapping={
+                    "type": src_meta.get("type", "collection:list"),
+                    "codec": "native",
+                    "value": shared_raw_key,
+                    "cache_mode": cache_mode,
+                    "ttl": str(ttl) if ttl else "",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            # Add key to the owner's ref: set
+            ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
+            r.sadd(ref_owner_key, key)
+            return
+
+        # Case A: assigning a Python list → create new ListObject
+        if isinstance(value, list):
+            existing = r.hgetall(obj_key)
+            if existing:
+                self._cleanup_old_container_ref(key, existing)
+
+            raw_key = make_raw_key(self._domain.name, self._name, key)
+            cache_mode = self._get_default_cache_mode()
+            ttl = self._get_default_ttl_seconds()
+
+            r.hset(
+                obj_key,
+                mapping={
+                    "type": "collection:list",
+                    "codec": "native",
+                    "value": raw_key,
+                    "cache_mode": cache_mode,
+                    "ttl": str(ttl) if ttl else "",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            ListCodec.create_raw(r, raw_key, value)
+            if cache_mode in ("ttl", "sliding") and ttl > 0:
+                r.expire(obj_key, ttl)
+            return
+
+        # Case C: scalar assignment
         # Unwrap GPDCScalarObject → Python value (copy semantics)
         if isinstance(value, GPDCScalarObject):
             value = value.value
 
         gpdc_type = GPDCScalarCodec.gpdc_type_of(value)
         encoded = GPDCScalarCodec.encode_value(value)
-        obj_key = make_object_key(self._domain.name, self._name, key)
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        r = self._redis()
 
         existing = r.hgetall(obj_key)
         if existing:
@@ -150,19 +239,32 @@ class GPDCNamespace(MutableMapping):
                 pipe.expire(obj_key, ttl)
             pipe.execute()
 
-    def _get_object(self, key: str) -> GPDCScalarObject:
+    def _get_object(self, key: str):
         validate_object_name(key)
         obj_key = make_object_key(self._domain.name, self._name, key)
-        type_str = self._redis().hget(obj_key, "type")
+        r = self._redis()
+        meta = r.hgetall(obj_key)
+        if not meta:
+            raise KeyError(f"{key!r} not found in namespace {self._name!r}")
+        type_str = meta.get("type")
         if type_str is None:
             raise KeyError(f"{key!r} not found in namespace {self._name!r}")
-        cls = SCALAR_TYPE_CLASS_MAP.get(type_str)
+        cls = TYPE_CLASS_MAP.get(type_str)
         if cls is None:
             raise ValueError(f"Unknown GPDC type: {type_str!r}")
-        return cls(key, self)
+        obj = cls(key, self)
+        # For container objects, override raw_key with the stored value (supports reference sharing)
+        if isinstance(obj, GPDCContainerObject):
+            stored_raw_key = meta.get("value", "")
+            if stored_raw_key:
+                obj.raw_key = stored_raw_key
+        return obj
 
     def __getitem__(self, key: str):
-        return self._get_object(key).value
+        obj = self._get_object(key)
+        if isinstance(obj, GPDCContainerObject):
+            return obj
+        return obj.value
 
     def get_object(self, key: str, default=_MISSING):
         try:
@@ -175,10 +277,35 @@ class GPDCNamespace(MutableMapping):
 
     def __delitem__(self, key: str) -> None:
         validate_object_name(key)
+        r = self._redis()
         obj_key = make_object_key(self._domain.name, self._name, key)
-        deleted = self._redis().delete(obj_key)
-        if deleted == 0:
+        meta = r.hgetall(obj_key)
+        if not meta:
             raise KeyError(f"{key!r} not found in namespace {self._name!r}")
+
+        obj_type = meta.get("type", "")
+        if obj_type.startswith("collection:"):
+            stored_raw_key = meta.get("value", "")
+            owner_name = self._owner_name_from_raw_key(stored_raw_key) if stored_raw_key else key
+            ref_key_of_this = make_ref_key(self._domain.name, self._name, key)
+
+            # If key was referencing another object, remove key from that ref set
+            if owner_name != key and stored_raw_key:
+                ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
+                r.srem(ref_owner_key, key)
+
+            # Check if anyone is referencing this object
+            referrers = r.smembers(ref_key_of_this)
+            r.delete(obj_key)
+            if not referrers:
+                # Safe to delete raw and ref keys
+                if stored_raw_key:
+                    r.delete(stored_raw_key)
+                r.delete(ref_key_of_this)
+        else:
+            deleted = r.delete(obj_key)
+            if deleted == 0:
+                raise KeyError(f"{key!r} not found in namespace {self._name!r}")
 
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
