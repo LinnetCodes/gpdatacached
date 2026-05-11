@@ -21,11 +21,8 @@ from .keys import (
     validate_namespace_name,
     validate_object_name,
 )
-from .objects import (
-    TYPE_CLASS_MAP,
-    GPDCContainerObject,
-    GPDCScalarObject,
-)
+from .container import TYPE_CLASS_MAP, GPDCContainerObject
+from .scalar import GPDCScalarObject
 
 _MISSING = object()
 
