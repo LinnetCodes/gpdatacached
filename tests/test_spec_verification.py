@@ -27,6 +27,12 @@ class TestSpecVerification:
             assert name in {"spec_verification", "test_ns"}
         assert ns is domain["spec_verification"]
         assert isinstance(domain["test_ns"], GPDCNamespace)
+        assert isinstance(test_ns, GPDCNamespace)
+        assert isinstance(ns, GPDCNamespace)
+
+    def test_namespace_ops(self, domain, clean_redis):
+        ns = domain.get_namespace("spec_verification")
+        test_ns = domain.get_namespace("test_ns")
 
         ns["test_int"] = 42
         ns["test_float"] = 42.2
