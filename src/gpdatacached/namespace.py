@@ -289,6 +289,7 @@ class GPDCNamespace(MutableMapping):
 
         existing = r.hgetall(obj_key)
         if existing:
+            self._cleanup_old_container_ref(key, existing)
             # Update existing object: preserve cache_mode/ttl, update value/type/updated_at
             cache_mode = existing.get("cache_mode", "permanent")
             ttl_raw = existing.get("ttl", "0")
