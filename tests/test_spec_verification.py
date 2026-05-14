@@ -1,5 +1,7 @@
 import datetime
 
+import pytest
+
 from gpdatacached import GPDCNamespace
 from gpdatacached.keys import GLOBAL_META_KEY
 
@@ -279,3 +281,309 @@ class TestSpecVerification:
         assert mixed_lst[3] == "hello"
         assert mixed_lst[4] is None
         assert mixed_lst[5] == datetime.date(2020, 1, 1)
+
+    def test_dict_ops(self, domain, clean_redis):
+        ns = domain.get_namespace("spec_verification")
+        d = "testdomain"
+        n = "spec_verification"
+
+        import time
+
+        from gpdatacached.objects import DictObject, ListObject
+        from gpdatacached.codec import GPDCScalarCodec
+
+        # ── §2 DictObject 类型标识与元数据 ────────────────────────────
+        ns["mydict"] = {"name": "test"}
+
+        obj_key = f"gpdc:{d}:{n}:obj:mydict"
+        raw_key = f"gpdc:{d}:{n}:raw:mydict"
+        ref_key = f"gpdc:{d}:{n}:ref:mydict"
+
+        assert clean_redis.hget(obj_key, "type") == "collection:dict"
+        assert clean_redis.hget(obj_key, "codec") == "native"
+        assert clean_redis.hget(obj_key, "value") == raw_key
+        assert clean_redis.hget(obj_key, "cache_mode") == "permanent"
+        assert clean_redis.hget(obj_key, "ttl") == ""
+        assert clean_redis.hget(obj_key, "created_at") is not None
+        assert clean_redis.hget(obj_key, "updated_at") is not None
+
+        # ── §2.3 Raw 数据格式 ────────────────────────────────────────
+        assert clean_redis.hget(raw_key, "str:name") == "str:test"
+        assert clean_redis.smembers(ref_key) == set()
+
+        # ── §2.1 类型标识 ────────────────────────────────────────────
+        dct = ns["mydict"]
+        assert isinstance(dct, DictObject)
+        assert dct.type == "collection:dict"
+
+        # ── §9 DictObject MutableMapping 方法 ─────────────────────────
+        assert len(dct) == 1
+        assert dct["name"] == "test"
+        assert "name" in dct
+        assert "missing" not in dct
+        assert set(dct) == {"name"}
+        assert set(dct.keys()) == {"name"}
+        assert dct.values() == ["test"]
+        assert dct.items() == [("name", "test")]
+
+        dct["age"] = 30
+        assert dct["age"] == 30
+        assert len(dct) == 2
+
+        dct["age"] = 31
+        assert dct["age"] == 31
+
+        assert dct.get("name") == "test"
+        assert dct.get("missing") is None
+        assert dct.get("missing", "fallback") == "fallback"
+
+        val = dct.pop("age")
+        assert val == 31
+        assert "age" not in dct
+        assert dct.pop("age", 99) == 99
+
+        dct.setdefault("city", "NYC")
+        assert dct["city"] == "NYC"
+        dct.setdefault("city", "LA")
+        assert dct["city"] == "NYC"
+
+        dct.update({"x": 1, "y": 2})
+        assert dct["x"] == 1
+        assert dct["y"] == 2
+
+        dct.clear()
+        assert len(dct) == 0
+        assert dict(dct.items()) == {}
+
+        # ── §4 Tuple Key 编码规则 ─────────────────────────────────────
+        # §4.2 编码示例
+        assert GPDCScalarCodec.encode_tuple(("a", "b")) == 'tuple:["str:a","str:b"]'
+        assert GPDCScalarCodec.encode_tuple(("a,b", "c")) == 'tuple:["str:a,b","str:c"]'
+        assert GPDCScalarCodec.encode_tuple((1, "x", 2.5)) == 'tuple:["int:1","str:x","float:2.5"]'
+        assert GPDCScalarCodec.encode_tuple((True, None)) == 'tuple:["bool:True","none:None"]'
+
+        # §4.3 roundtrip
+        assert GPDCScalarCodec.decode_tuple('tuple:["str:a","str:b"]') == ("a", "b")
+        assert GPDCScalarCodec.decode_tuple('tuple:["int:1","str:x","float:2.5"]') == (1, "x", 2.5)
+
+        # §4.4 Dict Hash 字段编码完整示例
+        ns["td"] = {"text": "test", 2: 100, ("a", "b"): "example"}
+        td_raw = f"gpdc:{d}:{n}:raw:td"
+        assert clean_redis.hget(td_raw, "str:text") == "str:test"
+        assert clean_redis.hget(td_raw, "int:2") == "int:100"
+        assert clean_redis.hget(td_raw, 'tuple:["str:a","str:b"]') == "str:example"
+
+        td = ns["td"]
+        assert td["text"] == "test"
+        assert td[2] == 100
+        assert td[("a", "b")] == "example"
+        assert ("a", "b") in td
+        del td[("a", "b")]
+        assert ("a", "b") not in td
+
+        # ── §3 容器元素编码规则 ────────────────────────────────────────
+        # §3.1 标量元素编码
+        ns["scalar_dict"] = {"i": 42, "f": 1.5, "b": True, "s": "hello", "n": None}
+        sd = ns["scalar_dict"]
+        assert sd["i"] == 42
+        assert sd["f"] == 1.5
+        assert sd["b"] is True
+        assert sd["s"] == "hello"
+        assert sd["n"] is None
+
+        # §3.2 嵌套容器元素编码 — ref: 前缀
+        ns["nest_dict"] = {"a": [1, 2, 3], "b": "hello"}
+        nd_raw = f"gpdc:{d}:{n}:raw:nest_dict"
+        assert clean_redis.hget(nd_raw, "str:a").startswith("ref:gpdc:")
+        assert clean_redis.hget(nd_raw, "str:b") == "str:hello"
+
+        # §3.3 解码判断逻辑
+        nd = ns["nest_dict"]
+        inner_list = nd["a"]
+        assert isinstance(inner_list, ListObject)
+        assert inner_list[0] == 1
+        assert inner_list[1] == 2
+        assert inner_list[2] == 3
+        assert nd["b"] == "hello"
+
+        # ── §5 匿名对象 ──────────────────────────────────────────────
+        # §5.2 匿名对象命名 ~anon:<uuid>
+        anon_ref = clean_redis.hget(nd_raw, "str:a")
+        assert ":obj:~anon:" in anon_ref
+        anon_name = anon_ref.split(":obj:")[1]
+        assert anon_name.startswith("~anon:")
+
+        # §5.3 匿名对象的元数据
+        anon_obj_key = f"gpdc:{d}:{n}:obj:{anon_name}"
+        assert clean_redis.hget(anon_obj_key, "type") == "collection:list"
+        assert clean_redis.hget(anon_obj_key, "codec") == "native"
+        assert clean_redis.hget(anon_obj_key, "cache_mode") == "permanent"
+        assert clean_redis.hget(anon_obj_key, "ttl") == ""
+        assert clean_redis.hget(anon_obj_key, "created_at") is not None
+        assert clean_redis.hget(anon_obj_key, "updated_at") is not None
+
+        anon_raw_key = f"gpdc:{d}:{n}:raw:{anon_name}"
+        assert clean_redis.exists(anon_raw_key)
+        assert clean_redis.lrange(anon_raw_key, 0, -1) == ["int:1", "int:2", "int:3"]
+
+        # §5.3 ref set 包含父对象名称
+        anon_ref_key = f"gpdc:{d}:{n}:ref:{anon_name}"
+        assert "nest_dict" in clean_redis.smembers(anon_ref_key)
+
+        # §5.4 匿名对象 cache_mode 继承
+        assert clean_redis.hget(anon_obj_key, "cache_mode") == clean_redis.hget(
+            f"gpdc:{d}:{n}:obj:nest_dict", "cache_mode"
+        )
+
+        # §5.5 匿名对象不出现在 namespace 迭代中
+        for name in ns:
+            assert not name.startswith("~")
+
+        # §5.5 匿名对象不能通过 ns["~anon:xxx"] 直接访问
+        with pytest.raises(ValueError):
+            ns[anon_name]
+
+        # ── §6 容器嵌套完整流程 ──────────────────────────────────────
+        # §6.1 创建嵌套容器
+        ns["mydict"] = {"a": [1, 2, 3], "b": {"x": 1}, "c": 42}
+        md_raw = f"gpdc:{d}:{n}:raw:mydict"
+        assert clean_redis.hget(md_raw, "str:a").startswith("ref:gpdc:")
+        assert clean_redis.hget(md_raw, "str:b").startswith("ref:gpdc:")
+        assert clean_redis.hget(md_raw, "str:c") == "int:42"
+
+        # §6.2 读取嵌套容器
+        md = ns["mydict"]
+        assert md["c"] == 42
+        assert isinstance(md["a"], ListObject)
+        assert md["a"][0] == 1
+        assert isinstance(md["b"], DictObject)
+        assert md["b"]["x"] == 1
+
+        # §6.3 List 中的嵌套
+        ns["mylist"] = [{"name": "Alice"}, {"name": "Bob"}]
+        ml_raw = f"gpdc:{d}:{n}:raw:mylist"
+        ml_items = clean_redis.lrange(ml_raw, 0, -1)
+        assert ml_items[0].startswith("ref:gpdc:")
+        assert ml_items[1].startswith("ref:gpdc:")
+
+        ml = ns["mylist"]
+        assert isinstance(ml[0], DictObject)
+        assert ml[0]["name"] == "Alice"
+        assert isinstance(ml[1], DictObject)
+        assert ml[1]["name"] == "Bob"
+
+        # 验证匿名 dict 的 raw 数据
+        anon0_name = ml_items[0].split(":obj:")[1]
+        anon0_raw = f"gpdc:{d}:{n}:raw:{anon0_name}"
+        assert clean_redis.hget(anon0_raw, "str:name") == "str:Alice"
+        anon0_ref = f"gpdc:{d}:{n}:ref:{anon0_name}"
+        assert "mylist" in clean_redis.smembers(anon0_ref)
+
+        # ── §6 深层嵌套 ─────────────────────────────────────────────
+        ns["deep"] = {"a": {"b": {"c": 42}}}
+        dp = ns["deep"]
+        assert dp["a"]["b"]["c"] == 42
+
+        ns["deep_list"] = [{"items": [1, 2, 3]}]
+        dl = ns["deep_list"]
+        assert isinstance(dl[0], DictObject)
+        assert isinstance(dl[0]["items"], ListObject)
+        assert list(dl[0]["items"]) == [1, 2, 3]
+
+        # ── §9.3 value 编解码（运行时嵌套） ───────────────────────────
+        ns["runtime_nest"] = {"a": 1}
+        rn = ns["runtime_nest"]
+        rn["b"] = [4, 5, 6]
+        assert isinstance(rn["b"], ListObject)
+        assert list(rn["b"]) == [4, 5, 6]
+
+        rn["c"] = {"x": 10}
+        assert isinstance(rn["c"], DictObject)
+        assert rn["c"]["x"] == 10
+
+        # List 运行时追加嵌套
+        ns["rn_list"] = [1, 2]
+        rl = ns["rn_list"]
+        rl.append({"name": "Alice"})
+        assert isinstance(rl[2], DictObject)
+        assert rl[2]["name"] == "Alice"
+
+        # ── §8 copy() 与 deepcopy()（嵌套场景） ───────────────────────
+        ns["original"] = {"a": [1, 2, 3], "b": "hello"}
+
+        # §8.1 copy() — 浅拷贝
+        ns["shallow"] = ns["original"].copy()
+        ns["shallow"]["a"].append(4)
+        assert list(ns["original"]["a"]) == [1, 2, 3, 4]
+        ns["shallow"]["b"] = "world"
+        assert ns["original"]["b"] == "hello"
+
+        # §8.2 deepcopy() — 深拷贝
+        ns["deepcopy_src"] = {"a": [1, 2, 3], "b": "hello"}
+        ns["deep"] = ns["deepcopy_src"].deepcopy()
+        ns["deep"]["a"].append(4)
+        assert list(ns["deepcopy_src"]["a"]) == [1, 2, 3]
+
+        # ── §10 删除嵌套容器 ─────────────────────────────────────────
+        # §10.1 递归删除匿名对象（无引用者时级联清理）
+        ns["cascade"] = {"a": [1, 2, 3], "b": "hello"}
+        ca_raw = f"gpdc:{d}:{n}:raw:cascade"
+        anon_a_ref = clean_redis.hget(ca_raw, "str:a")
+        anon_a_name = anon_a_ref.split(":obj:")[1]
+
+        del ns["cascade"]
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:cascade")
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:cascade")
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:{anon_a_name}")
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:{anon_a_name}")
+
+        # §10.2 级联删除示例 — 有引用者时保留匿名对象
+        ns["x"] = {"a": [1, 2, 3]}
+        ns["y"] = ns["x"]
+        x_raw = f"gpdc:{d}:{n}:raw:x"
+        x_anon_ref = clean_redis.hget(x_raw, "str:a")
+        x_anon_name = x_anon_ref.split(":obj:")[1]
+
+        del ns["x"]
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:x")
+        assert clean_redis.exists(f"gpdc:{d}:{n}:obj:{x_anon_name}")
+        assert clean_redis.exists(f"gpdc:{d}:{n}:raw:x")
+
+        # §10.1 Dict 引用共享
+        ns["d_ref_a"] = {"x": 1}
+        ns["d_ref_b"] = ns["d_ref_a"]
+        ref_a = f"gpdc:{d}:{n}:ref:d_ref_a"
+        assert "d_ref_b" in clean_redis.smembers(ref_a)
+        ns["d_ref_b"]["y"] = 2
+        assert ns["d_ref_a"]["y"] == 2
+
+        # 删除引用共享的容器
+        del ns["d_ref_a"]
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:d_ref_a")
+        assert clean_redis.exists(f"gpdc:{d}:{n}:raw:d_ref_a")
+
+        # ── §9.4 写操作更新 updated_at ───────────────────────────────
+        ns["touch_d"] = {"a": 1}
+        obj_touch = f"gpdc:{d}:{n}:obj:touch_d"
+        before = clean_redis.hget(obj_touch, "updated_at")
+        time.sleep(0.01)
+        ns["touch_d"]["b"] = 2
+        after = clean_redis.hget(obj_touch, "updated_at")
+        assert after >= before
+
+        # ── §11 完整数据流示例 ───────────────────────────────────────
+        ns["mydict"] = {"a": [1, 2, 3], "b": {"x": 1}, "c": 42}
+        dd = ns["mydict"]
+        assert dd["c"] == 42
+        assert dd["a"][0] == 1
+        assert dd["b"]["x"] == 1
+
+        dd["d"] = [4, 5, 6]
+        assert isinstance(dd["d"], ListObject)
+        assert list(dd["d"]) == [4, 5, 6]
+
+        dd["a"].append(4)
+        assert list(dd["a"]) == [1, 2, 3, 4]
+
+        dd[("key1", "key2")] = "value"
+        assert dd[("key1", "key2")] == "value"
