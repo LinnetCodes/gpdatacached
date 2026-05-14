@@ -1,6 +1,8 @@
 # src/gpdatacached/domain.py
 from __future__ import annotations
 
+import threading
+
 import redis
 from gpconfig import GPConfigurable
 
@@ -25,7 +27,10 @@ class GPDCDomain(GPConfigurable):
         self._name = name
         self._redis: redis.Redis | None = None
         self._namespaces: dict = {}
+        self._gc_thread: threading.Thread | None = None
+        self._gc_stop_event = threading.Event()
         self._connect()
+        self._start_gc()
 
     def _connect(self) -> None:
         cfg = self._config
@@ -125,3 +130,42 @@ class GPDCDomain(GPConfigurable):
     def get_default_ttl_seconds(self) -> int:
         """Effective default_ttl_seconds for this domain."""
         return self._config.default_ttl_seconds
+
+    def _start_gc(self) -> None:
+        cfg = self._config
+        if not cfg.gc_enabled:
+            return
+        self._gc_thread = threading.Thread(target=self._gc_loop, daemon=True, name=f"gpdc-gc-{self._name}")
+        self._gc_thread.start()
+
+    def _gc_loop(self) -> None:
+        from .gc import run_gc_for_namespace
+
+        interval = self._config.gc_interval_seconds
+        while not self._gc_stop_event.wait(timeout=interval):
+            try:
+                for ns_name in self:
+                    run_gc_for_namespace(self._redis, self._name, ns_name)
+            except Exception:
+                pass
+
+    def run_gc(self, namespace: str | None = None) -> int:
+        """Run GC manually. If namespace is None, run for all namespaces."""
+        from .gc import run_gc_for_namespace
+
+        total = 0
+        if namespace:
+            total += run_gc_for_namespace(self._redis, self._name, namespace)
+        else:
+            for ns_name in self:
+                total += run_gc_for_namespace(self._redis, self._name, ns_name)
+        return total
+
+    def close(self) -> None:
+        """Stop GC thread and release resources."""
+        self._gc_stop_event.set()
+        if self._gc_thread and self._gc_thread.is_alive():
+            self._gc_thread.join(timeout=5)
+        self._gc_thread = None
+        if self._redis:
+            self._redis.close()
