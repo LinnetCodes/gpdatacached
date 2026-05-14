@@ -404,6 +404,12 @@ class GPDCNamespace(MutableMapping):
                 r.delete(ref_key_of_this)
         else:
             r.delete(ref_key_of_this)
+            # If the owner was already deleted and no referrers remain, clean up orphaned raw data
+            if stored_raw_key:
+                ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
+                owner_obj_key = make_object_key(self._domain.name, self._name, owner_name)
+                if not r.exists(owner_obj_key) and not r.exists(ref_owner_key):
+                    r.delete(stored_raw_key)
 
     def _ref_existing_container(self, container: GPDCContainerObject, parent_name: str) -> str:
         obj_key = container._redis_key()
