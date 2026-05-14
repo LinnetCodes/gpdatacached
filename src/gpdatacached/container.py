@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
-from .codec import GPDCScalarCodec, ListCodec, DictCodec
-from .keys import make_raw_key, make_ref_key
+from .codec import GPDCScalarCodec, ListCodec, DictCodec, SetCodec
+from .keys import make_object_key, make_raw_key, make_ref_key
 from .objects import GPDCDataObject
 from .scalar import SCALAR_TYPE_CLASS_MAP
 
@@ -426,11 +426,163 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         return result
 
 
+# ── SetObject ──────────────────────────────────────────────────────────────────
+
+
+class SetObject(GPDCContainerObject, collections.abc.MutableSet):
+    """Redis-backed set object implementing MutableSet."""
+
+    TYPE = "collection:set"
+
+    @property
+    def type(self) -> str:
+        return self.TYPE
+
+    @property
+    def value(self) -> set:
+        return SetCodec.read_raw(self._redis(), self.raw_key)
+
+    @value.setter
+    def value(self, new_value: set) -> None:
+        r = self._redis()
+        SetCodec.delete_raw(r, self.raw_key)
+        SetCodec.create_raw(r, self.raw_key, new_value)
+        self._touch()
+
+    def __len__(self) -> int:
+        return self._redis().scard(self.raw_key)
+
+    def __contains__(self, item: object) -> bool:
+        encoded = SetCodec._encode_element(item)
+        return self._redis().sismember(self.raw_key, encoded)
+
+    def __iter__(self):
+        members = self._redis().smembers(self.raw_key)
+        for m in members:
+            yield SetCodec._decode_element(m)
+
+    def add(self, value: object) -> None:
+        encoded = SetCodec._encode_element(value)
+        self._redis().sadd(self.raw_key, encoded)
+        self._touch()
+
+    def discard(self, value: object) -> None:
+        encoded = SetCodec._encode_element(value)
+        self._redis().srem(self.raw_key, encoded)
+        self._touch()
+
+    def remove(self, value: object) -> None:
+        encoded = SetCodec._encode_element(value)
+        removed = self._redis().srem(self.raw_key, encoded)
+        if not removed:
+            raise KeyError(value)
+        self._touch()
+
+    def pop(self):
+        encoded = self._redis().spop(self.raw_key)
+        if encoded is None:
+            raise KeyError("pop from an empty set")
+        self._touch()
+        return SetCodec._decode_element(encoded)
+
+    def clear(self) -> None:
+        self._redis().delete(self.raw_key)
+        self._touch()
+
+    def _to_encoded_set(self, other) -> set[str]:
+        if isinstance(other, SetObject):
+            return self._redis().smembers(other.raw_key)
+        return {SetCodec._encode_element(e) for e in other}
+
+    def _create_result_set(self, encoded_members: set[str]):
+        anon_name = f"~anon:{uuid.uuid4()}"
+        obj_key = make_object_key(self.domain.name, self._namespace.name, anon_name)
+        raw_key = make_raw_key(self.domain.name, self._namespace.name, anon_name)
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        r = self._redis()
+        r.hset(
+            obj_key,
+            mapping={
+                "type": self.TYPE,
+                "codec": "native",
+                "value": raw_key,
+                "cache_mode": self.cache_mode,
+                "ttl": self.ttl,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        if encoded_members:
+            r.sadd(raw_key, *encoded_members)
+        result = SetObject(anon_name, self._namespace)
+        result.raw_key = raw_key
+        return result
+
+    def __or__(self, other):
+        self_encoded = self._redis().smembers(self.raw_key)
+        other_encoded = self._to_encoded_set(other)
+        return self._create_result_set(self_encoded | other_encoded)
+
+    def __and__(self, other):
+        self_encoded = self._redis().smembers(self.raw_key)
+        other_encoded = self._to_encoded_set(other)
+        return self._create_result_set(self_encoded & other_encoded)
+
+    def __sub__(self, other):
+        self_encoded = self._redis().smembers(self.raw_key)
+        other_encoded = self._to_encoded_set(other)
+        return self._create_result_set(self_encoded - other_encoded)
+
+    def __xor__(self, other):
+        self_encoded = self._redis().smembers(self.raw_key)
+        other_encoded = self._to_encoded_set(other)
+        return self._create_result_set(self_encoded ^ other_encoded)
+
+    def __ior__(self, other):
+        other_encoded = self._to_encoded_set(other)
+        if other_encoded:
+            self._redis().sadd(self.raw_key, *other_encoded)
+        self._touch()
+        return self
+
+    def __iand__(self, other):
+        other_encoded = self._to_encoded_set(other)
+        current = self._redis().smembers(self.raw_key)
+        to_remove = current - other_encoded
+        if to_remove:
+            self._redis().srem(self.raw_key, *to_remove)
+        self._touch()
+        return self
+
+    def __isub__(self, other):
+        other_encoded = self._to_encoded_set(other)
+        if other_encoded:
+            self._redis().srem(self.raw_key, *other_encoded)
+        self._touch()
+        return self
+
+    def __ixor__(self, other):
+        other_encoded = self._to_encoded_set(other)
+        current = self._redis().smembers(self.raw_key)
+        to_add = other_encoded - current
+        to_remove = current & other_encoded
+        if to_remove:
+            self._redis().srem(self.raw_key, *to_remove)
+        if to_add:
+            self._redis().sadd(self.raw_key, *to_add)
+        self._touch()
+        return self
+
+    def deepcopy(self):
+        return self.value
+
+
 # ── Container type registry ───────────────────────────────────────────────────
 
 CONTAINER_TYPE_CLASS_MAP: dict[str, type[GPDCContainerObject]] = {
     "collection:list": ListObject,
     "collection:dict": DictObject,
+    "collection:set": SetObject,
 }
 
 TYPE_CLASS_MAP: dict[str, type[GPDCDataObject]] = {
