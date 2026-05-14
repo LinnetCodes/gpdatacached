@@ -587,3 +587,352 @@ class TestSpecVerification:
 
         dd[("key1", "key2")] = "value"
         assert dd[("key1", "key2")] == "value"
+
+    def test_set_ops(self, domain, clean_redis):
+        ns = domain.get_namespace("spec_verification")
+        d = "testdomain"
+        n = "spec_verification"
+
+        import time
+
+        from gpdatacached.objects import SetObject, ListObject, DictObject
+        from gpdatacached.codec import SetCodec
+
+        # ── §2.1 类型标识 ─────────────────────────────────────────────
+        ns["myset"] = {1, 2, 3}
+
+        obj_key = f"gpdc:{d}:{n}:obj:myset"
+        raw_key = f"gpdc:{d}:{n}:raw:myset"
+        ref_key = f"gpdc:{d}:{n}:ref:myset"
+
+        assert clean_redis.hget(obj_key, "type") == "collection:set"
+        assert clean_redis.hget(obj_key, "codec") == "native"
+        assert clean_redis.hget(obj_key, "value") == raw_key
+        assert clean_redis.hget(obj_key, "cache_mode") == "permanent"
+        assert clean_redis.hget(obj_key, "ttl") == ""
+        assert clean_redis.hget(obj_key, "created_at") is not None
+        assert clean_redis.hget(obj_key, "updated_at") is not None
+
+        # ── §2.3 Raw 数据格式 ─────────────────────────────────────────
+        members = clean_redis.smembers(raw_key)
+        assert members == {"int:1", "int:2", "int:3"}
+
+        assert clean_redis.smembers(ref_key) == set()
+
+        # ── §1.1 对象体系 — SetObject 是 GPDCContainerObject ──────────
+        s = ns["myset"]
+        assert isinstance(s, SetObject)
+        assert s.type == "collection:set"
+
+        # ── §7.3 GPDCContainerObject 统一基类属性 ─────────────────────
+        assert s.raw_key == raw_key
+        assert s.ref_key == ref_key
+        assert s.referrers() == set()
+
+        # ── §4.1 标准方法 ─────────────────────────────────────────────
+        assert len(s) == 3
+        assert 1 in s
+        assert 2 in s
+        assert 3 in s
+        assert 99 not in s
+        assert set(s) == {1, 2, 3}
+
+        s.add(4)
+        assert 4 in s
+        assert len(s) == 4
+
+        s.add(1)
+        assert len(s) == 4
+
+        s.discard(4)
+        assert 4 not in s
+        assert len(s) == 3
+
+        s.discard(999)
+        assert len(s) == 3
+
+        s.remove(3)
+        assert 3 not in s
+        assert len(s) == 2
+
+        with pytest.raises(KeyError):
+            s.remove(999)
+
+        popped = s.pop()
+        assert popped in {1, 2}
+        assert popped not in s
+        assert len(s) == 1
+
+        s.clear()
+        assert len(s) == 0
+        assert set(s) == set()
+
+        with pytest.raises(KeyError):
+            s.pop()
+
+        # ── §2.5 Tuple 元素在 Set 中的编码 ───────────────────────────
+        ns["tset"] = {1, (2, 3)}
+        tset_obj_key = f"gpdc:{d}:{n}:obj:tset"
+        assert clean_redis.hget(tset_obj_key, "type") == "collection:set"
+
+        tset_raw_key = f"gpdc:{d}:{n}:raw:tset"
+        tset_members = clean_redis.smembers(tset_raw_key)
+        assert "int:1" in tset_members
+        assert any(m.startswith("tuple:") for m in tset_members)
+
+        tset = ns["tset"]
+        assert 1 in tset
+        assert (2, 3) in tset
+        assert set(tset) == {1, (2, 3)}
+
+        # ── §2.4 Set 元素限制 — 标量和 tuple，混合标量 ──────────────
+        ns["mixed_scalars"] = {1, "hello", 3.14}
+        ms = ns["mixed_scalars"]
+        assert 1 in ms
+        assert "hello" in ms
+        assert 3.14 in ms
+        assert set(ms) == {1, "hello", 3.14}
+
+        # ── §3 SetCodec 编解码流程 ───────────────────────────────────
+        # 标量 → GPDCScalarCodec.encode_value
+        assert SetCodec._encode_element(42) == "int:42"
+        assert SetCodec._encode_element("abc") == "str:abc"
+        # tuple → GPDCScalarCodec.encode_tuple
+        assert SetCodec._encode_element((1, 2)) == 'tuple:["int:1","int:2"]'
+
+        # 解码: tuple:[...] → decode_tuple, else → decode_value
+        assert SetCodec._decode_element("int:42") == 42
+        assert SetCodec._decode_element('tuple:["int:1","int:2"]') == (1, 2)
+
+        # ── §4.2 集合运算 — 二元运算（返回新 SetObject）─────────────
+        ns["sa"] = {1, 2, 3}
+        ns["sb"] = {2, 3, 4}
+
+        sa = ns["sa"]
+        sb = ns["sb"]
+
+        union_result = sa | sb
+        assert isinstance(union_result, SetObject)
+        assert set(union_result) == {1, 2, 3, 4}
+
+        inter_result = sa & sb
+        assert isinstance(inter_result, SetObject)
+        assert set(inter_result) == {2, 3}
+
+        diff_result = sa - sb
+        assert isinstance(diff_result, SetObject)
+        assert set(diff_result) == {1}
+
+        symdiff_result = sa ^ sb
+        assert isinstance(symdiff_result, SetObject)
+        assert set(symdiff_result) == {1, 4}
+
+        # other 可以是 Python set
+        sa | {5, 6}
+        sa & {1, 5}
+        sa - {1}
+        sa ^ {1, 5}
+
+        # ── §4.2 集合运算 — 原地运算 ─────────────────────────────────
+        ns["is"] = {1, 2, 3}
+        iset = ns["is"]
+
+        iset |= {4}
+        assert set(iset) == {1, 2, 3, 4}
+
+        iset &= {2, 3, 4}
+        assert set(iset) == {2, 3, 4}
+
+        iset -= {4}
+        assert set(iset) == {2, 3}
+
+        iset ^= {3, 5}
+        assert set(iset) == {2, 5}
+
+        # ── §4.3 写操作统一后处理 — updated_at ───────────────────────
+        ns["touch_s"] = {1}
+        obj_touch = f"gpdc:{d}:{n}:obj:touch_s"
+        before = clean_redis.hget(obj_touch, "updated_at")
+        time.sleep(0.01)
+        ns["touch_s"].add(2)
+        after = clean_redis.hget(obj_touch, "updated_at")
+        assert after >= before
+
+        # ── §5.2 重新赋值的完整处理 — 清理旧引用 ────────────────────
+        ns["rx"] = {1, 2, 3}
+        ns["ry"] = ns["rx"]
+        ref_rx = f"gpdc:{d}:{n}:ref:rx"
+        assert "ry" in clean_redis.smembers(ref_rx)
+
+        # 重新赋值为新 set
+        ns["ry"] = {4, 5}
+        assert "ry" not in clean_redis.smembers(ref_rx)
+        assert set(ns["rx"]) == {1, 2, 3}
+        assert set(ns["ry"]) == {4, 5}
+
+        # 重新赋值为标量
+        ns["ry"] = 42
+        assert ns["ry"] == 42
+
+        # ── §5.3 跨容器类型的引用 — Set 引用共享 ─────────────────────
+        ns["shared_s"] = {10, 20}
+        ns["ref_s"] = ns["shared_s"]
+        ref_shared_s = f"gpdc:{d}:{n}:ref:shared_s"
+        assert "ref_s" in clean_redis.smembers(ref_shared_s)
+
+        ref_s = ns["ref_s"]
+        ref_s.add(30)
+        assert 30 in ns["shared_s"]
+
+        # ── §5.4 删除对象时的完整引用清理 ─────────────────────────────
+        ns["del_x"] = {1, 2}
+        ns["del_y"] = ns["del_x"]
+        ref_del_x = f"gpdc:{d}:{n}:ref:del_x"
+        assert "del_y" in clean_redis.smembers(ref_del_x)
+
+        del ns["del_y"]
+        assert "del_y" not in clean_redis.smembers(ref_del_x)
+        assert set(ns["del_x"]) == {1, 2}
+
+        # 删除 owner — 有引用者时保留 raw
+        ns["del_o"] = {5, 6}
+        ns["del_r"] = ns["del_o"]
+        del ns["del_o"]
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:del_o")
+        assert clean_redis.exists(f"gpdc:{d}:{n}:raw:del_o")
+        assert set(ns["del_r"]) == {5, 6}
+
+        # 删除无引用的 set — 全部清理
+        ns["alone_s"] = {7, 8}
+        del ns["alone_s"]
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:alone_s")
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:alone_s")
+        assert not clean_redis.exists(f"gpdc:{d}:{n}:ref:alone_s")
+
+        # ── §7.1 三种容器类型可以任意嵌套 — Set 作为 Dict 的值 ────
+        ns["complex"] = {
+            "list": [1, 2],
+            "dict": {"x": 10},
+            "set_ref": {1, 2, 3},
+        }
+        cx_raw = f"gpdc:{d}:{n}:raw:complex"
+        assert clean_redis.hget(cx_raw, "str:list").startswith("ref:gpdc:")
+        assert clean_redis.hget(cx_raw, "str:dict").startswith("ref:gpdc:")
+        assert clean_redis.hget(cx_raw, "str:set_ref").startswith("ref:gpdc:")
+
+        cx = ns["complex"]
+        assert isinstance(cx["list"], ListObject)
+        assert isinstance(cx["dict"], DictObject)
+        assert isinstance(cx["set_ref"], SetObject)
+        assert list(cx["list"]) == [1, 2]
+        assert cx["dict"]["x"] == 10
+        assert set(cx["set_ref"]) == {1, 2, 3}
+
+        # 匿名 set 的 ref set 包含父对象名称
+        set_ref_val = clean_redis.hget(cx_raw, "str:set_ref")
+        anon_set_name = set_ref_val.split(":obj:")[1]
+        anon_set_ref_key = f"gpdc:{d}:{n}:ref:{anon_set_name}"
+        assert "complex" in clean_redis.smembers(anon_set_ref_key)
+
+        # ── §7.1 Set 作为 List 的元素 ────────────────────────────────
+        ns["list_with_set"] = [1, {2, 3}, "hello"]
+        lws_raw = f"gpdc:{d}:{n}:raw:list_with_set"
+        lws_items = clean_redis.lrange(lws_raw, 0, -1)
+        assert lws_items[1].startswith("ref:gpdc:")
+
+        lws = ns["list_with_set"]
+        assert isinstance(lws[1], SetObject)
+        assert set(lws[1]) == {2, 3}
+        assert lws[2] == "hello"
+
+        # ── §7.2 赋值语义一致性 — Set 引用共享 / copy / deepcopy ──
+        # 引用共享
+        ns["copy_src"] = {1, 2, 3}
+        ns["copy_ref"] = ns["copy_src"]
+        ref_copy_src = f"gpdc:{d}:{n}:ref:copy_src"
+        assert "copy_ref" in clean_redis.smembers(ref_copy_src)
+        ns["copy_ref"].add(4)
+        assert 4 in ns["copy_src"]
+
+        # copy
+        ns["copy_shallow"] = ns["copy_src"].copy()
+        ref_copy_src2 = f"gpdc:{d}:{n}:ref:copy_src"
+        assert "copy_shallow" not in clean_redis.smembers(ref_copy_src2)
+
+        # deepcopy
+        ns["copy_deep"] = ns["copy_src"].deepcopy()
+        assert set(ns["copy_deep"]) == {1, 2, 3, 4}
+
+        # ── §7.4 完整的数据布局对照 ──────────────────────────────────
+        ns["layout_set"] = {100}
+        lo_obj = f"gpdc:{d}:{n}:obj:layout_set"
+        lo_raw = f"gpdc:{d}:{n}:raw:layout_set"
+        assert clean_redis.exists(lo_obj)
+        assert clean_redis.exists(lo_raw)
+        assert "int:100" in clean_redis.smembers(lo_raw)
+
+        # ── §6 GC — 手动触发 ────────────────────────────────────────
+        ns["gc_target"] = {1, 2}
+        gc_raw = f"gpdc:{d}:{n}:raw:gc_target"
+        clean_redis.delete(f"gpdc:{d}:{n}:obj:gc_target")
+        clean_redis.delete(f"gpdc:{d}:{n}:ref:gc_target")
+
+        assert clean_redis.exists(gc_raw)
+        domain.run_gc(namespace="spec_verification")
+        assert not clean_redis.exists(gc_raw)
+
+        # GC 不删除有效的命名对象
+        ns["gc_valid"] = {5, 6}
+        domain.run_gc(namespace="spec_verification")
+        assert clean_redis.exists(f"gpdc:{d}:{n}:obj:gc_valid")
+        assert clean_redis.exists(f"gpdc:{d}:{n}:raw:gc_valid")
+
+        # GC 不删除有引用者的 raw
+        ns["gc_owned"] = {7, 8}
+        ns["gc_ref"] = ns["gc_owned"]
+        clean_redis.delete(f"gpdc:{d}:{n}:obj:gc_owned")
+        clean_redis.delete(f"gpdc:{d}:{n}:ref:gc_owned")
+        gc_owned_raw = f"gpdc:{d}:{n}:raw:gc_owned"
+        domain.run_gc(namespace="spec_verification")
+        assert clean_redis.exists(gc_owned_raw)
+
+        # ── §6.5 GC 触发方式 — gc_enabled=False 不启动线程 ──────────
+        from gpdatacached.config import GPDCDomainConfig
+
+        cfg_no_gc = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            gc_enabled=False,
+        )
+        from gpdatacached.domain import GPDCDomain
+
+        no_gc_domain = GPDCDomain("gc_disabled_spec", cfg_no_gc)
+        assert no_gc_domain._gc_thread is None
+
+        # ── §6.5 domain.run_gc() 方法存在 ────────────────────────────
+        assert hasattr(domain, "run_gc")
+        assert callable(domain.run_gc)
+
+        # ── §6.5 domain.close() 方法存在且可调用 ─────────────────────
+        assert hasattr(domain, "close")
+        assert callable(domain.close)
+
+        # ── §8 完整数据流示例 ────────────────────────────────────────
+        ns["primes"] = {2, 3, 5, 7, 11}
+        ns["evens"] = {2, 4, 6, 8, 10}
+        primes = ns["primes"]
+        evens = ns["evens"]
+        intersection = primes & evens
+        assert isinstance(intersection, SetObject)
+        assert set(intersection) == {2}
+
+        ns["mixed"] = {"list": [1, 2], "nums": {1, 2, 3}}
+        ns["ref"] = ns["mixed"]
+        del ns["mixed"]
+        ref_d = ns["ref"]
+        assert isinstance(ref_d["list"], ListObject)
+        assert list(ref_d["list"]) == [1, 2]
+        assert isinstance(ref_d["nums"], SetObject)
+        assert set(ref_d["nums"]) == {1, 2, 3}
