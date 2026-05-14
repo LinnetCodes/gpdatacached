@@ -186,7 +186,7 @@ class GPDCNamespace(MutableMapping):
             for v in value:
                 if isinstance(v, GPDCContainerObject):
                     encoded_items.append(self._ref_existing_container(v, key))
-                elif isinstance(v, (list, dict)):
+                elif isinstance(v, (list, dict, set)):
                     _, ref_val = self._create_anonymous_object(v, key, cache_mode, ttl)
                     encoded_items.append(ref_val)
                 else:
@@ -225,7 +225,7 @@ class GPDCNamespace(MutableMapping):
                 encoded_key = GPDCScalarCodec.encode_dict_key(k)
                 if isinstance(v, GPDCContainerObject):
                     raw_mapping[encoded_key] = self._ref_existing_container(v, key)
-                elif isinstance(v, (list, dict)):
+                elif isinstance(v, (list, dict, set)):
                     _, ref_val = self._create_anonymous_object(v, key, cache_mode, ttl)
                     raw_mapping[encoded_key] = ref_val
                 else:
@@ -440,7 +440,7 @@ class GPDCNamespace(MutableMapping):
                 encoded_key = GPDCScalarCodec.encode_dict_key(k)
                 if isinstance(v, GPDCContainerObject):
                     raw_mapping[encoded_key] = self._ref_existing_container(v, anon_name)
-                elif isinstance(v, (list, dict)):
+                elif isinstance(v, (list, dict, set)):
                     _, ref_val = self._create_anonymous_object(v, anon_name, cache_mode, ttl)
                     raw_mapping[encoded_key] = ref_val
                 else:
@@ -464,7 +464,7 @@ class GPDCNamespace(MutableMapping):
             for v in python_value:
                 if isinstance(v, GPDCContainerObject):
                     encoded_items.append(self._ref_existing_container(v, anon_name))
-                elif isinstance(v, (list, dict)):
+                elif isinstance(v, (list, dict, set)):
                     _, ref_val = self._create_anonymous_object(v, anon_name, cache_mode, ttl)
                     encoded_items.append(ref_val)
                 else:

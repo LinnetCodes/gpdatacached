@@ -8,7 +8,7 @@ import redis as redis_lib
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
-from gpdatacached.objects import DictObject, ListObject
+from gpdatacached.objects import DictObject, ListObject, SetObject
 
 DOMAIN = "testdomain_nest"
 NS = "testns_nest"
@@ -215,3 +215,45 @@ class TestSpecDataFlow:
         parent_cache_mode = r.hget(make_object_key(DOMAIN, NS, "d"), "cache_mode")
         anon_cache_mode = r.hget(anon_obj_key, "cache_mode")
         assert anon_cache_mode == parent_cache_mode
+
+
+class TestDictNestedSet:
+    def test_create_dict_with_nested_set(self, ns, r):
+        ns["mydict"] = {"nums": {1, 2, 3}, "label": "test"}
+        obj_key = make_object_key(DOMAIN, NS, "mydict")
+        assert r.hget(obj_key, "type") == "collection:dict"
+
+    def test_nested_set_creates_anon_obj(self, ns, r):
+        ns["mydict"] = {"nums": {1, 2, 3}, "label": "test"}
+        raw_data = r.hgetall(make_raw_key(DOMAIN, NS, "mydict"))
+        encoded_nums = raw_data.get("str:nums", "")
+        assert encoded_nums.startswith("ref:gpdc:")
+
+    def test_nested_set_has_correct_data(self, ns):
+        ns["mydict"] = {"nums": {1, 2, 3}, "label": "test"}
+        d = ns["mydict"]
+        inner_set = d["nums"]
+        assert isinstance(inner_set, SetObject)
+        assert set(inner_set) == {1, 2, 3}
+
+    def test_nested_set_anon_ref(self, ns, r):
+        ns["mydict"] = {"nums": {1, 2, 3}}
+        raw_data = r.hgetall(make_raw_key(DOMAIN, NS, "mydict"))
+        ref_str = raw_data["str:nums"]
+        anon_name = ref_str.split(":obj:")[1]
+        ref_key = make_ref_key(DOMAIN, NS, anon_name)
+        assert "mydict" in r.smembers(ref_key)
+
+
+class TestListNestedSet:
+    def test_create_list_with_nested_set(self, ns, r):
+        ns["mylist"] = [1, {2, 3}, "hello"]
+        obj_key = make_object_key(DOMAIN, NS, "mylist")
+        assert r.hget(obj_key, "type") == "collection:list"
+
+    def test_nested_set_has_correct_data(self, ns):
+        ns["mylist"] = [1, {2, 3}, "hello"]
+        lst = ns["mylist"]
+        inner = lst[1]
+        assert isinstance(inner, SetObject)
+        assert set(inner) == {2, 3}
