@@ -130,6 +130,7 @@ _SUBMODULE_NAMES = {
     "GPDCContainerObject": ".container",
     "ListObject": ".container",
     "DictObject": ".container",
+    "SetObject": ".container",
     "CONTAINER_TYPE_CLASS_MAP": ".container",
     "TYPE_CLASS_MAP": ".container",
 }

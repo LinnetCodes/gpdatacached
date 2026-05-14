@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from .config import GPDCNamespaceConfig
     from .domain import GPDCDomain
 
-from .codec import GPDCScalarCodec
+from .codec import GPDCScalarCodec, SetCodec
 from .keys import (
     make_domain_namespaces_key,
     make_namespace_meta_key,
@@ -249,6 +249,36 @@ class GPDCNamespace(MutableMapping):
                 r.expire(obj_key, ttl)
             return
 
+        # Case A3: assigning a Python set -> create new SetObject
+        if isinstance(value, set):
+            existing = r.hgetall(obj_key)
+            if existing:
+                self._cleanup_old_container_ref(key, existing)
+
+            raw_key = make_raw_key(self._domain.name, self._name, key)
+            cache_mode = self._get_default_cache_mode()
+            ttl = self._get_default_ttl_seconds()
+
+            encoded_items = [SetCodec._encode_element(v) for v in value]
+
+            r.hset(
+                obj_key,
+                mapping={
+                    "type": "collection:set",
+                    "codec": "native",
+                    "value": raw_key,
+                    "cache_mode": cache_mode,
+                    "ttl": str(ttl) if ttl else "",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            if encoded_items:
+                r.sadd(raw_key, *encoded_items)
+            if cache_mode in ("ttl", "sliding") and ttl > 0:
+                r.expire(obj_key, ttl)
+            return
+
         # Case C: scalar assignment
         # Unwrap GPDCScalarObject → Python value (copy semantics)
         if isinstance(value, GPDCScalarObject):
@@ -382,7 +412,7 @@ class GPDCNamespace(MutableMapping):
 
     def _create_anonymous_object(
         self,
-        python_value: list | dict,
+        python_value: list | dict | set,
         parent_name: str,
         cache_mode: str,
         ttl: int,
@@ -397,6 +427,8 @@ class GPDCNamespace(MutableMapping):
             type_str = "collection:list"
         elif isinstance(python_value, dict):
             type_str = "collection:dict"
+        elif isinstance(python_value, set):
+            type_str = "collection:set"
         else:
             raise TypeError(f"Cannot create anonymous object for {type(python_value).__name__}")
 
@@ -451,6 +483,22 @@ class GPDCNamespace(MutableMapping):
             )
             if encoded_items:
                 r.rpush(raw_key, *encoded_items)
+        elif isinstance(python_value, set):
+            encoded_items = [SetCodec._encode_element(v) for v in python_value]
+            r.hset(
+                obj_key,
+                mapping={
+                    "type": type_str,
+                    "codec": "native",
+                    "value": raw_key,
+                    "cache_mode": cache_mode,
+                    "ttl": str(ttl) if ttl else "",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            if encoded_items:
+                r.sadd(raw_key, *encoded_items)
 
         ref_key = make_ref_key(self._domain.name, self._name, anon_name)
         r.sadd(ref_key, parent_name)
@@ -472,6 +520,12 @@ class GPDCNamespace(MutableMapping):
                     anon_names.append(anon_name)
         elif raw_type == "collection:list":
             for val in r.lrange(raw_key, 0, -1):
+                if isinstance(val, str) and val.startswith("ref:"):
+                    ref_obj_key = val[len("ref:") :]
+                    anon_name = ref_obj_key.split(":obj:")[1]
+                    anon_names.append(anon_name)
+        elif raw_type == "collection:set":
+            for val in r.smembers(raw_key):
                 if isinstance(val, str) and val.startswith("ref:"):
                     ref_obj_key = val[len("ref:") :]
                     anon_name = ref_obj_key.split(":obj:")[1]

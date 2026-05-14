@@ -17,6 +17,7 @@ from .objects import (
     IntObject,
     ListObject,
     NoneObject,
+    SetObject,
     StrObject,
     TimeObject,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "NoneObject",
     "ListObject",
     "DictObject",
+    "SetObject",
     "GPDCCodec",
     "GPDCScalarCodec",
     "validate_object_name",
