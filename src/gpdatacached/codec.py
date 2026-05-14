@@ -200,3 +200,37 @@ class DictCodec(GPDCContainerCodec):
     @classmethod
     def delete_raw(cls, redis, raw_key: str) -> None:
         redis.delete(raw_key)
+
+
+class SetCodec(GPDCContainerCodec):
+    """Codec for Python set values stored as Redis Sets."""
+
+    @classmethod
+    def _encode_element(cls, element: object) -> str:
+        if isinstance(element, tuple):
+            return GPDCScalarCodec.encode_tuple(element)
+        return GPDCScalarCodec.encode_value(element)
+
+    @classmethod
+    def _decode_element(cls, encoded: str) -> object:
+        if encoded.startswith("tuple:["):
+            return GPDCScalarCodec.decode_tuple(encoded)
+        return GPDCScalarCodec.decode_value(encoded)
+
+    @classmethod
+    def create_raw(cls, redis, raw_key: str, value: set) -> None:
+        if not value:
+            return
+        encoded = [cls._encode_element(elem) for elem in value]
+        redis.sadd(raw_key, *encoded)
+
+    @classmethod
+    def read_raw(cls, redis, raw_key: str) -> set:
+        members = redis.smembers(raw_key)
+        if not members:
+            return set()
+        return {cls._decode_element(m) for m in members}
+
+    @classmethod
+    def delete_raw(cls, redis, raw_key: str) -> None:
+        redis.delete(raw_key)
