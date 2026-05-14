@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import uuid
 from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, Iterator
 
@@ -10,7 +11,7 @@ if TYPE_CHECKING:
     from .config import GPDCNamespaceConfig
     from .domain import GPDCDomain
 
-from .codec import GPDCScalarCodec, ListCodec
+from .codec import GPDCScalarCodec
 from .keys import (
     make_domain_namespaces_key,
     make_namespace_meta_key,
@@ -181,6 +182,16 @@ class GPDCNamespace(MutableMapping):
             cache_mode = self._get_default_cache_mode()
             ttl = self._get_default_ttl_seconds()
 
+            encoded_items = []
+            for v in value:
+                if isinstance(v, GPDCContainerObject):
+                    encoded_items.append(self._ref_existing_container(v, key))
+                elif isinstance(v, (list, dict)):
+                    _, ref_val = self._create_anonymous_object(v, key, cache_mode, ttl)
+                    encoded_items.append(ref_val)
+                else:
+                    encoded_items.append(GPDCScalarCodec.encode_value(v))
+
             r.hset(
                 obj_key,
                 mapping={
@@ -193,12 +204,47 @@ class GPDCNamespace(MutableMapping):
                     "updated_at": now,
                 },
             )
-            ListCodec.create_raw(r, raw_key, value)
-            # Spec §9.3 step 5: "创建空的 ref: set".  Redis returns an empty set
-            # for smembers() on a non-existent key, which is functionally
-            # equivalent to an explicit empty set.  No physical key creation is
-            # needed; the invariant (referrers() == set()) is satisfied by Redis
-            # semantics for missing keys.
+            if encoded_items:
+                r.rpush(raw_key, *encoded_items)
+            if cache_mode in ("ttl", "sliding") and ttl > 0:
+                r.expire(obj_key, ttl)
+            return
+
+        # Case A2: assigning a Python dict → create new DictObject
+        if isinstance(value, dict):
+            existing = r.hgetall(obj_key)
+            if existing:
+                self._cleanup_old_container_ref(key, existing)
+
+            raw_key = make_raw_key(self._domain.name, self._name, key)
+            cache_mode = self._get_default_cache_mode()
+            ttl = self._get_default_ttl_seconds()
+
+            raw_mapping = {}
+            for k, v in value.items():
+                encoded_key = GPDCScalarCodec.encode_dict_key(k)
+                if isinstance(v, GPDCContainerObject):
+                    raw_mapping[encoded_key] = self._ref_existing_container(v, key)
+                elif isinstance(v, (list, dict)):
+                    _, ref_val = self._create_anonymous_object(v, key, cache_mode, ttl)
+                    raw_mapping[encoded_key] = ref_val
+                else:
+                    raw_mapping[encoded_key] = GPDCScalarCodec.encode_value(v)
+
+            r.hset(
+                obj_key,
+                mapping={
+                    "type": "collection:dict",
+                    "codec": "native",
+                    "value": raw_key,
+                    "cache_mode": cache_mode,
+                    "ttl": str(ttl) if ttl else "",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            if raw_mapping:
+                r.hset(raw_key, mapping=raw_mapping)
             if cache_mode in ("ttl", "sliding") and ttl > 0:
                 r.expire(obj_key, ttl)
             return
@@ -304,22 +350,160 @@ class GPDCNamespace(MutableMapping):
             ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
             r.srem(ref_owner_key, key)
 
-        # Step 2: Delete this object's obj: key
+        # Step 2: Cascade-delete anonymous objects referenced by this container
+        if owner_name == key and stored_raw_key:
+            referrers = r.smembers(ref_key_of_this)
+            anon_names = self._collect_anon_refs(stored_raw_key, obj_type)
+            for anon_name in anon_names:
+                anon_ref_key = make_ref_key(self._domain.name, self._name, anon_name)
+                r.srem(anon_ref_key, key)
+                if referrers:
+                    r.sadd(anon_ref_key, *referrers)
+                self._cascade_delete_anonymous(anon_name)
+
+        # Step 3: Delete this object's obj: key
         r.delete(obj_key)
 
-        # Step 3: Only clean up raw: and ref: if this object OWNS the raw data
+        # Step 4: Only clean up raw: and ref: if this object OWNS the raw data
         if owner_name == key:
-            # Check if anyone else references this raw data
             referrers = r.smembers(ref_key_of_this)
             if not referrers:
-                # No one references it — safe to delete raw and ref
                 if stored_raw_key:
                     r.delete(stored_raw_key)
                 r.delete(ref_key_of_this)
-            # If referrers exist, leave raw: and ref: intact (referrers still need it)
         else:
-            # This was a referrer, not an owner — just delete its own ref: key
             r.delete(ref_key_of_this)
+
+    def _ref_existing_container(self, container: GPDCContainerObject, parent_name: str) -> str:
+        obj_key = container._redis_key()
+        ref_key = make_ref_key(self._domain.name, self._name, container._name)
+        self._redis().sadd(ref_key, parent_name)
+        return f"ref:{obj_key}"
+
+    def _create_anonymous_object(
+        self,
+        python_value: list | dict,
+        parent_name: str,
+        cache_mode: str,
+        ttl: int,
+    ) -> tuple[str, str]:
+        anon_name = f"~anon:{uuid.uuid4()}"
+        obj_key = make_object_key(self._domain.name, self._name, anon_name)
+        raw_key = make_raw_key(self._domain.name, self._name, anon_name)
+
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+
+        if isinstance(python_value, list):
+            type_str = "collection:list"
+        elif isinstance(python_value, dict):
+            type_str = "collection:dict"
+        else:
+            raise TypeError(f"Cannot create anonymous object for {type(python_value).__name__}")
+
+        r = self._redis()
+
+        if isinstance(python_value, dict):
+            raw_mapping = {}
+            for k, v in python_value.items():
+                encoded_key = GPDCScalarCodec.encode_dict_key(k)
+                if isinstance(v, GPDCContainerObject):
+                    raw_mapping[encoded_key] = self._ref_existing_container(v, anon_name)
+                elif isinstance(v, (list, dict)):
+                    _, ref_val = self._create_anonymous_object(v, anon_name, cache_mode, ttl)
+                    raw_mapping[encoded_key] = ref_val
+                else:
+                    raw_mapping[encoded_key] = GPDCScalarCodec.encode_value(v)
+            r.hset(
+                obj_key,
+                mapping={
+                    "type": type_str,
+                    "codec": "native",
+                    "value": raw_key,
+                    "cache_mode": cache_mode,
+                    "ttl": str(ttl) if ttl else "",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            if raw_mapping:
+                r.hset(raw_key, mapping=raw_mapping)
+        elif isinstance(python_value, list):
+            encoded_items = []
+            for v in python_value:
+                if isinstance(v, GPDCContainerObject):
+                    encoded_items.append(self._ref_existing_container(v, anon_name))
+                elif isinstance(v, (list, dict)):
+                    _, ref_val = self._create_anonymous_object(v, anon_name, cache_mode, ttl)
+                    encoded_items.append(ref_val)
+                else:
+                    encoded_items.append(GPDCScalarCodec.encode_value(v))
+            r.hset(
+                obj_key,
+                mapping={
+                    "type": type_str,
+                    "codec": "native",
+                    "value": raw_key,
+                    "cache_mode": cache_mode,
+                    "ttl": str(ttl) if ttl else "",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            if encoded_items:
+                r.rpush(raw_key, *encoded_items)
+
+        ref_key = make_ref_key(self._domain.name, self._name, anon_name)
+        r.sadd(ref_key, parent_name)
+
+        if cache_mode in ("ttl", "sliding") and ttl > 0:
+            r.expire(obj_key, ttl)
+
+        ref_val = f"ref:{obj_key}"
+        return anon_name, ref_val
+
+    def _collect_anon_refs(self, raw_key: str, raw_type: str) -> list[str]:
+        r = self._redis()
+        anon_names = []
+        if raw_type == "collection:dict":
+            for field, val in r.hgetall(raw_key).items():
+                if isinstance(val, str) and val.startswith("ref:"):
+                    ref_obj_key = val[len("ref:") :]
+                    anon_name = ref_obj_key.split(":obj:")[1]
+                    anon_names.append(anon_name)
+        elif raw_type == "collection:list":
+            for val in r.lrange(raw_key, 0, -1):
+                if isinstance(val, str) and val.startswith("ref:"):
+                    ref_obj_key = val[len("ref:") :]
+                    anon_name = ref_obj_key.split(":obj:")[1]
+                    anon_names.append(anon_name)
+        return anon_names
+
+    def _cascade_delete_anonymous(self, anon_name: str) -> None:
+        r = self._redis()
+        obj_key = make_object_key(self._domain.name, self._name, anon_name)
+        meta = r.hgetall(obj_key)
+        if not meta:
+            return
+
+        obj_type = meta.get("type", "")
+        raw_key = meta.get("value", "")
+        ref_key = make_ref_key(self._domain.name, self._name, anon_name)
+
+        referrers = r.smembers(ref_key)
+        if referrers:
+            return
+
+        if raw_key and obj_type.startswith("collection:"):
+            nested_anons = self._collect_anon_refs(raw_key, obj_type)
+            r.delete(raw_key)
+
+            for nested in nested_anons:
+                nested_ref_key = make_ref_key(self._domain.name, self._name, nested)
+                r.srem(nested_ref_key, anon_name)
+                self._cascade_delete_anonymous(nested)
+
+        r.delete(ref_key)
+        r.delete(obj_key)
 
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):

@@ -129,6 +129,7 @@ _SUBMODULE_NAMES = {
     "SCALAR_TYPE_CLASS_MAP": ".scalar",
     "GPDCContainerObject": ".container",
     "ListObject": ".container",
+    "DictObject": ".container",
     "CONTAINER_TYPE_CLASS_MAP": ".container",
     "TYPE_CLASS_MAP": ".container",
 }

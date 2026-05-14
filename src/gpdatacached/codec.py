@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 from abc import ABC, abstractmethod
 
 
@@ -80,6 +81,42 @@ class GPDCScalarCodec(GPDCCodec):
         type_name = encoded[: encoded.index(":")]
         return f"scalar:{type_name}"
 
+    @classmethod
+    def encode_tuple(cls, t: tuple) -> str:
+        if not t:
+            raise ValueError("Cannot encode empty tuple")
+        encoded_elems = []
+        for elem in t:
+            if isinstance(elem, (list, dict, set)):
+                raise TypeError(f"Cannot encode non-scalar tuple element: {type(elem).__name__!r}")
+            encoded_elems.append(cls.encode_value(elem))
+        return "tuple:" + json.dumps(encoded_elems, separators=(",", ":"))
+
+    @classmethod
+    def decode_tuple(cls, encoded: str) -> tuple:
+        prefix = "tuple:"
+        if not encoded.startswith(prefix):
+            raise ValueError(f"Not a tuple-encoded string: {encoded!r}")
+        json_part = encoded[len(prefix) :]
+        encoded_elems = json.loads(json_part)
+        return tuple(cls.decode_value(elem) for elem in encoded_elems)
+
+    @classmethod
+    def is_tuple_key(cls, encoded: str) -> bool:
+        return encoded.startswith("tuple:[")
+
+    @classmethod
+    def encode_dict_key(cls, key: object) -> str:
+        if isinstance(key, tuple):
+            return cls.encode_tuple(key)
+        return cls.encode_value(key)
+
+    @classmethod
+    def decode_dict_key(cls, encoded: str) -> object:
+        if cls.is_tuple_key(encoded):
+            return cls.decode_tuple(encoded)
+        return cls.decode_value(encoded)
+
 
 class GPDCContainerCodec(ABC):
     """Abstract base class for container codecs (list, dict, etc.)."""
@@ -125,4 +162,41 @@ class ListCodec(GPDCContainerCodec):
     @classmethod
     def delete_raw(cls, redis, raw_key: str) -> None:
         """DEL raw_key."""
+        redis.delete(raw_key)
+
+
+class DictCodec(GPDCContainerCodec):
+    """Codec for Python dict values stored as Redis Hashes."""
+
+    @classmethod
+    def create_raw(cls, redis, raw_key: str, value: dict) -> None:
+        if not value:
+            return
+        mapping = {}
+        for k, v in value.items():
+            encoded_key = GPDCScalarCodec.encode_dict_key(k)
+            if isinstance(v, (list, dict, set)):
+                raise TypeError(
+                    "Nested container values require anonymous objects; use encode_raw_with_nesting instead"
+                )
+            mapping[encoded_key] = GPDCScalarCodec.encode_value(v)
+        redis.hset(raw_key, mapping=mapping)
+
+    @classmethod
+    def read_raw(cls, redis, raw_key: str) -> dict:
+        data = redis.hgetall(raw_key)
+        if not data:
+            return {}
+        result = {}
+        for encoded_key, encoded_val in data.items():
+            key = GPDCScalarCodec.decode_dict_key(encoded_key)
+            if encoded_val.startswith("ref:"):
+                raise NotImplementedError(
+                    "Reference elements are not supported in read_raw; use namespace-level loading"
+                )
+            result[key] = GPDCScalarCodec.decode_value(encoded_val)
+        return result
+
+    @classmethod
+    def delete_raw(cls, redis, raw_key: str) -> None:
         redis.delete(raw_key)
