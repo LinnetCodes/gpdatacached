@@ -61,6 +61,7 @@ def setup_set(r):
     class FakeNamespace:
         name = NS
         domain = FakeDomain()
+
         def _redis(self):
             return r
 
@@ -277,6 +278,7 @@ def _make_set_obj(r, name, value):
     class _FN:
         name = NS
         domain = _FD()
+
         def _redis(self):
             return r
 

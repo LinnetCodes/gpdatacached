@@ -72,6 +72,7 @@ class TestTypeRegistryExtension:
     def test_register_custom_type(self):
         original = list(GPDCTypeRegistry._entries)
         try:
+
             class MyFakeObject:
                 pass
 

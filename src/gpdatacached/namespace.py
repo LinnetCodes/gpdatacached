@@ -10,7 +10,6 @@ if TYPE_CHECKING:
     from .config import GPDCNamespaceConfig
     from .domain import GPDCDomain
 
-from .codec import GPDCScalarCodec
 from .keys import (
     make_domain_namespaces_key,
     make_namespace_meta_key,

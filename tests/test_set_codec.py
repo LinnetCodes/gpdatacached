@@ -35,6 +35,7 @@ class _FakeDomain:
 class _FakeNamespace:
     name = "testns"
     domain = _FakeDomain()
+
     def _redis(self):
         return _FakeNamespace._r
 

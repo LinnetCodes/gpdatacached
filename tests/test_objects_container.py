@@ -63,6 +63,7 @@ def setup_list(r):
     class FakeNamespace:
         name = NS
         domain = FakeDomain()
+
         def _redis(self):
             return r
 

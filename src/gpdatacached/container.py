@@ -155,6 +155,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
                 raise IndexError("pop from empty list")
             self._touch()
             from .types import decode_element
+
             return decode_element(encoded, self._namespace)
         val = self[index]
         del self[index]
@@ -162,8 +163,8 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
 
     def remove(self, value: object) -> None:
         from .types import encode_element
-        encoded = encode_element(
-            value, self._namespace, self._name, self.cache_mode, self.ttl)
+
+        encoded = encode_element(value, self._namespace, self._name, self.cache_mode, self.ttl)
         removed = self._redis().lrem(self.raw_key, 1, encoded)
         if removed == 0:
             raise ValueError(f"{value!r} is not in list")
