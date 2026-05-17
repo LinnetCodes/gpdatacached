@@ -1,22 +1,14 @@
 import datetime
 import pytest
-import redis
 from gpdatacached.codec import GPDCScalarCodec, ListCodec, DictCodec
 
 
 @pytest.fixture
-def r():
-    client = redis.Redis(host="127.0.0.1", port=6379, db=1, password="123456", decode_responses=True)
-    yield client
-    # cleanup handled per test
-
-
-@pytest.fixture
-def raw_key(r):
+def raw_key(ns):
     key = "test:listcodec:tmp"
-    r.delete(key)
+    ns._redis().delete(key)
     yield key
-    r.delete(key)
+    ns._redis().delete(key)
 
 
 class TestGPDCScalarCodecEncode:
@@ -236,88 +228,88 @@ class TestTupleEncoding:
 
 
 class TestListCodec:
-    def test_create_raw_scalars(self, r, raw_key):
-        ListCodec.create_raw(r, raw_key, [1, 2, 3])
-        items = r.lrange(raw_key, 0, -1)
+    def test_create_raw_scalars(self, ns, raw_key):
+        ListCodec.create_raw(ns, raw_key, [1, 2, 3], "~test", "permanent", 0)
+        items = ns._redis().lrange(raw_key, 0, -1)
         assert items == ["int:1", "int:2", "int:3"]
 
-    def test_create_raw_mixed_types(self, r, raw_key):
-        ListCodec.create_raw(r, raw_key, [1, "hello", True, None])
-        items = r.lrange(raw_key, 0, -1)
+    def test_create_raw_mixed_types(self, ns, raw_key):
+        ListCodec.create_raw(ns, raw_key, [1, "hello", True, None], "~test", "permanent", 0)
+        items = ns._redis().lrange(raw_key, 0, -1)
         assert items == ["int:1", "str:hello", "bool:True", "none:None"]
 
-    def test_create_raw_empty_list(self, r, raw_key):
-        ListCodec.create_raw(r, raw_key, [])
-        assert not r.exists(raw_key)
+    def test_create_raw_empty_list(self, ns, raw_key):
+        ListCodec.create_raw(ns, raw_key, [], "~test", "permanent", 0)
+        assert not ns._redis().exists(raw_key)
 
-    def test_read_raw_returns_correct_list(self, r, raw_key):
-        ListCodec.create_raw(r, raw_key, [1, 2, 3])
-        result = ListCodec.read_raw(r, raw_key)
+    def test_read_raw_returns_correct_list(self, ns, raw_key):
+        ListCodec.create_raw(ns, raw_key, [1, 2, 3], "~test", "permanent", 0)
+        result = ListCodec.read_raw(ns, raw_key)
         assert result == [1, 2, 3]
 
-    def test_read_raw_missing_key_returns_empty(self, r, raw_key):
-        result = ListCodec.read_raw(r, raw_key)
+    def test_read_raw_missing_key_returns_empty(self, ns, raw_key):
+        result = ListCodec.read_raw(ns, raw_key)
         assert result == []
 
-    def test_read_raw_mixed_types(self, r, raw_key):
-        ListCodec.create_raw(r, raw_key, [1, "hello", True, None])
-        result = ListCodec.read_raw(r, raw_key)
+    def test_read_raw_mixed_types(self, ns, raw_key):
+        ListCodec.create_raw(ns, raw_key, [1, "hello", True, None], "~test", "permanent", 0)
+        result = ListCodec.read_raw(ns, raw_key)
         assert result == [1, "hello", True, None]
 
-    def test_delete_raw(self, r, raw_key):
-        ListCodec.create_raw(r, raw_key, [1, 2, 3])
-        ListCodec.delete_raw(r, raw_key)
-        assert not r.exists(raw_key)
+    def test_delete_raw(self, ns, raw_key):
+        ListCodec.create_raw(ns, raw_key, [1, 2, 3], "~test", "permanent", 0)
+        ListCodec.delete_raw(ns, raw_key)
+        assert not ns._redis().exists(raw_key)
 
-    def test_delete_raw_missing_key_no_error(self, r, raw_key):
-        ListCodec.delete_raw(r, raw_key)  # should not raise
+    def test_delete_raw_missing_key_no_error(self, ns, raw_key):
+        ListCodec.delete_raw(ns, raw_key)
 
 
 class TestDictCodec:
-    def test_create_raw_writes_hash(self, r):
+    def test_create_raw_writes_hash(self, ns):
         raw_key = "gpdc:test:d:ns:raw:testdict"
         try:
-            DictCodec.create_raw(r, raw_key, {"name": "Alice", "age": 30})
-            assert r.hexists(raw_key, "str:name")
-            assert r.hget(raw_key, "str:name") == "str:Alice"
-            assert r.hget(raw_key, "str:age") == "int:30"
+            DictCodec.create_raw(ns, raw_key, {"name": "Alice", "age": 30}, "~test", "permanent", 0)
+            assert ns._redis().hexists(raw_key, "str:name")
+            assert ns._redis().hget(raw_key, "str:name") == "str:Alice"
+            assert ns._redis().hget(raw_key, "str:age") == "int:30"
         finally:
-            r.delete(raw_key)
+            ns._redis().delete(raw_key)
 
-    def test_read_raw_returns_dict(self, r):
+    def test_read_raw_returns_dict(self, ns):
         raw_key = "gpdc:test:d:ns:raw:testdict"
         try:
-            r.hset(raw_key, mapping={"str:name": "str:Alice", "str:age": "int:30"})
-            result = DictCodec.read_raw(r, raw_key)
+            ns._redis().hset(raw_key, mapping={"str:name": "str:Alice", "str:age": "int:30"})
+            result = DictCodec.read_raw(ns, raw_key)
             assert result == {"name": "Alice", "age": 30}
         finally:
-            r.delete(raw_key)
+            ns._redis().delete(raw_key)
 
-    def test_read_raw_empty_key(self, r):
-        result = DictCodec.read_raw(r, "gpdc:nonexistent:key")
+    def test_read_raw_empty_key(self, ns):
+        result = DictCodec.read_raw(ns, "gpdc:nonexistent:key")
         assert result == {}
 
-    def test_delete_raw(self, r):
+    def test_delete_raw(self, ns):
         raw_key = "gpdc:test:d:ns:raw:testdict"
-        r.hset(raw_key, "str:x", "str:y")
-        DictCodec.delete_raw(r, raw_key)
-        assert not r.exists(raw_key)
+        ns._redis().hset(raw_key, "str:x", "str:y")
+        DictCodec.delete_raw(ns, raw_key)
+        assert not ns._redis().exists(raw_key)
 
-    def test_create_raw_with_tuple_key(self, r):
+    def test_create_raw_with_tuple_key(self, ns):
         raw_key = "gpdc:test:d:ns:raw:testdict"
         try:
             data = {"text": "test", 2: 100, ("a", "b"): "example"}
-            DictCodec.create_raw(r, raw_key, data)
-            assert r.hget(raw_key, "str:text") == "str:test"
-            assert r.hget(raw_key, "int:2") == "int:100"
-            assert r.hget(raw_key, 'tuple:["str:a","str:b"]') == "str:example"
+            DictCodec.create_raw(ns, raw_key, data, "~test", "permanent", 0)
+            assert ns._redis().hget(raw_key, "str:text") == "str:test"
+            assert ns._redis().hget(raw_key, "int:2") == "int:100"
+            assert ns._redis().hget(raw_key, 'tuple:["str:a","str:b"]') == "str:example"
         finally:
-            r.delete(raw_key)
+            ns._redis().delete(raw_key)
 
-    def test_read_raw_with_tuple_key(self, r):
+    def test_read_raw_with_tuple_key(self, ns):
         raw_key = "gpdc:test:d:ns:raw:testdict"
         try:
-            r.hset(
+            ns._redis().hset(
                 raw_key,
                 mapping={
                     "str:text": "str:test",
@@ -325,24 +317,34 @@ class TestDictCodec:
                     'tuple:["str:a","str:b"]': "str:example",
                 },
             )
-            result = DictCodec.read_raw(r, raw_key)
+            result = DictCodec.read_raw(ns, raw_key)
             assert result["text"] == "test"
             assert result[2] == 100
             assert result[("a", "b")] == "example"
         finally:
-            r.delete(raw_key)
+            ns._redis().delete(raw_key)
 
-    def test_create_raw_empty_dict(self, r):
+    def test_create_raw_empty_dict(self, ns):
         raw_key = "gpdc:test:d:ns:raw:testdict"
-        DictCodec.create_raw(r, raw_key, {})
-        assert r.exists(raw_key) == 0
+        DictCodec.create_raw(ns, raw_key, {}, "~test", "permanent", 0)
+        assert ns._redis().exists(raw_key) == 0
 
-    def test_create_raw_rejects_list_value(self, r):
+    def test_create_raw_nests_list_value(self, ns):
         raw_key = "gpdc:test:d:ns:raw:testdict"
-        with pytest.raises(TypeError, match="Nested container"):
-            DictCodec.create_raw(r, raw_key, {"a": [1, 2]})
+        try:
+            DictCodec.create_raw(ns, raw_key, {"a": [1, 2]}, "~test", "permanent", 0)
+            val = ns._redis().hget(raw_key, "str:a")
+            assert val is not None
+            assert val.startswith("ref:")
+        finally:
+            ns._redis().delete(raw_key)
 
-    def test_create_raw_rejects_dict_value(self, r):
+    def test_create_raw_nests_dict_value(self, ns):
         raw_key = "gpdc:test:d:ns:raw:testdict"
-        with pytest.raises(TypeError, match="Nested container"):
-            DictCodec.create_raw(r, raw_key, {"a": {"x": 1}})
+        try:
+            DictCodec.create_raw(ns, raw_key, {"a": {"x": 1}}, "~test", "permanent", 0)
+            val = ns._redis().hget(raw_key, "str:a")
+            assert val is not None
+            assert val.startswith("ref:")
+        finally:
+            ns._redis().delete(raw_key)

@@ -123,17 +123,17 @@ class GPDCContainerCodec(ABC):
 
     @classmethod
     @abstractmethod
-    def create_raw(cls, redis, raw_key: str, value: object) -> None:
+    def create_raw(cls, namespace, raw_key: str, value: object, owner_name: str, cache_mode: str, ttl: int) -> None:
         """Create raw data storage in Redis for the given value."""
 
     @classmethod
     @abstractmethod
-    def read_raw(cls, redis, raw_key: str) -> object:
+    def read_raw(cls, namespace, raw_key: str) -> object:
         """Restore a Python object from raw data in Redis."""
 
     @classmethod
     @abstractmethod
-    def delete_raw(cls, redis, raw_key: str) -> None:
+    def delete_raw(cls, namespace, raw_key: str) -> None:
         """Delete raw data storage from Redis."""
 
 
@@ -141,65 +141,57 @@ class ListCodec(GPDCContainerCodec):
     """Codec for Python list values stored as Redis lists."""
 
     @classmethod
-    def create_raw(cls, redis, raw_key: str, value: list) -> None:
-        """RPUSH all encoded elements to raw_key. Empty list → nothing pushed."""
+    def create_raw(cls, namespace, raw_key: str, value: list, owner_name: str, cache_mode: str, ttl: int) -> None:
+        from .types import encode_element
+
         if not value:
             return
-        encoded = [GPDCScalarCodec.encode_value(item) for item in value]
-        redis.rpush(raw_key, *encoded)
+        encoded = [encode_element(v, namespace, owner_name, cache_mode, ttl) for v in value]
+        namespace._redis().rpush(raw_key, *encoded)
 
     @classmethod
-    def read_raw(cls, redis, raw_key: str) -> list:
-        """LRANGE 0 -1 and decode all elements. Missing key returns []."""
-        items = redis.lrange(raw_key, 0, -1)
-        result = []
-        for item in items:
-            if item.startswith("ref:"):
-                raise NotImplementedError("Reference elements are not supported in this phase")
-            result.append(GPDCScalarCodec.decode_value(item))
-        return result
+    def read_raw(cls, namespace, raw_key: str) -> list:
+        from .types import decode_element
+
+        items = namespace._redis().lrange(raw_key, 0, -1)
+        return [decode_element(item, namespace) for item in items]
 
     @classmethod
-    def delete_raw(cls, redis, raw_key: str) -> None:
-        """DEL raw_key."""
-        redis.delete(raw_key)
+    def delete_raw(cls, namespace, raw_key: str) -> None:
+        namespace._redis().delete(raw_key)
 
 
 class DictCodec(GPDCContainerCodec):
     """Codec for Python dict values stored as Redis Hashes."""
 
     @classmethod
-    def create_raw(cls, redis, raw_key: str, value: dict) -> None:
+    def create_raw(cls, namespace, raw_key: str, value: dict, owner_name: str, cache_mode: str, ttl: int) -> None:
+        from .types import encode_element
+
         if not value:
             return
         mapping = {}
         for k, v in value.items():
             encoded_key = GPDCScalarCodec.encode_dict_key(k)
-            if isinstance(v, (list, dict, set)):
-                raise TypeError(
-                    "Nested container values require anonymous objects; use encode_raw_with_nesting instead"
-                )
-            mapping[encoded_key] = GPDCScalarCodec.encode_value(v)
-        redis.hset(raw_key, mapping=mapping)
+            mapping[encoded_key] = encode_element(v, namespace, owner_name, cache_mode, ttl)
+        namespace._redis().hset(raw_key, mapping=mapping)
 
     @classmethod
-    def read_raw(cls, redis, raw_key: str) -> dict:
-        data = redis.hgetall(raw_key)
+    def read_raw(cls, namespace, raw_key: str) -> dict:
+        from .types import decode_element
+
+        data = namespace._redis().hgetall(raw_key)
         if not data:
             return {}
         result = {}
         for encoded_key, encoded_val in data.items():
             key = GPDCScalarCodec.decode_dict_key(encoded_key)
-            if encoded_val.startswith("ref:"):
-                raise NotImplementedError(
-                    "Reference elements are not supported in read_raw; use namespace-level loading"
-                )
-            result[key] = GPDCScalarCodec.decode_value(encoded_val)
+            result[key] = decode_element(encoded_val, namespace)
         return result
 
     @classmethod
-    def delete_raw(cls, redis, raw_key: str) -> None:
-        redis.delete(raw_key)
+    def delete_raw(cls, namespace, raw_key: str) -> None:
+        namespace._redis().delete(raw_key)
 
 
 class SetCodec(GPDCContainerCodec):
@@ -218,19 +210,19 @@ class SetCodec(GPDCContainerCodec):
         return GPDCScalarCodec.decode_value(encoded)
 
     @classmethod
-    def create_raw(cls, redis, raw_key: str, value: set) -> None:
+    def create_raw(cls, namespace, raw_key: str, value: set, owner_name: str, cache_mode: str, ttl: int) -> None:
         if not value:
             return
         encoded = [cls._encode_element(elem) for elem in value]
-        redis.sadd(raw_key, *encoded)
+        namespace._redis().sadd(raw_key, *encoded)
 
     @classmethod
-    def read_raw(cls, redis, raw_key: str) -> set:
-        members = redis.smembers(raw_key)
+    def read_raw(cls, namespace, raw_key: str) -> set:
+        members = namespace._redis().smembers(raw_key)
         if not members:
             return set()
         return {cls._decode_element(m) for m in members}
 
     @classmethod
-    def delete_raw(cls, redis, raw_key: str) -> None:
-        redis.delete(raw_key)
+    def delete_raw(cls, namespace, raw_key: str) -> None:
+        namespace._redis().delete(raw_key)
