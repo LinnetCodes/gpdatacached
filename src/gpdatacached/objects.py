@@ -126,7 +126,6 @@ _SUBMODULE_NAMES = {
     "DateObject": ".scalar",
     "TimeObject": ".scalar",
     "NoneObject": ".scalar",
-    "SCALAR_TYPE_CLASS_MAP": ".scalar",
     "GPDCContainerObject": ".container",
     "ListObject": ".container",
     "DictObject": ".container",

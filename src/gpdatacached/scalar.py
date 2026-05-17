@@ -75,14 +75,3 @@ class NoneObject(GPDCScalarObject):
 
 
 # ── Type registry ─────────────────────────────────────────────────────────────
-
-SCALAR_TYPE_CLASS_MAP: dict[str, type[GPDCScalarObject]] = {
-    "scalar:int": IntObject,
-    "scalar:float": FloatObject,
-    "scalar:str": StrObject,
-    "scalar:bool": BoolObject,
-    "scalar:datetime": DateTimeObject,
-    "scalar:date": DateObject,
-    "scalar:time": TimeObject,
-    "scalar:none": NoneObject,
-}
