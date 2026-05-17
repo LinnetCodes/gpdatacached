@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import threading
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -29,7 +30,9 @@ class TypeEntry:
 
 
 class GPDCTypeRegistry:
-    _entries: list[TypeEntry] = []
+    _by_gpdc_type: dict[str, TypeEntry] = {}
+    _by_python_type: list[tuple[type | tuple[type, ...], TypeEntry]] = []
+    _lock = threading.Lock()
 
     @classmethod
     def register(
@@ -41,31 +44,34 @@ class GPDCTypeRegistry:
         codec_class: type | None = None,
         priority: int = 0,
     ) -> None:
-        cls._entries = [e for e in cls._entries if e.gpdc_type != gpdc_type]
-        cls._entries.append(
-            TypeEntry(
-                python_type=python_type,
-                gpdc_type=gpdc_type,
-                object_class=object_class,
-                codec_class=codec_class,
-                priority=priority,
-            )
+        entry = TypeEntry(
+            python_type=python_type,
+            gpdc_type=gpdc_type,
+            object_class=object_class,
+            codec_class=codec_class,
+            priority=priority,
         )
-        cls._entries.sort(key=lambda e: -e.priority)
+        with cls._lock:
+            cls._by_gpdc_type[gpdc_type] = entry
+            cls._by_python_type = [(pt, e) for pt, e in cls._by_python_type if e.gpdc_type != gpdc_type]
+            cls._by_python_type.append((python_type, entry))
+            cls._by_python_type.sort(key=lambda pair: -pair[1].priority)
 
     @classmethod
     def lookup_by_python_type(cls, value: object) -> TypeEntry:
-        for entry in cls._entries:
-            if isinstance(value, entry.python_type):
-                return entry
+        with cls._lock:
+            for python_type, entry in cls._by_python_type:
+                if isinstance(value, python_type):
+                    return entry
         raise TypeError(f"Unsupported Python type: {type(value).__name__!r}")
 
     @classmethod
     def lookup_by_gpdc_type(cls, gpdc_type: str) -> TypeEntry:
-        for entry in cls._entries:
-            if entry.gpdc_type == gpdc_type:
-                return entry
-        raise ValueError(f"Unknown GPDC type: {gpdc_type!r}")
+        with cls._lock:
+            entry = cls._by_gpdc_type.get(gpdc_type)
+        if entry is None:
+            raise ValueError(f"Unknown GPDC type: {gpdc_type!r}")
+        return entry
 
 
 def encode_element(
