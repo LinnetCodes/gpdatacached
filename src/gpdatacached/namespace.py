@@ -169,7 +169,7 @@ class GPDCNamespace(MutableMapping):
         if isinstance(value, GPDCScalarObject):
             value = value.value
 
-        entry = GPDCTypeRegistry.resolve(value)
+        entry = GPDCTypeRegistry.lookup_by_python_type(value)
         now = datetime.datetime.now(datetime.UTC).isoformat()
 
         if existing:

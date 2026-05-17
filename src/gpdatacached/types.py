@@ -54,7 +54,7 @@ class GPDCTypeRegistry:
         cls._entries.sort(key=lambda e: -e.priority)
 
     @classmethod
-    def resolve(cls, value: object) -> TypeEntry:
+    def lookup_by_python_type(cls, value: object) -> TypeEntry:
         for entry in cls._entries:
             if isinstance(value, entry.python_type):
                 return entry
@@ -79,7 +79,7 @@ def encode_element(
 
     if isinstance(value, GPDCContainerObject):
         return _ref_existing_container(namespace, value, owner_name)
-    entry = GPDCTypeRegistry.resolve(value)
+    entry = GPDCTypeRegistry.lookup_by_python_type(value)
     if entry.is_container:
         _, ref_val = _create_anonymous_object(namespace, value, owner_name, cache_mode, ttl)
         return ref_val
@@ -137,7 +137,7 @@ def _create_anonymous_object(
     cache_mode: str,
     ttl: int,
 ) -> tuple[str, str]:
-    entry = GPDCTypeRegistry.resolve(python_value)
+    entry = GPDCTypeRegistry.lookup_by_python_type(python_value)
     now = datetime.datetime.now(datetime.UTC).isoformat()
 
     anon_name = f"~anon:{uuid.uuid4()}"

@@ -4,40 +4,40 @@ from gpdatacached.types import GPDCTypeRegistry
 
 class TestTypeRegistryResolve:
     def test_resolve_int(self):
-        entry = GPDCTypeRegistry.resolve(42)
+        entry = GPDCTypeRegistry.lookup_by_python_type(42)
         assert entry.gpdc_type == "scalar:int"
 
     def test_resolve_float(self):
-        entry = GPDCTypeRegistry.resolve(3.14)
+        entry = GPDCTypeRegistry.lookup_by_python_type(3.14)
         assert entry.gpdc_type == "scalar:float"
 
     def test_resolve_str(self):
-        entry = GPDCTypeRegistry.resolve("hello")
+        entry = GPDCTypeRegistry.lookup_by_python_type("hello")
         assert entry.gpdc_type == "scalar:str"
 
     def test_resolve_bool_before_int(self):
-        entry = GPDCTypeRegistry.resolve(True)
+        entry = GPDCTypeRegistry.lookup_by_python_type(True)
         assert entry.gpdc_type == "scalar:bool"
 
     def test_resolve_none(self):
-        entry = GPDCTypeRegistry.resolve(None)
+        entry = GPDCTypeRegistry.lookup_by_python_type(None)
         assert entry.gpdc_type == "scalar:none"
 
     def test_resolve_list(self):
-        entry = GPDCTypeRegistry.resolve([1, 2, 3])
+        entry = GPDCTypeRegistry.lookup_by_python_type([1, 2, 3])
         assert entry.gpdc_type == "collection:list"
 
     def test_resolve_dict(self):
-        entry = GPDCTypeRegistry.resolve({"a": 1})
+        entry = GPDCTypeRegistry.lookup_by_python_type({"a": 1})
         assert entry.gpdc_type == "collection:dict"
 
     def test_resolve_set(self):
-        entry = GPDCTypeRegistry.resolve({1, 2, 3})
+        entry = GPDCTypeRegistry.lookup_by_python_type({1, 2, 3})
         assert entry.gpdc_type == "collection:set"
 
     def test_resolve_unsupported_type_raises(self):
         with pytest.raises(TypeError, match="Unsupported Python type"):
-            GPDCTypeRegistry.resolve(object())
+            GPDCTypeRegistry.lookup_by_python_type(object())
 
 
 class TestTypeRegistryLookup:
@@ -82,7 +82,7 @@ class TestTypeRegistryExtension:
                 object_class=MyFakeObject,
                 priority=0,
             )
-            entry = GPDCTypeRegistry.resolve(b"hello")
+            entry = GPDCTypeRegistry.lookup_by_python_type(b"hello")
             assert entry.gpdc_type == "custom:bytes"
             assert entry.object_class is MyFakeObject
         finally:
