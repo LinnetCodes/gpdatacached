@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from .codec import GPDCScalarCodec, ListCodec, DictCodec, SetCodec
 from .keys import make_object_key, make_raw_key, make_ref_key
-from .objects import GPDCDataObject
+from ._base import GPDCDataObject
 from .types import encode_element, decode_element
 
 
@@ -154,16 +154,12 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
             if encoded is None:
                 raise IndexError("pop from empty list")
             self._touch()
-            from .types import decode_element
-
             return decode_element(encoded, self._namespace)
         val = self[index]
         del self[index]
         return val
 
     def remove(self, value: object) -> None:
-        from .types import encode_element
-
         encoded = encode_element(value, self._namespace, self._name, self.cache_mode, self.ttl)
         removed = self._redis().lrem(self.raw_key, 1, encoded)
         if removed == 0:

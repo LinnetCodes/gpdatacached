@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 from .codec import GPDCScalarCodec, SetCodec
 from .keys import make_object_key, make_raw_key, make_ref_key
-from .objects import GPDCDataObject
+from ._base import GPDCDataObject
 
 
 @dataclass

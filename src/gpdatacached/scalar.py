@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import datetime
 from .codec import GPDCScalarCodec
-from .objects import GPDCDataObject
+from ._base import GPDCDataObject
 
 
 class GPDCScalarObject(GPDCDataObject):
