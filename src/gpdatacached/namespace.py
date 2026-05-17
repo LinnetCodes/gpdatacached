@@ -129,6 +129,7 @@ class GPDCNamespace(MutableMapping):
         validate_object_name(key)
         from .container import GPDCContainerObject
         from .scalar import GPDCScalarObject
+        from .codec import GPDCContainerCodec, GPDCScalarCodec
 
         r = self._redis()
         obj_key = make_object_key(self._domain.name, self._name, key)
@@ -187,8 +188,6 @@ class GPDCNamespace(MutableMapping):
                         "updated_at": now,
                     },
                 )
-                from .codec import GPDCContainerCodec
-
                 if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
                     entry.codec_class.delete_raw(self, raw_key)
                     entry.codec_class.create_raw(self, raw_key, value, key, cache_mode, ttl)
@@ -222,8 +221,6 @@ class GPDCNamespace(MutableMapping):
                         "updated_at": now,
                     },
                 )
-                from .codec import GPDCContainerCodec
-
                 if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
                     entry.codec_class.create_raw(self, raw_key, value, key, cache_mode, ttl)
                 if cache_mode in ("ttl", "sliding") and ttl > 0:
