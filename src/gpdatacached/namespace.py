@@ -124,6 +124,73 @@ class GPDCNamespace(MutableMapping):
             ref_key = make_ref_key(self._domain.name, self._name, owner_name)
             self._redis().srem(ref_key, key)
 
+    def _write_scalar_meta(
+        self, obj_key: str, entry, encoded_value: str, cache_mode: str, ttl: int, now: str, *, is_new: bool
+    ) -> None:
+        r = self._redis()
+        mapping = {
+            "type": entry.gpdc_type,
+            "codec": "native",
+            "value": encoded_value,
+            "cache_mode": cache_mode,
+            "ttl": str(ttl) if ttl else "",
+            "updated_at": now,
+        }
+        if is_new:
+            mapping["created_at"] = now
+        r.hset(obj_key, mapping=mapping)
+        if cache_mode in ("ttl", "sliding") and ttl > 0:
+            r.expire(obj_key, ttl)
+
+    def _write_container_meta(
+        self, obj_key: str, entry, raw_key: str, cache_mode: str, ttl: int, now: str, *, is_new: bool
+    ) -> None:
+        r = self._redis()
+        mapping = {
+            "type": entry.gpdc_type,
+            "value": raw_key,
+            "updated_at": now,
+        }
+        if is_new:
+            mapping["codec"] = "native"
+            mapping["cache_mode"] = cache_mode
+            mapping["ttl"] = str(ttl) if ttl else ""
+            mapping["created_at"] = now
+        r.hset(obj_key, mapping=mapping)
+        if is_new and cache_mode in ("ttl", "sliding") and ttl > 0:
+            r.expire(obj_key, ttl)
+
+    def _setitem_container_ref(self, key: str, container, existing: dict) -> None:
+        from .container import GPDCContainerObject
+
+        assert isinstance(container, GPDCContainerObject)
+        if container._namespace is not self:
+            raise ValueError("Cross-namespace container reference sharing is not supported")
+        r = self._redis()
+        src_obj_key = make_object_key(self._domain.name, container._namespace.name, container._name)
+        src_meta = r.hgetall(src_obj_key)
+        shared_raw_key = src_meta.get("value", "")
+        owner_name = self._owner_name_from_raw_key(shared_raw_key)
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        cache_mode = src_meta.get("cache_mode", self._get_default_cache_mode())
+        ttl_str = src_meta.get("ttl", "")
+        ttl = int(ttl_str) if ttl_str else self._get_default_ttl_seconds()
+        obj_key = make_object_key(self._domain.name, self._name, key)
+        r.hset(
+            obj_key,
+            mapping={
+                "type": src_meta.get("type", "collection:list"),
+                "codec": "native",
+                "value": shared_raw_key,
+                "cache_mode": cache_mode,
+                "ttl": str(ttl) if ttl else "",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
+        r.sadd(ref_owner_key, key)
+
     def __setitem__(self, key: str, value: object) -> None:
         validate_object_name(key)
         from .container import GPDCContainerObject
@@ -138,32 +205,7 @@ class GPDCNamespace(MutableMapping):
             self._cleanup_old_container_ref(key, existing)
 
         if isinstance(value, GPDCContainerObject):
-            if value._namespace is not self:
-                raise ValueError("Cross-namespace container reference sharing is not supported")
-            src_obj_key = make_object_key(self._domain.name, value._namespace.name, value._name)
-            src_meta = r.hgetall(src_obj_key)
-            shared_raw_key = src_meta.get("value", "")
-            owner_name = self._owner_name_from_raw_key(shared_raw_key)
-
-            now = datetime.datetime.now(datetime.UTC).isoformat()
-            cache_mode = src_meta.get("cache_mode", self._get_default_cache_mode())
-            ttl_str = src_meta.get("ttl", "")
-            ttl = int(ttl_str) if ttl_str else self._get_default_ttl_seconds()
-
-            r.hset(
-                obj_key,
-                mapping={
-                    "type": src_meta.get("type", "collection:list"),
-                    "codec": "native",
-                    "value": shared_raw_key,
-                    "cache_mode": cache_mode,
-                    "ttl": str(ttl) if ttl else "",
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
-            ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
-            r.sadd(ref_owner_key, key)
+            self._setitem_container_ref(key, value, existing)
             return
 
         if isinstance(value, GPDCScalarObject):
@@ -172,74 +214,25 @@ class GPDCNamespace(MutableMapping):
         entry = GPDCTypeRegistry.lookup_by_python_type(value)
         now = datetime.datetime.now(datetime.UTC).isoformat()
 
-        if existing:
-            cache_mode = existing.get("cache_mode", "permanent")
-            ttl_raw = existing.get("ttl", "0")
-            ttl = int(ttl_raw) if ttl_raw else 0
-
-            if entry.is_container:
-                raw_key = make_raw_key(self._domain.name, self._name, key)
-                r.hset(
-                    obj_key,
-                    mapping={
-                        "type": entry.gpdc_type,
-                        "value": raw_key,
-                        "updated_at": now,
-                    },
-                )
-                if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
+        if entry.is_container:
+            raw_key = make_raw_key(self._domain.name, self._name, key)
+            is_new = not existing
+            cache_mode = self._get_default_cache_mode() if is_new else existing.get("cache_mode", "permanent")
+            ttl = self._get_default_ttl_seconds() if is_new else (int(existing["ttl"]) if existing.get("ttl") else 0)
+            self._write_container_meta(obj_key, entry, raw_key, cache_mode, ttl, now, is_new=is_new)
+            if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
+                if existing:
                     entry.codec_class.delete_raw(self, raw_key)
-                    entry.codec_class.create_raw(self, raw_key, value, key, cache_mode, ttl)
-            else:
-                encoded = GPDCScalarCodec.encode_value(value)
-                r.hset(
-                    obj_key,
-                    mapping={
-                        "type": entry.gpdc_type,
-                        "value": encoded,
-                        "updated_at": now,
-                    },
-                )
-                if cache_mode == "sliding" and ttl > 0:
-                    r.expire(obj_key, ttl)
+                entry.codec_class.create_raw(self, raw_key, value, key, cache_mode, ttl)
         else:
-            cache_mode = self._get_default_cache_mode()
-            ttl = self._get_default_ttl_seconds()
-
-            if entry.is_container:
-                raw_key = make_raw_key(self._domain.name, self._name, key)
-                r.hset(
-                    obj_key,
-                    mapping={
-                        "type": entry.gpdc_type,
-                        "codec": "native",
-                        "value": raw_key,
-                        "cache_mode": cache_mode,
-                        "ttl": str(ttl) if ttl else "",
-                        "created_at": now,
-                        "updated_at": now,
-                    },
-                )
-                if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
-                    entry.codec_class.create_raw(self, raw_key, value, key, cache_mode, ttl)
-                if cache_mode in ("ttl", "sliding") and ttl > 0:
-                    r.expire(obj_key, ttl)
+            encoded = GPDCScalarCodec.encode_value(value)
+            if existing:
+                cache_mode = existing.get("cache_mode", "permanent")
+                ttl = int(existing["ttl"]) if existing.get("ttl") else 0
             else:
-                encoded = GPDCScalarCodec.encode_value(value)
-                r.hset(
-                    obj_key,
-                    mapping={
-                        "type": entry.gpdc_type,
-                        "codec": "native",
-                        "value": encoded,
-                        "cache_mode": cache_mode,
-                        "ttl": str(ttl) if ttl else "",
-                        "created_at": now,
-                        "updated_at": now,
-                    },
-                )
-                if cache_mode in ("ttl", "sliding") and ttl > 0:
-                    r.expire(obj_key, ttl)
+                cache_mode = self._get_default_cache_mode()
+                ttl = self._get_default_ttl_seconds()
+            self._write_scalar_meta(obj_key, entry, encoded, cache_mode, ttl, now, is_new=not existing)
 
     def _get_object(self, key: str):
         validate_object_name(key)
@@ -378,10 +371,6 @@ class GPDCNamespace(MutableMapping):
 
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
-            return False
-        try:
-            validate_object_name(key)
-        except ValueError:
             return False
         obj_key = make_object_key(self._domain.name, self._name, key)
         return self._redis().exists(obj_key) > 0
