@@ -127,9 +127,11 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         items = r.lrange(self.raw_key, 0, -1)
         encoded = encode_element(value, self._namespace, self._name, self.cache_mode, self.ttl)
         items.insert(index, encoded)
-        r.delete(self.raw_key)
+        pipe = r.pipeline()
+        pipe.delete(self.raw_key)
         if items:
-            r.rpush(self.raw_key, *items)
+            pipe.rpush(self.raw_key, *items)
+        pipe.execute()
         self._touch()
 
     def append(self, value: object) -> None:
@@ -170,9 +172,11 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         r = self._redis()
         items = r.lrange(self.raw_key, 0, -1)
         items.reverse()
-        r.delete(self.raw_key)
+        pipe = r.pipeline()
+        pipe.delete(self.raw_key)
         if items:
-            r.rpush(self.raw_key, *items)
+            pipe.rpush(self.raw_key, *items)
+        pipe.execute()
         self._touch()
 
     def sort(self, *, key=None, reverse=False) -> None:
@@ -181,9 +185,11 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         decoded = [decode_element(enc, self._namespace) for enc in raw_items]
         decoded.sort(key=key, reverse=reverse)
         encoded = [encode_element(v, self._namespace, self._name, self.cache_mode, self.ttl) for v in decoded]
-        r.delete(self.raw_key)
+        pipe = r.pipeline()
+        pipe.delete(self.raw_key)
         if encoded:
-            r.rpush(self.raw_key, *encoded)
+            pipe.rpush(self.raw_key, *encoded)
+        pipe.execute()
         self._touch()
 
     def count(self, value: object) -> int:
