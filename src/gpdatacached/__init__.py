@@ -6,6 +6,7 @@ from .config import GPDCDomainConfig, GPDCNamespaceConfig
 from .domain import GPDCDomain
 from .keys import make_uri, uri_to_redis_key, validate_object_name
 from .namespace import GPDCNamespace
+from .types import GPDCTypeRegistry
 from .objects import (
     BoolObject,
     DateObject,
@@ -43,6 +44,7 @@ __all__ = [
     "SetObject",
     "GPDCCodec",
     "GPDCScalarCodec",
+    "GPDCTypeRegistry",
     "validate_object_name",
     "make_uri",
     "uri_to_redis_key",
