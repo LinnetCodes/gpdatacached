@@ -196,7 +196,7 @@ def _register_builtin_types() -> None:
         TimeObject,
         NoneObject,
     )
-    from .container import ListObject, DictObject, SetObject, GPDCContainerObject
+    from .container import ListObject, DictObject, SetObject
 
     GPDCTypeRegistry.register(
         python_type=type(None),
@@ -239,13 +239,6 @@ def _register_builtin_types() -> None:
         priority=0,
     )
 
-    GPDCTypeRegistry.register(
-        python_type=GPDCContainerObject,
-        gpdc_type="_container_ref",
-        object_class=ListObject,
-        codec_class=None,
-        priority=100,
-    )
     GPDCTypeRegistry.register(
         python_type=list, gpdc_type="collection:list", object_class=ListObject, codec_class=ListCodec, priority=0
     )
