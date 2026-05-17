@@ -49,6 +49,8 @@ class GPDCScalarCodec(GPDCCodec):
     @classmethod
     def decode_value(cls, encoded: str) -> object:
         """Decode 'type_name:encoded_value' back to a Python scalar."""
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
         colon_idx = encoded.index(":")
         type_name = encoded[:colon_idx]
         raw = encoded[colon_idx + 1 :]
@@ -58,17 +60,32 @@ class GPDCScalarCodec(GPDCCodec):
         if type_name == "bool":
             return raw == "True"
         if type_name == "int":
-            return int(raw)
+            try:
+                return int(raw)
+            except (ValueError, OverflowError):
+                raise ValueError(f"Invalid scalar value for type 'int': {raw!r}")
         if type_name == "float":
-            return float(raw)
+            try:
+                return float(raw)
+            except ValueError:
+                raise ValueError(f"Invalid scalar value for type 'float': {raw!r}")
         if type_name == "str":
             return raw
         if type_name == "datetime":
-            return datetime.datetime.fromisoformat(raw)
+            try:
+                return datetime.datetime.fromisoformat(raw)
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid scalar value for type 'datetime': {raw!r}")
         if type_name == "date":
-            return datetime.date.fromisoformat(raw)
+            try:
+                return datetime.date.fromisoformat(raw)
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid scalar value for type 'date': {raw!r}")
         if type_name == "time":
-            return datetime.time.fromisoformat(raw)
+            try:
+                return datetime.time.fromisoformat(raw)
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid scalar value for type 'time': {raw!r}")
         raise ValueError(f"Unknown scalar type name: {type_name!r}")
 
     # Alias for spec-compatible usage

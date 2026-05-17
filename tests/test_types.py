@@ -70,11 +70,19 @@ class TestTypeEntryIsContainer:
 
 class TestTypeRegistryExtension:
     def test_register_custom_type(self):
-        original = list(GPDCTypeRegistry._entries)
+        import threading
+
+        original_gpdc = dict(GPDCTypeRegistry._by_gpdc_type)
+        original_python = list(GPDCTypeRegistry._by_python_type)
+        original_lock = GPDCTypeRegistry._lock
         try:
 
             class MyFakeObject:
                 pass
+
+            GPDCTypeRegistry._lock = threading.Lock()
+            GPDCTypeRegistry._by_gpdc_type = dict(original_gpdc)
+            GPDCTypeRegistry._by_python_type = list(original_python)
 
             GPDCTypeRegistry.register(
                 python_type=bytes,
@@ -86,4 +94,6 @@ class TestTypeRegistryExtension:
             assert entry.gpdc_type == "custom:bytes"
             assert entry.object_class is MyFakeObject
         finally:
-            GPDCTypeRegistry._entries = original
+            GPDCTypeRegistry._by_gpdc_type = original_gpdc
+            GPDCTypeRegistry._by_python_type = original_python
+            GPDCTypeRegistry._lock = original_lock
