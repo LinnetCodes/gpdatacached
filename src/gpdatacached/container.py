@@ -1,5 +1,5 @@
 # src/gpdatacached/container.py
-"""GPDC container object hierarchy and type registry."""
+"""GPDC container object hierarchy."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 from .codec import GPDCScalarCodec, ListCodec, DictCodec, SetCodec
 from .keys import make_object_key, make_raw_key, make_ref_key
 from .objects import GPDCDataObject
-from .scalar import SCALAR_TYPE_CLASS_MAP
+from .types import encode_element, decode_element
 
 
 class GPDCContainerObject(GPDCDataObject, ABC):
@@ -42,29 +42,6 @@ class GPDCContainerObject(GPDCDataObject, ABC):
     def referrers(self) -> set[str]:
         """Return set of object names referencing this object's raw data."""
         return self._redis().smembers(self.ref_key)
-
-    def _load_ref_object(self, ref_str: str):
-        obj_key = ref_str[len("ref:") :]
-        parts = obj_key.split(":obj:")
-        if len(parts) != 2:
-            raise ValueError(f"Invalid ref string: {ref_str!r}")
-        anon_name = parts[1]
-        from .container import TYPE_CLASS_MAP
-
-        r = self._redis()
-        meta = r.hgetall(obj_key)
-        if not meta:
-            raise KeyError(f"Referenced object not found: {obj_key!r}")
-        type_str = meta.get("type", "")
-        cls = TYPE_CLASS_MAP.get(type_str)
-        if cls is None:
-            raise ValueError(f"Unknown GPDC type: {type_str!r}")
-        obj = cls(anon_name, self._namespace)
-        if isinstance(obj, GPDCContainerObject):
-            stored_raw_key = meta.get("value", "")
-            if stored_raw_key:
-                obj.raw_key = stored_raw_key
-        return obj
 
     def copy(self) -> object:
         """Shallow copy: return Python value with shared anon object refs."""
@@ -99,19 +76,12 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def value(self) -> list:
         r = self._redis()
         items = r.lrange(self.raw_key, 0, -1)
-        result = []
-        for item in items:
-            if item.startswith("ref:"):
-                result.append(self._load_ref_object(item))
-            else:
-                result.append(GPDCScalarCodec.decode_value(item))
-        return result
+        return [decode_element(item, self._namespace) for item in items]
 
     @value.setter
     def value(self, new_value: list) -> None:
-        r = self._redis()
-        ListCodec.delete_raw(r, self.raw_key)
-        ListCodec.create_raw(r, self.raw_key, new_value)
+        ListCodec.delete_raw(self._namespace, self.raw_key)
+        ListCodec.create_raw(self._namespace, self.raw_key, new_value, self._name, self.cache_mode, self.ttl)
         self._touch()
 
     def __len__(self) -> int:
@@ -127,9 +97,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         encoded = r.lindex(self.raw_key, index)
         if encoded is None:
             raise IndexError("list index out of range")
-        if encoded.startswith("ref:"):
-            return self._load_ref_object(encoded)
-        return GPDCScalarCodec.decode_value(encoded)
+        return decode_element(encoded, self._namespace)
 
     def __setitem__(self, index: int, value: object) -> None:
         r = self._redis()
@@ -138,17 +106,8 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
             index = length + index
         if index < 0 or index >= length:
             raise IndexError("list assignment index out of range")
-        if isinstance(value, GPDCContainerObject):
-            ref_val = self._namespace._ref_existing_container(value, self._name)
-            r.lset(self.raw_key, index, ref_val)
-        elif isinstance(value, (list, dict)):
-            cache_mode = self.cache_mode
-            ttl = self.ttl
-            _, ref_val = self._namespace._create_anonymous_object(value, self._name, cache_mode, ttl)
-            r.lset(self.raw_key, index, ref_val)
-        else:
-            encoded = GPDCScalarCodec.encode_value(value)
-            r.lset(self.raw_key, index, encoded)
+        encoded = encode_element(value, self._namespace, self._name, self.cache_mode, self.ttl)
+        r.lset(self.raw_key, index, encoded)
         self._touch()
 
     def __delitem__(self, index: int) -> None:
@@ -166,45 +125,20 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def insert(self, index: int, value: object) -> None:
         r = self._redis()
         items = r.lrange(self.raw_key, 0, -1)
-        if isinstance(value, GPDCContainerObject):
-            items.insert(index, self._namespace._ref_existing_container(value, self._name))
-        elif isinstance(value, (list, dict)):
-            cache_mode = self.cache_mode
-            ttl = self.ttl
-            _, ref_val = self._namespace._create_anonymous_object(value, self._name, cache_mode, ttl)
-            items.insert(index, ref_val)
-        else:
-            items.insert(index, GPDCScalarCodec.encode_value(value))
+        encoded = encode_element(value, self._namespace, self._name, self.cache_mode, self.ttl)
+        items.insert(index, encoded)
         r.delete(self.raw_key)
         if items:
             r.rpush(self.raw_key, *items)
         self._touch()
 
     def append(self, value: object) -> None:
-        if isinstance(value, GPDCContainerObject):
-            self._redis().rpush(self.raw_key, self._namespace._ref_existing_container(value, self._name))
-        elif isinstance(value, (list, dict)):
-            cache_mode = self.cache_mode
-            ttl = self.ttl
-            _, ref_val = self._namespace._create_anonymous_object(value, self._name, cache_mode, ttl)
-            self._redis().rpush(self.raw_key, ref_val)
-        else:
-            encoded = GPDCScalarCodec.encode_value(value)
-            self._redis().rpush(self.raw_key, encoded)
+        encoded = encode_element(value, self._namespace, self._name, self.cache_mode, self.ttl)
+        self._redis().rpush(self.raw_key, encoded)
         self._touch()
 
     def extend(self, values) -> None:
-        encoded = []
-        for v in values:
-            if isinstance(v, GPDCContainerObject):
-                encoded.append(self._namespace._ref_existing_container(v, self._name))
-            elif isinstance(v, (list, dict)):
-                cache_mode = self.cache_mode
-                ttl = self.ttl
-                _, ref_val = self._namespace._create_anonymous_object(v, self._name, cache_mode, ttl)
-                encoded.append(ref_val)
-            else:
-                encoded.append(GPDCScalarCodec.encode_value(v))
+        encoded = [encode_element(v, self._namespace, self._name, self.cache_mode, self.ttl) for v in values]
         if encoded:
             self._redis().rpush(self.raw_key, *encoded)
         self._touch()
@@ -244,9 +178,9 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def sort(self, *, key=None, reverse=False) -> None:
         r = self._redis()
         raw_items = r.lrange(self.raw_key, 0, -1)
-        decoded = [GPDCScalarCodec.decode_value(enc) for enc in raw_items]
+        decoded = [decode_element(enc, self._namespace) for enc in raw_items]
         decoded.sort(key=key, reverse=reverse)
-        encoded = [GPDCScalarCodec.encode_value(v) for v in decoded]
+        encoded = [encode_element(v, self._namespace, self._name, self.cache_mode, self.ttl) for v in decoded]
         r.delete(self.raw_key)
         if encoded:
             r.rpush(self.raw_key, *encoded)
@@ -265,14 +199,11 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def deepcopy(self):
         result = []
         for item in self._redis().lrange(self.raw_key, 0, -1):
-            if item.startswith("ref:"):
-                ref_obj = self._load_ref_object(item)
-                if isinstance(ref_obj, GPDCContainerObject):
-                    result.append(ref_obj.deepcopy())
-                else:
-                    result.append(ref_obj.value)
+            decoded = decode_element(item, self._namespace)
+            if hasattr(decoded, "deepcopy"):
+                result.append(decoded.deepcopy())
             else:
-                result.append(GPDCScalarCodec.decode_value(item))
+                result.append(decoded)
         return result
 
 
@@ -297,17 +228,13 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         result = {}
         for encoded_key, encoded_val in data.items():
             key = GPDCScalarCodec.decode_dict_key(encoded_key)
-            if encoded_val.startswith("ref:"):
-                result[key] = self._load_ref_object(encoded_val)
-            else:
-                result[key] = GPDCScalarCodec.decode_value(encoded_val)
+            result[key] = decode_element(encoded_val, self._namespace)
         return result
 
     @value.setter
     def value(self, new_value: dict) -> None:
-        r = self._redis()
-        DictCodec.delete_raw(r, self.raw_key)
-        DictCodec.create_raw(r, self.raw_key, new_value)
+        DictCodec.delete_raw(self._namespace, self.raw_key)
+        DictCodec.create_raw(self._namespace, self.raw_key, new_value, self._name, self.cache_mode, self.ttl)
         self._touch()
 
     def __len__(self) -> int:
@@ -318,23 +245,12 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         encoded_val = self._redis().hget(self.raw_key, encoded_key)
         if encoded_val is None:
             raise KeyError(key)
-        if encoded_val.startswith("ref:"):
-            return self._load_ref_object(encoded_val)
-        return GPDCScalarCodec.decode_value(encoded_val)
+        return decode_element(encoded_val, self._namespace)
 
     def __setitem__(self, key: object, value: object) -> None:
         encoded_key = GPDCScalarCodec.encode_dict_key(key)
-        if isinstance(value, GPDCContainerObject):
-            ref_val = self._namespace._ref_existing_container(value, self._name)
-            self._redis().hset(self.raw_key, encoded_key, ref_val)
-        elif isinstance(value, (list, dict)):
-            cache_mode = self.cache_mode
-            ttl = self.ttl
-            _, ref_val = self._namespace._create_anonymous_object(value, self._name, cache_mode, ttl)
-            self._redis().hset(self.raw_key, encoded_key, ref_val)
-        else:
-            encoded_val = GPDCScalarCodec.encode_value(value)
-            self._redis().hset(self.raw_key, encoded_key, encoded_val)
+        encoded_val = encode_element(value, self._namespace, self._name, self.cache_mode, self.ttl)
+        self._redis().hset(self.raw_key, encoded_key, encoded_val)
         self._touch()
 
     def __delitem__(self, key: object) -> None:
@@ -358,20 +274,14 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
     def values(self):
         result = []
         for encoded_val in self._redis().hvals(self.raw_key):
-            if encoded_val.startswith("ref:"):
-                result.append(self._load_ref_object(encoded_val))
-            else:
-                result.append(GPDCScalarCodec.decode_value(encoded_val))
+            result.append(decode_element(encoded_val, self._namespace))
         return result
 
     def items(self):
         result = []
         for encoded_key, encoded_val in self._redis().hgetall(self.raw_key).items():
             key = GPDCScalarCodec.decode_dict_key(encoded_key)
-            if encoded_val.startswith("ref:"):
-                result.append((key, self._load_ref_object(encoded_val)))
-            else:
-                result.append((key, GPDCScalarCodec.decode_value(encoded_val)))
+            result.append((key, decode_element(encoded_val, self._namespace)))
         return result
 
     def get(self, key, default=None):
@@ -415,14 +325,11 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         result = {}
         for encoded_key, encoded_val in self._redis().hgetall(self.raw_key).items():
             key = GPDCScalarCodec.decode_dict_key(encoded_key)
-            if encoded_val.startswith("ref:"):
-                ref_obj = self._load_ref_object(encoded_val)
-                if isinstance(ref_obj, GPDCContainerObject):
-                    result[key] = ref_obj.deepcopy()
-                else:
-                    result[key] = ref_obj.value
+            decoded = decode_element(encoded_val, self._namespace)
+            if hasattr(decoded, "deepcopy"):
+                result[key] = decoded.deepcopy()
             else:
-                result[key] = GPDCScalarCodec.decode_value(encoded_val)
+                result[key] = decoded
         return result
 
 
@@ -440,13 +347,12 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
 
     @property
     def value(self) -> set:
-        return SetCodec.read_raw(self._redis(), self.raw_key)
+        return SetCodec.read_raw(self._namespace, self.raw_key)
 
     @value.setter
     def value(self, new_value: set) -> None:
-        r = self._redis()
-        SetCodec.delete_raw(r, self.raw_key)
-        SetCodec.create_raw(r, self.raw_key, new_value)
+        SetCodec.delete_raw(self._namespace, self.raw_key)
+        SetCodec.create_raw(self._namespace, self.raw_key, new_value, self._name, self.cache_mode, self.ttl)
         self._touch()
 
     def __len__(self) -> int:
@@ -575,17 +481,3 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
 
     def deepcopy(self):
         return self.value
-
-
-# ── Container type registry ───────────────────────────────────────────────────
-
-CONTAINER_TYPE_CLASS_MAP: dict[str, type[GPDCContainerObject]] = {
-    "collection:list": ListObject,
-    "collection:dict": DictObject,
-    "collection:set": SetObject,
-}
-
-TYPE_CLASS_MAP: dict[str, type[GPDCDataObject]] = {
-    **SCALAR_TYPE_CLASS_MAP,
-    **CONTAINER_TYPE_CLASS_MAP,
-}

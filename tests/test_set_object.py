@@ -54,8 +54,6 @@ def setup_set(r):
         },
     )
 
-    SetCodec.create_raw(r, raw_key, {1, 2, 3})
-
     class FakeDomain:
         name = DOMAIN
         redis = r
@@ -63,8 +61,15 @@ def setup_set(r):
     class FakeNamespace:
         name = NS
         domain = FakeDomain()
+        def _redis(self):
+            return r
 
-    obj = SetObject(OBJ_NAME, FakeNamespace())
+    ns = FakeNamespace()
+
+    SetCodec.delete_raw(ns, raw_key)
+    SetCodec.create_raw(ns, raw_key, {1, 2, 3}, OBJ_NAME, "permanent", 0)
+
+    obj = SetObject(OBJ_NAME, ns)
     return obj, r, obj_key, raw_key, ref_key
 
 
@@ -264,7 +269,6 @@ def _make_set_obj(r, name, value):
             "updated_at": now,
         },
     )
-    SetCodec.create_raw(r, raw_key, value)
 
     class _FD:
         name = DOMAIN
@@ -273,5 +277,10 @@ def _make_set_obj(r, name, value):
     class _FN:
         name = NS
         domain = _FD()
+        def _redis(self):
+            return r
 
-    return SetObject(name, _FN())
+    ns = _FN()
+    SetCodec.create_raw(ns, raw_key, value, name, "permanent", 0)
+
+    return SetObject(name, ns)

@@ -55,8 +55,6 @@ def setup_dict(r):
         },
     )
 
-    DictCodec.create_raw(r, raw_key, {"name": "Alice", "age": 30})
-
     class FakeDomain:
         name = DOMAIN
         redis = r
@@ -64,8 +62,15 @@ def setup_dict(r):
     class FakeNamespace:
         name = NS
         domain = FakeDomain()
+        def _redis(self):
+            return r
 
-    obj = DictObject(OBJ_NAME, FakeNamespace())
+    ns = FakeNamespace()
+
+    DictCodec.delete_raw(ns, raw_key)
+    DictCodec.create_raw(ns, raw_key, {"name": "Alice", "age": 30}, OBJ_NAME, "permanent", 0)
+
+    obj = DictObject(OBJ_NAME, ns)
     return obj, r, obj_key, raw_key, ref_key
 
 
@@ -242,13 +247,6 @@ def test_tuple_key_delete(setup_dict):
     obj[("a", "b")] = "example"
     del obj[("a", "b")]
     assert ("a", "b") not in obj
-
-
-def test_container_type_class_map_has_dict():
-    from gpdatacached.objects import CONTAINER_TYPE_CLASS_MAP
-
-    assert "collection:dict" in CONTAINER_TYPE_CLASS_MAP
-    assert CONTAINER_TYPE_CLASS_MAP["collection:dict"] is DictObject
 
 
 def test_write_updates_updated_at(setup_dict):

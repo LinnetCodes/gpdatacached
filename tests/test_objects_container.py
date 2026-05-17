@@ -55,9 +55,6 @@ def setup_list(r):
         },
     )
 
-    # seed: [10, 20, 30]
-    ListCodec.create_raw(r, raw_key, [10, 20, 30])
-
     # Build a minimal namespace/domain stub
     class FakeDomain:
         name = DOMAIN
@@ -66,9 +63,16 @@ def setup_list(r):
     class FakeNamespace:
         name = NS
         domain = FakeDomain()
+        def _redis(self):
+            return r
 
-    obj = ListObject(OBJ_NAME, FakeNamespace())
-    return obj, r, obj_key, raw_key, ref_key
+    ns = FakeNamespace()
+
+    # seed: [10, 20, 30]
+    ListCodec.create_raw(ns, raw_key, [10, 20, 30], OBJ_NAME, "permanent", 0)
+
+    obj = ListObject(OBJ_NAME, ns)
+    return obj, r, obj_key, raw_key, ref_key, ns
 
 
 # ── len ───────────────────────────────────────────────────────────────────────
@@ -203,10 +207,10 @@ def test_reverse(setup_list):
 
 
 def test_sort(setup_list):
-    obj, r, obj_key, raw_key, ref_key = setup_list
+    obj, r, obj_key, raw_key, ref_key, ns = setup_list
     # Reseed unsorted
-    ListCodec.delete_raw(r, raw_key)
-    ListCodec.create_raw(r, raw_key, [30, 10, 20])
+    ListCodec.delete_raw(ns, raw_key)
+    ListCodec.create_raw(ns, raw_key, [30, 10, 20], OBJ_NAME, "permanent", 0)
     obj.sort()
     assert list(obj) == [10, 20, 30]
 
@@ -259,7 +263,7 @@ def test_value_getter(setup_list):
 
 
 def test_value_setter(setup_list):
-    obj, r, obj_key, raw_key, ref_key = setup_list
+    obj, *_ = setup_list
     obj.value = [1, 2, 3]
     assert obj.value == [1, 2, 3]
 
@@ -273,7 +277,7 @@ def test_referrers_empty(setup_list):
 
 
 def test_referrers_with_data(setup_list):
-    obj, r, obj_key, raw_key, ref_key = setup_list
+    obj, r, obj_key, raw_key, ref_key, ns = setup_list
     r.sadd(ref_key, "other_obj")
     result = obj.referrers()
     assert result == {"other_obj"}
@@ -316,20 +320,3 @@ def test_write_updates_updated_at(setup_list):
 def test_type(setup_list):
     obj, *_ = setup_list
     assert obj.type == "collection:list"
-
-
-# ── CONTAINER_TYPE_CLASS_MAP ──────────────────────────────────────────────────
-
-
-def test_container_type_class_map():
-    from gpdatacached.objects import CONTAINER_TYPE_CLASS_MAP
-
-    assert "collection:list" in CONTAINER_TYPE_CLASS_MAP
-    assert CONTAINER_TYPE_CLASS_MAP["collection:list"] is ListObject
-
-
-def test_type_class_map_combined():
-    from gpdatacached.objects import TYPE_CLASS_MAP
-
-    assert "scalar:int" in TYPE_CLASS_MAP
-    assert "collection:list" in TYPE_CLASS_MAP
