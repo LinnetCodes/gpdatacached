@@ -943,9 +943,6 @@ class TestSpecVerification:
         assert SetCodec._decode_element('tuple:["int:1","int:2"]') == (1, 2)
 
     def test_set_binary_operations(self, domain, clean_redis):
-        # ── §4.2 集合运算 — 二元运算（返回新 SetObject）─────────────
-        from gpdatacached.objects import SetObject
-
         ns = domain.get_namespace("spec_verification")
 
         ns["sa"] = {1, 2, 3}
@@ -955,22 +952,21 @@ class TestSpecVerification:
         sb = ns["sb"]
 
         union_result = sa | sb
-        assert isinstance(union_result, SetObject)
-        assert set(union_result) == {1, 2, 3, 4}
+        assert isinstance(union_result, set)
+        assert union_result == {1, 2, 3, 4}
 
         inter_result = sa & sb
-        assert isinstance(inter_result, SetObject)
-        assert set(inter_result) == {2, 3}
+        assert isinstance(inter_result, set)
+        assert inter_result == {2, 3}
 
         diff_result = sa - sb
-        assert isinstance(diff_result, SetObject)
-        assert set(diff_result) == {1}
+        assert isinstance(diff_result, set)
+        assert diff_result == {1}
 
         symdiff_result = sa ^ sb
-        assert isinstance(symdiff_result, SetObject)
-        assert set(symdiff_result) == {1, 4}
+        assert isinstance(symdiff_result, set)
+        assert symdiff_result == {1, 4}
 
-        # other 可以是 Python set
         sa | {5, 6}
         sa & {1, 5}
         sa - {1}
@@ -1219,9 +1215,6 @@ class TestSpecVerification:
         assert callable(domain.close)
 
     def test_set_full_data_flow(self, domain, clean_redis):
-        # ── §8 完整数据流示例 ────────────────────────────────────────
-        from gpdatacached.objects import SetObject, ListObject
-
         ns = domain.get_namespace("spec_verification")
 
         ns["primes"] = {2, 3, 5, 7, 11}
@@ -1229,8 +1222,8 @@ class TestSpecVerification:
         primes = ns["primes"]
         evens = ns["evens"]
         intersection = primes & evens
-        assert isinstance(intersection, SetObject)
-        assert set(intersection) == {2}
+        assert isinstance(intersection, set)
+        assert intersection == {2}
 
         ns["mixed"] = {"list": [1, 2], "nums": {1, 2, 3}}
         ns["ref"] = ns["mixed"]
@@ -1238,5 +1231,7 @@ class TestSpecVerification:
         ref_d = ns["ref"]
         assert isinstance(ref_d["list"], ListObject)
         assert list(ref_d["list"]) == [1, 2]
+        from gpdatacached.objects import SetObject
+
         assert isinstance(ref_d["nums"], SetObject)
         assert set(ref_d["nums"]) == {1, 2, 3}

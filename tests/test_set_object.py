@@ -192,37 +192,37 @@ class TestSetObjectBinaryOps:
         r.flushdb()
         obj = _make_set_obj(r, "s1", {1, 2, 3})
         result = obj | {3, 4}
-        assert isinstance(result, SetObject)
-        assert set(result) == {1, 2, 3, 4}
+        assert isinstance(result, set)
+        assert result == {1, 2, 3, 4}
 
     def test_intersection_with_set(self, r):
         r.flushdb()
         obj = _make_set_obj(r, "s1", {1, 2, 3})
         result = obj & {2, 3, 4}
-        assert isinstance(result, SetObject)
-        assert set(result) == {2, 3}
+        assert isinstance(result, set)
+        assert result == {2, 3}
 
     def test_difference_with_set(self, r):
         r.flushdb()
         obj = _make_set_obj(r, "s1", {1, 2, 3})
         result = obj - {2}
-        assert isinstance(result, SetObject)
-        assert set(result) == {1, 3}
+        assert isinstance(result, set)
+        assert result == {1, 3}
 
     def test_symmetric_difference_with_set(self, r):
         r.flushdb()
         obj = _make_set_obj(r, "s1", {1, 2, 3})
         result = obj ^ {2, 3, 4}
-        assert isinstance(result, SetObject)
-        assert set(result) == {1, 4}
+        assert isinstance(result, set)
+        assert result == {1, 4}
 
     def test_union_with_setobject(self, r):
         r.flushdb()
         s1 = _make_set_obj(r, "s1", {1, 2})
         s2 = _make_set_obj(r, "s2", {2, 3})
         result = s1 | s2
-        assert isinstance(result, SetObject)
-        assert set(result) == {1, 2, 3}
+        assert isinstance(result, set)
+        assert result == {1, 2, 3}
 
 
 class TestSetObjectInPlaceOps:

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
 from .codec import GPDCScalarCodec, ListCodec, DictCodec, SetCodec
-from .keys import make_object_key, make_raw_key, make_ref_key
+from .keys import make_raw_key, make_ref_key
 from ._base import GPDCDataObject
 from .types import encode_element, decode_element
 
@@ -400,49 +400,37 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
             return self._redis().smembers(other.raw_key)
         return {SetCodec._encode_element(e) for e in other}
 
-    def _create_result_set(self, encoded_members: set[str]):
-        anon_name = f"~anon:{uuid.uuid4()}"
-        obj_key = make_object_key(self.domain.name, self._namespace.name, anon_name)
-        raw_key = make_raw_key(self.domain.name, self._namespace.name, anon_name)
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        r = self._redis()
-        r.hset(
-            obj_key,
-            mapping={
-                "type": self.TYPE,
-                "codec": "native",
-                "value": raw_key,
-                "cache_mode": self.cache_mode,
-                "ttl": self.ttl,
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-        if encoded_members:
-            r.sadd(raw_key, *encoded_members)
-        result = SetObject(anon_name, self._namespace)
-        result.raw_key = raw_key
-        return result
-
     def __or__(self, other):
-        self_encoded = self._redis().smembers(self.raw_key)
-        other_encoded = self._to_encoded_set(other)
-        return self._create_result_set(self_encoded | other_encoded)
+        self_set = self.value
+        if isinstance(other, SetObject):
+            other_set = other.value
+        else:
+            other_set = set(other)
+        return self_set | other_set
 
     def __and__(self, other):
-        self_encoded = self._redis().smembers(self.raw_key)
-        other_encoded = self._to_encoded_set(other)
-        return self._create_result_set(self_encoded & other_encoded)
+        self_set = self.value
+        if isinstance(other, SetObject):
+            other_set = other.value
+        else:
+            other_set = set(other)
+        return self_set & other_set
 
     def __sub__(self, other):
-        self_encoded = self._redis().smembers(self.raw_key)
-        other_encoded = self._to_encoded_set(other)
-        return self._create_result_set(self_encoded - other_encoded)
+        self_set = self.value
+        if isinstance(other, SetObject):
+            other_set = other.value
+        else:
+            other_set = set(other)
+        return self_set - other_set
 
     def __xor__(self, other):
-        self_encoded = self._redis().smembers(self.raw_key)
-        other_encoded = self._to_encoded_set(other)
-        return self._create_result_set(self_encoded ^ other_encoded)
+        self_set = self.value
+        if isinstance(other, SetObject):
+            other_set = other.value
+        else:
+            other_set = set(other)
+        return self_set ^ other_set
 
     def __ior__(self, other):
         other_encoded = self._to_encoded_set(other)

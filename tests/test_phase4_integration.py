@@ -59,8 +59,8 @@ class TestSpecScenarioSection8:
         primes = ns["primes"]
         evens = ns["evens"]
         intersection = primes & evens
-        assert isinstance(intersection, SetObject)
-        assert set(intersection) == {2}
+        assert isinstance(intersection, set)
+        assert intersection == {2}
 
     def test_mixed_nesting_dict_with_set_value(self, ns):
         ns["mixed"] = {"list": [1, 2], "nums": {1, 2, 3}}
