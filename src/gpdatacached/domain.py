@@ -1,6 +1,7 @@
 # src/gpdatacached/domain.py
 from __future__ import annotations
 
+import logging
 import threading
 
 import redis
@@ -14,6 +15,8 @@ from .keys import (
     make_domain_namespaces_key,
     validate_domain_name,
 )
+
+logger = logging.getLogger(__name__)
 
 GPDC_VERSION = "0.1.0"
 
@@ -146,8 +149,8 @@ class GPDCDomain(GPConfigurable):
             try:
                 for ns_name in self:
                     run_gc_for_namespace(self._redis, self._name, ns_name)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("GPDC GC error in domain %s: %s", self._name, e)
 
     def run_gc(self, namespace: str | None = None) -> int:
         """Run GC manually. If namespace is None, run for all namespaces."""
@@ -169,3 +172,10 @@ class GPDCDomain(GPConfigurable):
         self._gc_thread = None
         if self._redis:
             self._redis.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
