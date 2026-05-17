@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
-from .codec import GPDCScalarCodec, SetCodec
+from .codec import GPDCScalarCodec
 from .keys import make_object_key, make_raw_key, make_ref_key
 from ._base import GPDCDataObject
 
@@ -164,21 +164,11 @@ def _create_anonymous_object(
         },
     )
 
-    if isinstance(python_value, list):
-        encoded_items = [encode_element(v, namespace, anon_name, cache_mode, ttl) for v in python_value]
-        if encoded_items:
-            r.rpush(raw_key, *encoded_items)
-    elif isinstance(python_value, dict):
-        raw_mapping = {}
-        for k, v in python_value.items():
-            encoded_key = GPDCScalarCodec.encode_dict_key(k)
-            raw_mapping[encoded_key] = encode_element(v, namespace, anon_name, cache_mode, ttl)
-        if raw_mapping:
-            r.hset(raw_key, mapping=raw_mapping)
-    elif isinstance(python_value, set):
-        encoded_items = [SetCodec._encode_element(v) for v in python_value]
-        if encoded_items:
-            r.sadd(raw_key, *encoded_items)
+    if entry.is_container and entry.codec_class is not None:
+        from .codec import GPDCContainerCodec
+
+        if issubclass(entry.codec_class, GPDCContainerCodec):
+            entry.codec_class.create_raw(namespace, raw_key, python_value, anon_name, cache_mode, ttl)
 
     ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
     r.sadd(ref_key, parent_name)

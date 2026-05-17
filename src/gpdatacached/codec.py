@@ -153,6 +153,11 @@ class GPDCContainerCodec(ABC):
     def delete_raw(cls, namespace, raw_key: str) -> None:
         """Delete raw data storage from Redis."""
 
+    @classmethod
+    def populate_raw(cls, namespace, raw_key: str, value: object, owner_name: str, cache_mode: str, ttl: int) -> None:
+        cls.delete_raw(namespace, raw_key)
+        cls.create_raw(namespace, raw_key, value, owner_name, cache_mode, ttl)
+
 
 class ListCodec(GPDCContainerCodec):
     """Codec for Python list values stored as Redis lists."""
