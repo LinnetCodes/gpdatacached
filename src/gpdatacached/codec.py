@@ -221,6 +221,8 @@ class SetCodec(GPDCContainerCodec):
 
     @classmethod
     def _encode_element(cls, element: object) -> str:
+        if isinstance(element, (list, dict, set)):
+            raise TypeError(f"SetObject does not support non-scalar element type: {type(element).__name__!r}")
         if isinstance(element, tuple):
             return GPDCScalarCodec.encode_tuple(element)
         return GPDCScalarCodec.encode_value(element)
