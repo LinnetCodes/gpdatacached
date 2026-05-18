@@ -97,6 +97,18 @@ def encode_element(
 def decode_element(encoded: str, namespace: GPDCNamespace) -> object:
     if isinstance(encoded, str) and encoded.startswith("ref:"):
         return _load_ref_object(namespace, encoded)
+    if not encoded or ":" not in encoded:
+        raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+    colon_idx = encoded.index(":")
+    type_name = encoded[:colon_idx]
+    gpdc_type = f"scalar:{type_name}"
+    try:
+        entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
+        codec = entry.codec_class
+        if codec is not None:
+            return codec.decode_value(encoded)
+    except (ValueError, KeyError):
+        pass
     return GPDCScalarCodec.decode_value(encoded)
 
 
@@ -108,6 +120,8 @@ def _ref_existing_container(
     from .container import GPDCContainerObject
 
     assert isinstance(container, GPDCContainerObject)
+    if container._namespace is not namespace:
+        raise ValueError("Cross-namespace container reference sharing is not supported")
     obj_key = container._redis_key()
     ref_key = make_ref_key(namespace.domain.name, namespace.name, container._name)
     namespace._redis().sadd(ref_key, parent_name)

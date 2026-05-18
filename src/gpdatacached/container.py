@@ -29,7 +29,6 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         self.ref_key: str = make_ref_key(domain_name, ns_name, name)
 
     def _touch(self) -> None:
-        """Update updated_at and slide TTL if needed."""
         key = self._redis_key()
         now = datetime.datetime.now(datetime.UTC).isoformat()
         r = self._redis()
@@ -38,6 +37,20 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             ttl = self.ttl
             if ttl > 0:
                 r.expire(key, ttl)
+
+    def _unbind_old_ref(self, old_encoded: str) -> None:
+        if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
+            return
+        obj_key = old_encoded[len("ref:"):]
+        parts = obj_key.split(":obj:")
+        if len(parts) != 2:
+            return
+        anon_name = parts[1]
+        anon_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, anon_name)
+        r = self._redis()
+        r.srem(anon_ref_key, self._name)
+        if not r.smembers(anon_ref_key):
+            self._namespace._cascade_delete_anonymous(anon_name)
 
     def referrers(self) -> set[str]:
         """Return set of object names referencing this object's raw data."""
@@ -255,15 +268,22 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
 
     def __setitem__(self, key: object, value: object) -> None:
         encoded_key = GPDCScalarCodec.encode_dict_key(key)
+        r = self._redis()
+        old_encoded = r.hget(self.raw_key, encoded_key)
+        if old_encoded is not None:
+            self._unbind_old_ref(old_encoded)
         encoded_val = encode_element(value, self._namespace, self._name, self.cache_mode, self.ttl)
-        self._redis().hset(self.raw_key, encoded_key, encoded_val)
+        r.hset(self.raw_key, encoded_key, encoded_val)
         self._touch()
 
     def __delitem__(self, key: object) -> None:
         encoded_key = GPDCScalarCodec.encode_dict_key(key)
-        existed = self._redis().hdel(self.raw_key, encoded_key)
-        if not existed:
+        r = self._redis()
+        old_encoded = r.hget(self.raw_key, encoded_key)
+        if old_encoded is None:
             raise KeyError(key)
+        r.hdel(self.raw_key, encoded_key)
+        self._unbind_old_ref(old_encoded)
         self._touch()
 
     def __contains__(self, key: object) -> bool:

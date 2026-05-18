@@ -124,6 +124,28 @@ class GPDCNamespace(MutableMapping):
             ref_key = make_ref_key(self._domain.name, self._name, owner_name)
             self._redis().srem(ref_key, key)
 
+    def _teardown_owner_container(self, key: str, meta: dict) -> None:
+        """Remove an owner container's raw data, anonymous children, and ref sets."""
+        r = self._redis()
+        stored_raw_key = meta.get("value", "")
+        obj_type = meta.get("type", "")
+        ref_key_of_this = make_ref_key(self._domain.name, self._name, key)
+
+        referrers = r.smembers(ref_key_of_this)
+        if stored_raw_key and obj_type.startswith("collection:"):
+            anon_names = self._collect_anon_refs(stored_raw_key, obj_type)
+            for anon_name in anon_names:
+                anon_ref_key = make_ref_key(self._domain.name, self._name, anon_name)
+                r.srem(anon_ref_key, key)
+                if referrers:
+                    r.sadd(anon_ref_key, *referrers)
+                self._cascade_delete_anonymous(anon_name)
+
+        if not referrers:
+            if stored_raw_key:
+                r.delete(stored_raw_key)
+            r.delete(ref_key_of_this)
+
     def _write_scalar_meta(
         self, obj_key: str, entry, encoded_value: str, cache_mode: str, ttl: int, now: str, *, is_new: bool
     ) -> None:
@@ -191,6 +213,13 @@ class GPDCNamespace(MutableMapping):
         ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
         r.sadd(ref_owner_key, key)
 
+        if cache_mode in ("ttl", "sliding") and ttl > 0:
+            source_remaining = r.ttl(src_obj_key)
+            if source_remaining > 0:
+                r.expire(obj_key, source_remaining)
+            else:
+                r.expire(obj_key, ttl)
+
     def __setitem__(self, key: str, value: object) -> None:
         validate_object_name(key)
         from .container import GPDCContainerObject
@@ -203,6 +232,13 @@ class GPDCNamespace(MutableMapping):
 
         if existing:
             self._cleanup_old_container_ref(key, existing)
+            old_type = existing.get("type", "")
+            if old_type.startswith("collection:"):
+                old_raw_key = existing.get("value", "")
+                if old_raw_key:
+                    old_owner = self._owner_name_from_raw_key(old_raw_key)
+                    if old_owner == key:
+                        self._teardown_owner_container(key, existing)
 
         if isinstance(value, GPDCContainerObject):
             self._setitem_container_ref(key, value, existing)
@@ -225,7 +261,8 @@ class GPDCNamespace(MutableMapping):
                     entry.codec_class.delete_raw(self, raw_key)
                 entry.codec_class.create_raw(self, raw_key, value, key, cache_mode, ttl)
         else:
-            encoded = GPDCScalarCodec.encode_value(value)
+            codec = entry.codec_class or GPDCScalarCodec
+            encoded = codec.encode_value(value)
             if existing:
                 cache_mode = existing.get("cache_mode", "permanent")
                 ttl = int(existing["ttl"]) if existing.get("ttl") else 0
@@ -293,25 +330,12 @@ class GPDCNamespace(MutableMapping):
             ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
             r.srem(ref_owner_key, key)
 
-        if owner_name == key and stored_raw_key:
-            referrers = r.smembers(ref_key_of_this)
-            anon_names = self._collect_anon_refs(stored_raw_key, obj_type)
-            for anon_name in anon_names:
-                anon_ref_key = make_ref_key(self._domain.name, self._name, anon_name)
-                r.srem(anon_ref_key, key)
-                if referrers:
-                    r.sadd(anon_ref_key, *referrers)
-                self._cascade_delete_anonymous(anon_name)
+        if owner_name == key:
+            self._teardown_owner_container(key, meta)
 
         r.delete(obj_key)
 
-        if owner_name == key:
-            referrers = r.smembers(ref_key_of_this)
-            if not referrers:
-                if stored_raw_key:
-                    r.delete(stored_raw_key)
-                r.delete(ref_key_of_this)
-        else:
+        if owner_name != key:
             r.delete(ref_key_of_this)
             if stored_raw_key:
                 ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
@@ -371,6 +395,8 @@ class GPDCNamespace(MutableMapping):
 
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
+            return False
+        if key.startswith("~"):
             return False
         obj_key = make_object_key(self._domain.name, self._name, key)
         return self._redis().exists(obj_key) > 0

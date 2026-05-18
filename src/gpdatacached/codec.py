@@ -56,8 +56,12 @@ class GPDCScalarCodec(GPDCCodec):
         raw = encoded[colon_idx + 1 :]
 
         if type_name == "none":
+            if raw != "None":
+                raise ValueError(f"Invalid scalar value for type 'none': {raw!r}")
             return None
         if type_name == "bool":
+            if raw not in ("True", "False"):
+                raise ValueError(f"Invalid scalar value for type 'bool': {raw!r}")
             return raw == "True"
         if type_name == "int":
             try:
