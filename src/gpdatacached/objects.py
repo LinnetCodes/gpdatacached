@@ -19,6 +19,7 @@ from .scalar import (
     DateObject,
     TimeObject,
     NoneObject,
+    TupleObject,
 )
 from .container import (
     GPDCContainerObject,
@@ -42,4 +43,5 @@ __all__ = [
     "ListObject",
     "DictObject",
     "SetObject",
+    "TupleObject",
 ]

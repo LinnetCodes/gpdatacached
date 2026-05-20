@@ -21,6 +21,7 @@ from .objects import (
     SetObject,
     StrObject,
     TimeObject,
+    TupleObject,
 )
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "ListObject",
     "DictObject",
     "SetObject",
+    "TupleObject",
     "GPDCCodec",
     "GPDCScalarCodec",
     "GPDCTypeRegistry",
