@@ -539,21 +539,21 @@ class TestSpecVerification:
 
     def test_dict_tuple_key_encoding(self, domain, clean_redis):
         # ── §4 Tuple Key 编码规则 ─────────────────────────────────────
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import TupleCodec
 
         ns = domain.get_namespace("spec_verification")
         d = "testdomain"
         n = "spec_verification"
 
         # §4.2 编码示例
-        assert GPDCScalarCodec.encode_tuple(("a", "b")) == 'tuple:["str:a","str:b"]'
-        assert GPDCScalarCodec.encode_tuple(("a,b", "c")) == 'tuple:["str:a,b","str:c"]'
-        assert GPDCScalarCodec.encode_tuple((1, "x", 2.5)) == 'tuple:["int:1","str:x","float:2.5"]'
-        assert GPDCScalarCodec.encode_tuple((True, None)) == 'tuple:["bool:True","none:None"]'
+        assert TupleCodec.encode_value(("a", "b")) == 'tuple:["str:a","str:b"]'
+        assert TupleCodec.encode_value(("a,b", "c")) == 'tuple:["str:a,b","str:c"]'
+        assert TupleCodec.encode_value((1, "x", 2.5)) == 'tuple:["int:1","str:x","float:2.5"]'
+        assert TupleCodec.encode_value((True, None)) == 'tuple:["bool:True","none:None"]'
 
         # §4.3 roundtrip
-        assert GPDCScalarCodec.decode_tuple('tuple:["str:a","str:b"]') == ("a", "b")
-        assert GPDCScalarCodec.decode_tuple('tuple:["int:1","str:x","float:2.5"]') == (1, "x", 2.5)
+        assert TupleCodec.decode_value('tuple:["str:a","str:b"]') == ("a", "b")
+        assert TupleCodec.decode_value('tuple:["int:1","str:x","float:2.5"]') == (1, "x", 2.5)
 
         # §4.4 Dict Hash 字段编码完整示例
         ns["td"] = {"text": "test", 2: 100, ("a", "b"): "example"}

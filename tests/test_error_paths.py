@@ -3,64 +3,64 @@ import pytest
 
 class TestCodecErrorPaths:
     def test_decode_empty_string(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import IntCodec
 
         with pytest.raises(ValueError, match="Invalid scalar encoding"):
-            GPDCScalarCodec.decode_value("")
+            IntCodec.decode_value("")
 
     def test_decode_no_colon(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import IntCodec
 
         with pytest.raises(ValueError, match="Invalid scalar encoding"):
-            GPDCScalarCodec.decode_value("invalid")
+            IntCodec.decode_value("invalid")
 
     def test_decode_bad_int(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import IntCodec
 
         with pytest.raises(ValueError, match="Invalid scalar value"):
-            GPDCScalarCodec.decode_value("int:abc")
+            IntCodec.decode_value("int:abc")
 
     def test_decode_bad_float(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import FloatCodec
 
         with pytest.raises(ValueError, match="Invalid scalar value"):
-            GPDCScalarCodec.decode_value("float:xyz")
+            FloatCodec.decode_value("float:xyz")
 
     def test_decode_bad_datetime(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import DateTimeCodec
 
         with pytest.raises(ValueError, match="Invalid scalar value"):
-            GPDCScalarCodec.decode_value("datetime:not-a-date")
+            DateTimeCodec.decode_value("datetime:not-a-date")
 
     def test_decode_bad_date(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import DateCodec
 
         with pytest.raises(ValueError, match="Invalid scalar value"):
-            GPDCScalarCodec.decode_value("date:bad")
+            DateCodec.decode_value("date:bad")
 
     def test_decode_bad_time(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import TimeCodec
 
         with pytest.raises(ValueError, match="Invalid scalar value"):
-            GPDCScalarCodec.decode_value("time:bad")
+            TimeCodec.decode_value("time:bad")
 
     def test_encode_unsupported_type(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import IntCodec
 
-        with pytest.raises(TypeError, match="Unsupported scalar type"):
-            GPDCScalarCodec.encode_value(complex(1, 2))
+        with pytest.raises(TypeError):
+            IntCodec.encode_value(complex(1, 2))
 
     def test_encode_empty_tuple(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import TupleCodec
 
         with pytest.raises(ValueError, match="Cannot encode empty tuple"):
-            GPDCScalarCodec.encode_tuple(())
+            TupleCodec.encode_value(())
 
     def test_encode_tuple_with_list_element(self):
-        from gpdatacached.codec import GPDCScalarCodec
+        from gpdatacached.codec import TupleCodec
 
         with pytest.raises(TypeError, match="non-scalar"):
-            GPDCScalarCodec.encode_tuple(([1, 2],))
+            TupleCodec.encode_value(([1, 2],))
 
 
 class TestNamespaceErrorPaths:

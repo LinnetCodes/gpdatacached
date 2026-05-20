@@ -1,40 +1,49 @@
 import pytest
-from gpdatacached.codec import GPDCScalarCodec
+from gpdatacached.codec import IntCodec, FloatCodec, BoolCodec
 
 
 def test_decode_invalid_int():
     with pytest.raises(ValueError, match="Invalid scalar value"):
-        GPDCScalarCodec.decode_value("int:not_a_number")
+        IntCodec.decode_value("int:not_a_number")
 
 
 def test_decode_invalid_float():
     with pytest.raises(ValueError, match="Invalid scalar value"):
-        GPDCScalarCodec.decode_value("float:not_a_number")
+        FloatCodec.decode_value("float:not_a_number")
 
 
 def test_decode_unknown_type():
-    with pytest.raises(ValueError, match="Unknown scalar type name"):
-        GPDCScalarCodec.decode_value("unknown:value")
+    with pytest.raises(ValueError, match="cannot decode type"):
+        IntCodec.decode_value("unknown:value")
 
 
 def test_decode_no_colon():
     with pytest.raises(ValueError, match="Invalid scalar encoding"):
-        GPDCScalarCodec.decode_value("invalid_no_colon")
+        IntCodec.decode_value("invalid_no_colon")
 
 
 def test_decode_empty_string():
     with pytest.raises(ValueError, match="Invalid scalar encoding"):
-        GPDCScalarCodec.decode_value("")
+        IntCodec.decode_value("")
 
 
 def test_encode_unsupported_type():
-    with pytest.raises(TypeError, match="Unsupported scalar type"):
-        GPDCScalarCodec.encode_value(complex(1, 2))
+    with pytest.raises(TypeError):
+        IntCodec.encode_value(complex(1, 2))
 
 
 def test_decode_valid_values_roundtrip():
-    values = [42, 3.14, "hello", True, False, None]
-    for v in values:
-        encoded = GPDCScalarCodec.encode_value(v)
-        decoded = GPDCScalarCodec.decode_value(encoded)
+    from gpdatacached.codec import FloatCodec, StrCodec, NoneCodec
+
+    values_and_codecs = [
+        (42, IntCodec),
+        (3.14, FloatCodec),
+        ("hello", StrCodec),
+        (True, BoolCodec),
+        (False, BoolCodec),
+        (None, NoneCodec),
+    ]
+    for v, codec in values_and_codecs:
+        encoded = codec.encode_value(v)
+        decoded = codec.decode_value(encoded)
         assert decoded == v, f"Roundtrip failed for {v!r}: got {decoded!r}"

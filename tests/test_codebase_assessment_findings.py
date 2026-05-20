@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from gpdatacached.codec import GPDCScalarCodec
+from gpdatacached.codec import BoolCodec
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
@@ -163,4 +163,4 @@ def test_namespace_contains_excludes_anonymous_objects(isolated_ns):
 
 def test_decode_invalid_bool_payload_raises_value_error():
     with pytest.raises(ValueError):
-        GPDCScalarCodec.decode_value("bool:not-bool")
+        BoolCodec.decode_value("bool:not-bool")
