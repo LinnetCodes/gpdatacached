@@ -318,7 +318,7 @@ class GPDCNamespace(MutableMapping):
         validate_object_name(key)
         from .container import GPDCContainerObject
         from .scalar import GPDCScalarObject
-        from .codec import GPDCContainerCodec, GPDCScalarCodec
+        from .codec import GPDCContainerCodec
 
         r = self._redis()
         obj_key = make_object_key(self._domain.name, self._name, key)
@@ -361,7 +361,7 @@ class GPDCNamespace(MutableMapping):
                     entry.codec_class.delete_raw(self, raw_key)
                 entry.codec_class.create_raw(self, raw_key, value, key, cache_mode, ttl)
         else:
-            codec = entry.codec_class or GPDCScalarCodec
+            codec = entry.codec_class
             encoded = codec.encode_value(value)
             if existing:
                 cache_mode = existing.get("cache_mode", "permanent")
