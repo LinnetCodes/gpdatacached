@@ -112,6 +112,23 @@ def decode_element(encoded: str, namespace: GPDCNamespace) -> object:
     return GPDCScalarCodec.decode_value(encoded)
 
 
+def encode_key(value: object) -> str:
+    entry = GPDCTypeRegistry.lookup_by_python_type(value)
+    if entry.is_container:
+        raise TypeError(f"Cannot use container type as key: {type(value).__name__!r}")
+    return entry.codec_class.encode_value(value)
+
+
+def decode_key(encoded: str) -> object:
+    if not encoded or ":" not in encoded:
+        raise ValueError(f"Invalid key encoding: {encoded!r}")
+    colon_idx = encoded.index(":")
+    type_name = encoded[:colon_idx]
+    gpdc_type = f"scalar:{type_name}"
+    entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
+    return entry.codec_class.decode_value(encoded)
+
+
 def _ref_existing_container(
     namespace: GPDCNamespace,
     container: GPDCDataObject,

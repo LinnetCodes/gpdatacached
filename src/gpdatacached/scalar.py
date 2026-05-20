@@ -88,4 +88,8 @@ class NoneObject(GPDCScalarObject):
     TYPE = "scalar:none"
 
 
+class TupleObject(GPDCScalarObject):
+    TYPE = "scalar:tuple"
+
+
 # ── Type registry ─────────────────────────────────────────────────────────────
