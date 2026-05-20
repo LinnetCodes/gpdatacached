@@ -432,32 +432,22 @@ class SetCodec(GPDCContainerCodec):
     """Codec for Python set values stored as Redis Sets."""
 
     @classmethod
-    def _encode_element(cls, element: object) -> str:
-        if isinstance(element, (list, dict, set)):
-            raise TypeError(f"SetObject does not support non-scalar element type: {type(element).__name__!r}")
-        if isinstance(element, tuple):
-            return GPDCScalarCodec.encode_tuple(element)
-        return GPDCScalarCodec.encode_value(element)
-
-    @classmethod
-    def _decode_element(cls, encoded: str) -> object:
-        if encoded.startswith("tuple:["):
-            return GPDCScalarCodec.decode_tuple(encoded)
-        return GPDCScalarCodec.decode_value(encoded)
-
-    @classmethod
     def create_raw(cls, namespace, raw_key: str, value: set, owner_name: str, cache_mode: str, ttl: int) -> None:
         if not value:
             return
-        encoded = [cls._encode_element(elem) for elem in value]
+        from .types import encode_key
+
+        encoded = [encode_key(elem) for elem in value]
         namespace._redis().sadd(raw_key, *encoded)
 
     @classmethod
     def read_raw(cls, namespace, raw_key: str) -> set:
+        from .types import decode_key
+
         members = namespace._redis().smembers(raw_key)
         if not members:
             return set()
-        return {cls._decode_element(m) for m in members}
+        return {decode_key(m) for m in members}
 
     @classmethod
     def delete_raw(cls, namespace, raw_key: str) -> None:

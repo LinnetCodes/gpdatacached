@@ -3,81 +3,81 @@ import datetime
 
 
 def test_set_accepts_int():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key, decode_key
 
-    encoded = SetCodec._encode_element(42)
-    assert SetCodec._decode_element(encoded) == 42
+    encoded = encode_key(42)
+    assert decode_key(encoded) == 42
 
 
 def test_set_accepts_str():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key, decode_key
 
-    encoded = SetCodec._encode_element("hello")
-    assert SetCodec._decode_element(encoded) == "hello"
+    encoded = encode_key("hello")
+    assert decode_key(encoded) == "hello"
 
 
 def test_set_accepts_float():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key, decode_key
 
-    encoded = SetCodec._encode_element(3.14)
-    assert SetCodec._decode_element(encoded) == 3.14
+    encoded = encode_key(3.14)
+    assert decode_key(encoded) == 3.14
 
 
 def test_set_accepts_bool():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key, decode_key
 
-    encoded = SetCodec._encode_element(True)
-    assert SetCodec._decode_element(encoded) is True
+    encoded = encode_key(True)
+    assert decode_key(encoded) is True
 
 
 def test_set_accepts_tuple():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key, decode_key
 
-    encoded = SetCodec._encode_element((1, 2))
-    assert SetCodec._decode_element(encoded) == (1, 2)
+    encoded = encode_key((1, 2))
+    assert decode_key(encoded) == (1, 2)
 
 
 def test_set_accepts_datetime():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key, decode_key
 
     now = datetime.datetime(2024, 1, 1, 12, 0, 0)
-    encoded = SetCodec._encode_element(now)
-    decoded = SetCodec._decode_element(encoded)
+    encoded = encode_key(now)
+    decoded = decode_key(encoded)
     assert decoded == now
 
 
 def test_set_accepts_none():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key, decode_key
 
-    encoded = SetCodec._encode_element(None)
-    assert SetCodec._decode_element(encoded) is None
+    encoded = encode_key(None)
+    assert decode_key(encoded) is None
 
 
 def test_set_rejects_list():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key
 
-    with pytest.raises(TypeError, match="non-scalar"):
-        SetCodec._encode_element([1, 2, 3])
+    with pytest.raises(TypeError, match="container type"):
+        encode_key([1, 2, 3])
 
 
 def test_set_rejects_dict():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key
 
-    with pytest.raises(TypeError, match="non-scalar"):
-        SetCodec._encode_element({"a": 1})
+    with pytest.raises(TypeError, match="container type"):
+        encode_key({"a": 1})
 
 
 def test_set_rejects_set():
-    from gpdatacached.codec import SetCodec
+    from gpdatacached.types import encode_key
 
-    with pytest.raises(TypeError, match="non-scalar"):
-        SetCodec._encode_element({1, 2})
+    with pytest.raises(TypeError, match="container type"):
+        encode_key({1, 2})
 
 
 def test_setobject_add_rejects_list(ns):
     ns["s"] = {1, 2, 3}
     s = ns.get_object("s")
-    with pytest.raises(TypeError, match="non-scalar"):
+    with pytest.raises(TypeError, match="container type"):
         s.add([1, 2])
 
 

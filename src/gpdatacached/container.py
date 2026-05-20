@@ -473,26 +473,26 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         return self._redis().scard(self.raw_key)
 
     def __contains__(self, item: object) -> bool:
-        encoded = SetCodec._encode_element(item)
+        encoded = encode_key(item)
         return self._redis().sismember(self.raw_key, encoded)
 
     def __iter__(self):
         members = self._redis().smembers(self.raw_key)
         for m in members:
-            yield SetCodec._decode_element(m)
+            yield decode_key(m)
 
     def add(self, value: object) -> None:
-        encoded = SetCodec._encode_element(value)
+        encoded = encode_key(value)
         self._redis().sadd(self.raw_key, encoded)
         self._touch()
 
     def discard(self, value: object) -> None:
-        encoded = SetCodec._encode_element(value)
+        encoded = encode_key(value)
         self._redis().srem(self.raw_key, encoded)
         self._touch()
 
     def remove(self, value: object) -> None:
-        encoded = SetCodec._encode_element(value)
+        encoded = encode_key(value)
         removed = self._redis().srem(self.raw_key, encoded)
         if not removed:
             raise KeyError(value)
@@ -503,7 +503,7 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         if encoded is None:
             raise KeyError("pop from an empty set")
         self._touch()
-        return SetCodec._decode_element(encoded)
+        return decode_key(encoded)
 
     def clear(self) -> None:
         self._redis().delete(self.raw_key)
@@ -512,7 +512,7 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
     def _to_encoded_set(self, other) -> set[str]:
         if isinstance(other, SetObject):
             return self._redis().smembers(other.raw_key)
-        return {SetCodec._encode_element(e) for e in other}
+        return {encode_key(e) for e in other}
 
     def __or__(self, other):
         self_set = self.value

@@ -961,17 +961,17 @@ class TestSpecVerification:
 
     def test_set_codec_encoding_decoding(self, domain, clean_redis):
         # ── §3 SetCodec 编解码流程 ───────────────────────────────────
-        from gpdatacached.codec import SetCodec
+        from gpdatacached.types import encode_key, decode_key
 
-        # 标量 → GPDCScalarCodec.encode_value
-        assert SetCodec._encode_element(42) == "int:42"
-        assert SetCodec._encode_element("abc") == "str:abc"
-        # tuple → GPDCScalarCodec.encode_tuple
-        assert SetCodec._encode_element((1, 2)) == 'tuple:["int:1","int:2"]'
+        # 标量 → registry-driven encode_key
+        assert encode_key(42) == "int:42"
+        assert encode_key("abc") == "str:abc"
+        # tuple → TupleCodec
+        assert encode_key((1, 2)) == 'tuple:["int:1","int:2"]'
 
-        # 解码: tuple:[...] → decode_tuple, else → decode_value
-        assert SetCodec._decode_element("int:42") == 42
-        assert SetCodec._decode_element('tuple:["int:1","int:2"]') == (1, 2)
+        # 解码: tuple:[...] → TupleCodec, else → scalar codec
+        assert decode_key("int:42") == 42
+        assert decode_key('tuple:["int:1","int:2"]') == (1, 2)
 
     def test_set_binary_operations(self, domain, clean_redis):
         ns = domain.get_namespace("spec_verification")
