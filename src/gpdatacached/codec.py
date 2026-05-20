@@ -400,26 +400,26 @@ class DictCodec(GPDCContainerCodec):
 
     @classmethod
     def create_raw(cls, namespace, raw_key: str, value: dict, owner_name: str, cache_mode: str, ttl: int) -> None:
-        from .types import encode_element
+        from .types import encode_element, encode_key
 
         if not value:
             return
         mapping = {}
         for k, v in value.items():
-            encoded_key = GPDCScalarCodec.encode_dict_key(k)
+            encoded_key = encode_key(k)
             mapping[encoded_key] = encode_element(v, namespace, owner_name, cache_mode, ttl)
         namespace._redis().hset(raw_key, mapping=mapping)
 
     @classmethod
     def read_raw(cls, namespace, raw_key: str) -> dict:
-        from .types import decode_element
+        from .types import decode_element, decode_key
 
         data = namespace._redis().hgetall(raw_key)
         if not data:
             return {}
         result = {}
         for encoded_key, encoded_val in data.items():
-            key = GPDCScalarCodec.decode_dict_key(encoded_key)
+            key = decode_key(encoded_key)
             result[key] = decode_element(encoded_val, namespace)
         return result
 

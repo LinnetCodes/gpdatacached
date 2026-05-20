@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
-from .codec import GPDCScalarCodec, SetCodec
+from .codec import SetCodec
 from .keys import make_object_key, make_raw_key, make_ref_key
 from ._base import GPDCDataObject
-from .types import encode_element, decode_element
+from .types import encode_element, decode_element, encode_key, decode_key
 
 
 class GPDCContainerObject(GPDCDataObject, ABC):
@@ -331,7 +331,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
             return {}
         result = {}
         for encoded_key, encoded_val in data.items():
-            key = GPDCScalarCodec.decode_dict_key(encoded_key)
+            key = decode_key(encoded_key)
             result[key] = decode_element(encoded_val, self._namespace)
         return result
 
@@ -343,14 +343,14 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         return self._redis().hlen(self.raw_key)
 
     def __getitem__(self, key: object) -> object:
-        encoded_key = GPDCScalarCodec.encode_dict_key(key)
+        encoded_key = encode_key(key)
         encoded_val = self._redis().hget(self.raw_key, encoded_key)
         if encoded_val is None:
             raise KeyError(key)
         return decode_element(encoded_val, self._namespace)
 
     def __setitem__(self, key: object, value: object) -> None:
-        encoded_key = GPDCScalarCodec.encode_dict_key(key)
+        encoded_key = encode_key(key)
         r = self._redis()
         old_encoded = r.hget(self.raw_key, encoded_key)
         if self._is_container_ref(old_encoded):
@@ -362,7 +362,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         self._touch()
 
     def __delitem__(self, key: object) -> None:
-        encoded_key = GPDCScalarCodec.encode_dict_key(key)
+        encoded_key = encode_key(key)
         r = self._redis()
         old_encoded = r.hget(self.raw_key, encoded_key)
         if old_encoded is None:
@@ -372,15 +372,15 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         self._touch()
 
     def __contains__(self, key: object) -> bool:
-        encoded_key = GPDCScalarCodec.encode_dict_key(key)
+        encoded_key = encode_key(key)
         return self._redis().hexists(self.raw_key, encoded_key)
 
     def __iter__(self):
         for encoded_key in self._redis().hkeys(self.raw_key):
-            yield GPDCScalarCodec.decode_dict_key(encoded_key)
+            yield decode_key(encoded_key)
 
     def keys(self):
-        return [GPDCScalarCodec.decode_dict_key(k) for k in self._redis().hkeys(self.raw_key)]
+        return [decode_key(k) for k in self._redis().hkeys(self.raw_key)]
 
     def values(self):
         result = []
@@ -391,7 +391,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
     def items(self):
         result = []
         for encoded_key, encoded_val in self._redis().hgetall(self.raw_key).items():
-            key = GPDCScalarCodec.decode_dict_key(encoded_key)
+            key = decode_key(encoded_key)
             result.append((key, decode_element(encoded_val, self._namespace)))
         return result
 
@@ -402,7 +402,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
             return default
 
     def pop(self, key, *args):
-        encoded_key = GPDCScalarCodec.encode_dict_key(key)
+        encoded_key = encode_key(key)
         r = self._redis()
         encoded_val = r.hget(self.raw_key, encoded_key)
         if encoded_val is None:
@@ -440,7 +440,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
     def deepcopy(self):
         result = {}
         for encoded_key, encoded_val in self._redis().hgetall(self.raw_key).items():
-            key = GPDCScalarCodec.decode_dict_key(encoded_key)
+            key = decode_key(encoded_key)
             decoded = decode_element(encoded_val, self._namespace)
             if hasattr(decoded, "deepcopy"):
                 result[key] = decoded.deepcopy()
