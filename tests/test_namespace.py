@@ -109,6 +109,44 @@ class TestNamespaceSetItem:
         assert ns["x"] == 99
 
 
+class TestContainerBindingKind:
+    def test_named_container_owner_records_binding_kind(self, ns, clean_redis):
+        ns["x"] = [1, 2, 3]
+
+        data = clean_redis.hgetall(make_object_key("testdomain", "testns", "x"))
+
+        assert data["binding_kind"] == "owner"
+
+    def test_named_container_referrer_records_binding_kind(self, ns, clean_redis):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+
+        data = clean_redis.hgetall(make_object_key("testdomain", "testns", "y"))
+
+        assert data["binding_kind"] == "ref"
+
+    def test_legacy_owner_without_binding_kind_is_still_restricted(self, ns, clean_redis):
+        ns["legacy_owner"] = [1, 2, 3]
+        obj_key = make_object_key("testdomain", "testns", "legacy_owner")
+        clean_redis.hdel(obj_key, "binding_kind")
+
+        with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
+            ns["legacy_owner"] = 99
+
+    def test_legacy_ref_without_binding_kind_can_rebind(self, ns, clean_redis):
+        ns["source"] = [1, 2, 3]
+        ns["legacy_ref"] = ns["source"]
+        obj_key = make_object_key("testdomain", "testns", "legacy_ref")
+        ref_key = "gpdc:testdomain:testns:ref:source"
+        clean_redis.hdel(obj_key, "binding_kind")
+
+        ns["legacy_ref"] = 99
+
+        assert ns["legacy_ref"] == 99
+        assert list(ns["source"]) == [1, 2, 3]
+        assert "legacy_ref" not in clean_redis.smembers(ref_key)
+
+
 class TestNamespaceGetItem:
     def test_get_int_returns_native_value(self, ns):
         ns["n"] = 42
@@ -496,31 +534,24 @@ class TestNamespaceMutableMapping:
         assert len(ns) == 0
 
     def test_clear_also_deletes_anonymous_objects(self, ns, clean_redis):
-        """clear() 也删除匿名对象（和 namespace 下所有 key，仅保留 __meta__）。"""
-        import datetime
-        from gpdatacached.keys import make_namespace_meta_key, make_object_key_prefix
+        """clear() deletes realistic anonymous obj/raw/ref keys created by nested containers."""
+        from gpdatacached.keys import make_namespace_meta_key, make_object_key, make_raw_key, make_ref_key
 
-        prefix = make_object_key_prefix("testdomain", "testns")
-        anon_key = prefix + "~anon:fake-uuid-0003"
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        clean_redis.hset(
-            anon_key,
-            mapping={
-                "type": "scalar:int",
-                "codec": "native",
-                "value": "int:1",
-                "cache_mode": "permanent",
-                "ttl": "",
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-        ns["named"] = 99
+        ns["named"] = {"nested": [1, 2, 3]}
+        anon_name = ns["named"]["nested"].name
+        anon_obj_key = make_object_key("testdomain", "testns", anon_name)
+        anon_raw_key = make_raw_key("testdomain", "testns", anon_name)
+        anon_ref_key = make_ref_key("testdomain", "testns", anon_name)
+
+        assert clean_redis.exists(anon_obj_key) == 1
+        assert clean_redis.exists(anon_raw_key) == 1
+        assert clean_redis.exists(anon_ref_key) == 1
+
         ns.clear()
         assert len(ns) == 0
-        # 匿名对象也被删除
-        assert clean_redis.exists(anon_key) == 0
-        # __meta__ key 保留
+        assert clean_redis.exists(anon_obj_key) == 0
+        assert clean_redis.exists(anon_raw_key) == 0
+        assert clean_redis.exists(anon_ref_key) == 0
         meta_key = make_namespace_meta_key("testdomain", "testns")
         assert clean_redis.exists(meta_key) == 1
 

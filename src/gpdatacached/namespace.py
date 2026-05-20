@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import uuid
 from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, Iterator
 
@@ -122,7 +123,40 @@ class GPDCNamespace(MutableMapping):
         owner_name = self._owner_name_from_raw_key(old_raw_key)
         if owner_name != key:
             ref_key = make_ref_key(self._domain.name, self._name, owner_name)
-            self._redis().srem(ref_key, key)
+            r = self._redis()
+            r.srem(ref_key, key)
+            if owner_name.startswith("~") and not r.smembers(ref_key):
+                self._cascade_delete_anonymous(owner_name)
+
+    def _is_same_container_ref_assignment(self, key: str, existing: dict, container) -> bool:
+        from .container import GPDCContainerObject
+
+        if not existing or self._effective_binding_kind(key, existing) != "ref":
+            return False
+        if not isinstance(container, GPDCContainerObject) or container._namespace is not self:
+            return False
+        container._binding_owner_name()
+        return existing.get("value", "") == container.raw_key
+
+    def _effective_binding_kind(self, key: str, meta: dict) -> str:
+        binding_kind = meta.get("binding_kind", "")
+        if binding_kind in {"owner", "ref"}:
+            return binding_kind
+        if not meta.get("type", "").startswith("collection:"):
+            return ""
+        raw_key = meta.get("value", "")
+        if not raw_key:
+            return ""
+        owner_name = self._owner_name_from_raw_key(raw_key)
+        return "owner" if owner_name == key else "ref"
+
+    def _validate_container_reassignment(self, key: str, existing: dict) -> None:
+        if not existing.get("type", "").startswith("collection:"):
+            return
+        if self._effective_binding_kind(key, existing) == "owner":
+            raise TypeError(
+                "Cannot reassign a namespace container owner; delete it first if you want to end its lifecycle"
+            )
 
     def _teardown_owner_container(self, key: str, meta: dict) -> None:
         """Remove an owner container's raw data, anonymous children, and ref sets."""
@@ -133,18 +167,66 @@ class GPDCNamespace(MutableMapping):
 
         referrers = r.smembers(ref_key_of_this)
         if stored_raw_key and obj_type.startswith("collection:"):
-            anon_names = self._collect_anon_refs(stored_raw_key, obj_type)
-            for anon_name in anon_names:
-                anon_ref_key = make_ref_key(self._domain.name, self._name, anon_name)
-                r.srem(anon_ref_key, key)
+            nested_ref_names = self._collect_nested_ref_names(stored_raw_key, obj_type)
+            for nested_name in nested_ref_names:
+                nested_ref_key = make_ref_key(self._domain.name, self._name, nested_name)
+                r.srem(nested_ref_key, key)
                 if referrers:
-                    r.sadd(anon_ref_key, *referrers)
-                self._cascade_delete_anonymous(anon_name)
+                    r.sadd(nested_ref_key, *referrers)
+                if nested_name.startswith("~"):
+                    self._cascade_delete_anonymous(nested_name)
 
         if not referrers:
             if stored_raw_key:
                 r.delete(stored_raw_key)
             r.delete(ref_key_of_this)
+
+    def _rehome_deleted_owner_container(self, key: str, meta: dict, referrers: set[str]) -> None:
+        r = self._redis()
+        stored_raw_key = meta.get("value", "")
+        obj_type = meta.get("type", "")
+        old_ref_key = make_ref_key(self._domain.name, self._name, key)
+        hidden_owner_name = f"~anon:{uuid.uuid4()}"
+        hidden_obj_key = make_object_key(self._domain.name, self._name, hidden_owner_name)
+        hidden_raw_key = make_raw_key(self._domain.name, self._name, hidden_owner_name)
+        hidden_ref_key = make_ref_key(self._domain.name, self._name, hidden_owner_name)
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        obj_ttl = r.ttl(make_object_key(self._domain.name, self._name, key))
+
+        if stored_raw_key and r.exists(stored_raw_key):
+            r.rename(stored_raw_key, hidden_raw_key)
+        if r.exists(old_ref_key):
+            r.rename(old_ref_key, hidden_ref_key)
+        elif referrers:
+            r.sadd(hidden_ref_key, *referrers)
+
+        r.hset(
+            hidden_obj_key,
+            mapping={
+                "type": obj_type,
+                "codec": meta.get("codec", "native"),
+                "value": hidden_raw_key,
+                "cache_mode": meta.get("cache_mode", self._get_default_cache_mode()),
+                "ttl": meta.get("ttl", ""),
+                "created_at": meta.get("created_at", now),
+                "updated_at": now,
+            },
+        )
+        if obj_ttl > 0:
+            r.expire(hidden_obj_key, obj_ttl)
+
+        for referrer in referrers:
+            referrer_obj_key = make_object_key(self._domain.name, self._name, referrer)
+            r.hset(referrer_obj_key, mapping={"value": hidden_raw_key, "updated_at": now})
+
+        if stored_raw_key and obj_type.startswith("collection:"):
+            nested_ref_names = self._collect_nested_ref_names(hidden_raw_key, obj_type)
+            for nested_name in nested_ref_names:
+                nested_ref_key = make_ref_key(self._domain.name, self._name, nested_name)
+                r.srem(nested_ref_key, key)
+                if referrers:
+                    r.srem(nested_ref_key, *referrers)
+                r.sadd(nested_ref_key, hidden_owner_name)
 
     def _write_scalar_meta(
         self, obj_key: str, entry, encoded_value: str, cache_mode: str, ttl: int, now: str, *, is_new: bool
@@ -165,13 +247,23 @@ class GPDCNamespace(MutableMapping):
             r.expire(obj_key, ttl)
 
     def _write_container_meta(
-        self, obj_key: str, entry, raw_key: str, cache_mode: str, ttl: int, now: str, *, is_new: bool
+        self,
+        obj_key: str,
+        entry,
+        raw_key: str,
+        cache_mode: str,
+        ttl: int,
+        now: str,
+        *,
+        is_new: bool,
+        binding_kind: str,
     ) -> None:
         r = self._redis()
         mapping = {
             "type": entry.gpdc_type,
             "value": raw_key,
             "updated_at": now,
+            "binding_kind": binding_kind,
         }
         if is_new:
             mapping["codec"] = "native"
@@ -198,6 +290,7 @@ class GPDCNamespace(MutableMapping):
         ttl_str = src_meta.get("ttl", "")
         ttl = int(ttl_str) if ttl_str else self._get_default_ttl_seconds()
         obj_key = make_object_key(self._domain.name, self._name, key)
+        created_at = existing.get("created_at", now) if existing else now
         r.hset(
             obj_key,
             mapping={
@@ -206,7 +299,8 @@ class GPDCNamespace(MutableMapping):
                 "value": shared_raw_key,
                 "cache_mode": cache_mode,
                 "ttl": str(ttl) if ttl else "",
-                "created_at": now,
+                "binding_kind": "ref",
+                "created_at": created_at,
                 "updated_at": now,
             },
         )
@@ -230,15 +324,12 @@ class GPDCNamespace(MutableMapping):
         obj_key = make_object_key(self._domain.name, self._name, key)
         existing = r.hgetall(obj_key)
 
+        if self._is_same_container_ref_assignment(key, existing, value):
+            return
+
         if existing:
+            self._validate_container_reassignment(key, existing)
             self._cleanup_old_container_ref(key, existing)
-            old_type = existing.get("type", "")
-            if old_type.startswith("collection:"):
-                old_raw_key = existing.get("value", "")
-                if old_raw_key:
-                    old_owner = self._owner_name_from_raw_key(old_raw_key)
-                    if old_owner == key:
-                        self._teardown_owner_container(key, existing)
 
         if isinstance(value, GPDCContainerObject):
             self._setitem_container_ref(key, value, existing)
@@ -255,7 +346,16 @@ class GPDCNamespace(MutableMapping):
             is_new = not existing
             cache_mode = self._get_default_cache_mode() if is_new else existing.get("cache_mode", "permanent")
             ttl = self._get_default_ttl_seconds() if is_new else (int(existing["ttl"]) if existing.get("ttl") else 0)
-            self._write_container_meta(obj_key, entry, raw_key, cache_mode, ttl, now, is_new=is_new)
+            self._write_container_meta(
+                obj_key,
+                entry,
+                raw_key,
+                cache_mode,
+                ttl,
+                now,
+                is_new=is_new,
+                binding_kind="owner",
+            )
             if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
                 if existing:
                     entry.codec_class.delete_raw(self, raw_key)
@@ -331,7 +431,11 @@ class GPDCNamespace(MutableMapping):
             r.srem(ref_owner_key, key)
 
         if owner_name == key:
-            self._teardown_owner_container(key, meta)
+            referrers = r.smembers(ref_key_of_this)
+            if referrers:
+                self._rehome_deleted_owner_container(key, meta, referrers)
+            else:
+                self._teardown_owner_container(key, meta)
 
         r.delete(obj_key)
 
@@ -340,31 +444,32 @@ class GPDCNamespace(MutableMapping):
             if stored_raw_key:
                 ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
                 owner_obj_key = make_object_key(self._domain.name, self._name, owner_name)
-                if not r.exists(owner_obj_key) and not r.exists(ref_owner_key):
+                if owner_name.startswith("~") and not r.exists(ref_owner_key) and r.exists(owner_obj_key):
+                    self._cascade_delete_anonymous(owner_name)
+                elif not r.exists(owner_obj_key) and not r.exists(ref_owner_key):
                     r.delete(stored_raw_key)
 
-    def _collect_anon_refs(self, raw_key: str, raw_type: str) -> list[str]:
+    def _collect_nested_ref_names(self, raw_key: str, raw_type: str) -> list[str]:
         r = self._redis()
-        anon_names = []
+        ref_names = []
+
+        def add_ref_name(encoded_ref: str) -> None:
+            ref_obj_key = encoded_ref[len("ref:") :]
+            ref_names.append(ref_obj_key.split(":obj:")[1])
+
         if raw_type == "collection:dict":
             for field, val in r.hgetall(raw_key).items():
                 if isinstance(val, str) and val.startswith("ref:"):
-                    ref_obj_key = val[len("ref:") :]
-                    anon_name = ref_obj_key.split(":obj:")[1]
-                    anon_names.append(anon_name)
+                    add_ref_name(val)
         elif raw_type == "collection:list":
             for val in r.lrange(raw_key, 0, -1):
                 if isinstance(val, str) and val.startswith("ref:"):
-                    ref_obj_key = val[len("ref:") :]
-                    anon_name = ref_obj_key.split(":obj:")[1]
-                    anon_names.append(anon_name)
+                    add_ref_name(val)
         elif raw_type == "collection:set":
             for val in r.smembers(raw_key):
                 if isinstance(val, str) and val.startswith("ref:"):
-                    ref_obj_key = val[len("ref:") :]
-                    anon_name = ref_obj_key.split(":obj:")[1]
-                    anon_names.append(anon_name)
-        return anon_names
+                    add_ref_name(val)
+        return ref_names
 
     def _cascade_delete_anonymous(self, anon_name: str) -> None:
         r = self._redis()
@@ -382,13 +487,14 @@ class GPDCNamespace(MutableMapping):
             return
 
         if raw_key and obj_type.startswith("collection:"):
-            nested_anons = self._collect_anon_refs(raw_key, obj_type)
+            nested_ref_names = self._collect_nested_ref_names(raw_key, obj_type)
             r.delete(raw_key)
 
-            for nested in nested_anons:
+            for nested in nested_ref_names:
                 nested_ref_key = make_ref_key(self._domain.name, self._name, nested)
                 r.srem(nested_ref_key, anon_name)
-                self._cascade_delete_anonymous(nested)
+                if nested.startswith("~"):
+                    self._cascade_delete_anonymous(nested)
 
         r.delete(ref_key)
         r.delete(obj_key)

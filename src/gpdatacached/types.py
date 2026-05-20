@@ -122,8 +122,9 @@ def _ref_existing_container(
     assert isinstance(container, GPDCContainerObject)
     if container._namespace is not namespace:
         raise ValueError("Cross-namespace container reference sharing is not supported")
-    obj_key = container._redis_key()
-    ref_key = make_ref_key(namespace.domain.name, namespace.name, container._name)
+    owner_name = container._binding_owner_name()
+    obj_key = make_object_key(namespace.domain.name, namespace.name, owner_name)
+    ref_key = make_ref_key(namespace.domain.name, namespace.name, owner_name)
     namespace._redis().sadd(ref_key, parent_name)
     return f"ref:{obj_key}"
 

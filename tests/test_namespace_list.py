@@ -192,13 +192,13 @@ class TestDeletion:
         assert not r.exists(make_raw_key(DOMAIN, NS, "a"))
         assert not r.exists(make_ref_key(DOMAIN, NS, "a"))
 
-    def test_delete_with_referrers_keeps_raw_and_ref(self, ns, r):
+    def test_delete_with_referrers_keeps_referrer_accessible(self, ns, r):
         ns["a"] = [1, 2, 3]
         ns["b"] = ns["a"]
         del ns["a"]
         assert not r.exists(make_object_key(DOMAIN, NS, "a"))
-        assert r.exists(make_raw_key(DOMAIN, NS, "a"))
-        assert r.exists(make_ref_key(DOMAIN, NS, "a"))
+        assert not r.exists(make_raw_key(DOMAIN, NS, "a"))
+        assert list(ns["b"]) == [1, 2, 3]
 
     def test_delete_referrer_removes_from_original_ref_set(self, ns, r):
         ns["a"] = [1, 2, 3]

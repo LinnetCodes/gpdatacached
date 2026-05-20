@@ -96,10 +96,16 @@ class TestSetObjectBasic:
         obj, *_ = setup_set
         assert obj.value == {1, 2, 3}
 
-    def test_value_setter(self, setup_set):
-        obj, r, _, raw_key, _ = setup_set
-        obj.value = {4, 5}
-        assert set(obj) == {4, 5}
+    def test_value_setter_rejected(self, setup_set):
+        obj, *_ = setup_set
+
+        with pytest.raises(
+            TypeError,
+            match="Container value replacement is not supported; use explicit mutating methods instead",
+        ):
+            obj.value = {4, 5}
+
+        assert obj.value == {1, 2, 3}
 
 
 class TestSetObjectMutableSetOps:

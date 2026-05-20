@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_setitem_scalar_new(ns):
     ns["x"] = 42
     assert ns["x"] == 42
@@ -44,10 +47,49 @@ def test_setitem_scalar_object(ns):
     assert ns["y"] == 42
 
 
-def test_setitem_list_overwrite_to_scalar(ns):
+def test_setitem_list_owner_overwrite_to_scalar_rejected(ns):
     ns["x"] = [1, 2, 3]
-    ns["x"] = 42
-    assert ns["x"] == 42
+
+    with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
+        ns["x"] = 42
+
+
+def test_setitem_owner_overwrite_to_native_container_rejected(ns):
+    ns["x"] = [1, 2, 3]
+
+    with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
+        ns["x"] = {"a": 1}
+
+
+def test_setitem_referrer_can_rebind_to_scalar(ns):
+    ns["x"] = [1, 2, 3]
+    ns["y"] = ns["x"]
+
+    ns["y"] = 42
+
+    assert ns["y"] == 42
+    assert list(ns["x"]) == [1, 2, 3]
+
+
+def test_setitem_referrer_can_rebind_to_native_container(ns):
+    ns["x"] = [1, 2, 3]
+    ns["y"] = ns["x"]
+
+    ns["y"] = {"a": 1}
+
+    assert ns["y"]["a"] == 1
+    assert list(ns["x"]) == [1, 2, 3]
+
+
+def test_setitem_referrer_can_rebind_to_existing_container_object(ns):
+    ns["x"] = [1, 2, 3]
+    ns["y"] = ns["x"]
+    ns["z"] = {"a": 1}
+
+    ns["y"] = ns["z"]
+
+    assert ns["y"]["a"] == 1
+    assert list(ns["x"]) == [1, 2, 3]
 
 
 def test_contains_with_tilde_name(ns):

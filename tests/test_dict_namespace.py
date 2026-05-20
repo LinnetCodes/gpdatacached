@@ -103,12 +103,13 @@ class TestDictDeletion:
         assert not r.exists(make_raw_key(DOMAIN, NS, "d"))
         assert not r.exists(make_ref_key(DOMAIN, NS, "d"))
 
-    def test_delete_with_referrers_keeps_raw(self, ns, r):
+    def test_delete_with_referrers_keeps_referrer_accessible(self, ns, r):
         ns["a"] = {"x": 1}
         ns["b"] = ns["a"]
         del ns["a"]
         assert not r.exists(make_object_key(DOMAIN, NS, "a"))
-        assert r.exists(make_raw_key(DOMAIN, NS, "a"))
+        assert isinstance(ns["b"], DictObject)
+        assert ns["b"]["x"] == 1
 
     def test_delete_nonexistent_raises(self, ns):
         with pytest.raises(KeyError):
@@ -133,8 +134,12 @@ class TestDictReassignment:
 
     def test_reassign_dict_to_scalar(self, ns):
         ns["x"] = {"a": 1}
-        ns["x"] = 42
-        assert ns["x"] == 42
+        with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
+            ns["x"] = 42
+
+        result = ns["x"]
+        assert isinstance(result, DictObject)
+        assert result["a"] == 1
 
 
 class TestMixedTypes:

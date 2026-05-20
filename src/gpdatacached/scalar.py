@@ -23,6 +23,7 @@ class GPDCScalarObject(GPDCDataObject):
         if not encoded:
             return None
         from .types import GPDCTypeRegistry
+
         try:
             entry = GPDCTypeRegistry.lookup_by_gpdc_type(self.TYPE)
             codec = entry.codec_class
@@ -35,12 +36,11 @@ class GPDCScalarObject(GPDCDataObject):
     @value.setter
     def value(self, new_value: object) -> None:
         from .types import GPDCTypeRegistry
+
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(self.TYPE)
         expected_python_type = entry.python_type
         if not isinstance(new_value, expected_python_type):
-            raise TypeError(
-                f"Cannot assign {type(new_value).__name__!r} to {self.TYPE}"
-            )
+            raise TypeError(f"Cannot assign {type(new_value).__name__!r} to {self.TYPE}")
         codec = entry.codec_class or GPDCScalarCodec
         encoded = codec.encode_value(new_value)
         key = self._redis_key()

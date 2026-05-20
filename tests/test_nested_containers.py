@@ -109,6 +109,149 @@ class TestListNestedDict:
         assert isinstance(lst[1], DictObject)
         assert lst[1]["name"] == "Bob"
 
+    def test_list_existing_container_slot_rejects_scalar(self, ns):
+        ns["items"] = [0, {"a": 1}]
+        lst = ns["items"]
+
+        with pytest.raises(TypeError, match="Cannot overwrite an existing container slot"):
+            lst[1] = 42
+
+    def test_list_existing_container_slot_rejects_container(self, ns):
+        ns["items"] = [0, {"a": 1}]
+        lst = ns["items"]
+
+        with pytest.raises(TypeError, match="Cannot overwrite an existing container slot"):
+            lst[1] = [4, 5]
+
+    def test_list_scalar_slot_can_upgrade_to_container_once(self, ns):
+        ns["items"] = [1, 2, 3]
+        lst = ns["items"]
+
+        lst[1] = {"a": 1}
+
+        assert lst[1]["a"] == 1
+
+    def test_delete_container_slot_cascades_removed_child(self, ns, r):
+        ns["items"] = [0, {"a": 1}]
+        lst = ns["items"]
+        anon_name = lst[1].name
+
+        del lst[1]
+
+        assert list(lst) == [0]
+        assert not r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_pop_container_slot_cascades_removed_child(self, ns, r):
+        ns["items"] = [0, {"a": 1}]
+        lst = ns["items"]
+        anon_name = lst[1].name
+
+        popped = lst.pop()
+
+        assert popped["a"] == 1
+        assert list(lst) == [0]
+        assert not r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_pop_list_item_by_index_cascades_to_anon(self, ns, r):
+        ns["items"] = [{"name": "Alice"}, 2]
+        lst = ns["items"]
+        anon_name = lst[0].name
+
+        popped = lst.pop(0)
+
+        assert popped == {"name": "Alice"}
+        assert list(lst) == [2]
+        assert not r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_remove_list_item_cascades_to_anon(self, ns, r):
+        ns["items"] = [{"name": "Alice"}, 2]
+        lst = ns["items"]
+        nested = lst[0]
+        anon_name = nested.name
+
+        lst.remove(nested)
+
+        assert list(lst) == [2]
+        assert not r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_clear_list_cascades_all_nested_anons(self, ns, r):
+        ns["items"] = [{"name": "Alice"}, {"name": "Bob"}]
+        lst = ns["items"]
+        first = lst[0].name
+        second = lst[1].name
+
+        lst.clear()
+
+        assert list(lst) == []
+        assert not r.exists(make_object_key(DOMAIN, NS, first))
+        assert not r.exists(make_raw_key(DOMAIN, NS, first))
+        assert not r.exists(make_object_key(DOMAIN, NS, second))
+        assert not r.exists(make_raw_key(DOMAIN, NS, second))
+
+    def test_pop_list_item_via_shared_handle_cascades_to_anon(self, ns, r):
+        ns["x"] = [{"name": "Alice"}, 2]
+        ns["y"] = ns["x"]
+        shared = ns["y"]
+        anon_name = shared[0].name
+
+        popped = shared.pop(0)
+
+        assert popped == {"name": "Alice"}
+        assert list(shared) == [2]
+        assert not r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_clear_list_via_shared_handle_cascades_nested_anons(self, ns, r):
+        ns["x"] = [{"name": "Alice"}, {"name": "Bob"}]
+        ns["y"] = ns["x"]
+        shared = ns["y"]
+        first = shared[0].name
+        second = shared[1].name
+
+        shared.clear()
+
+        assert list(shared) == []
+        assert not r.exists(make_object_key(DOMAIN, NS, first))
+        assert not r.exists(make_raw_key(DOMAIN, NS, first))
+        assert not r.exists(make_object_key(DOMAIN, NS, second))
+        assert not r.exists(make_raw_key(DOMAIN, NS, second))
+
+    def test_delete_list_duplicate_nested_handle_preserves_remaining_slot(self, ns, r):
+        ns["items"] = [{"x": 1}]
+        lst = ns["items"]
+        lst.append(lst[0])
+        anon_name = lst[0].name
+
+        del lst[0]
+
+        assert len(lst) == 1
+        assert lst[0]["x"] == 1
+        assert r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_delete_then_recreate_list_container_slot_does_not_leak_removed_child(self, ns, r):
+        ns["items"] = [0, {"a": 1}]
+        lst = ns["items"]
+        removed_anon = lst[1].name
+
+        del lst[1]
+        lst.insert(1, {"b": 2})
+
+        assert lst[1]["b"] == 2
+        assert not r.exists(make_ref_key(DOMAIN, NS, removed_anon))
+        assert not r.exists(make_object_key(DOMAIN, NS, removed_anon))
+        assert not r.exists(make_raw_key(DOMAIN, NS, removed_anon))
+
 
 class TestDeepNesting:
     def test_dict_in_dict_in_dict(self, ns):
@@ -160,6 +303,179 @@ class TestDictSetNested:
         inner = d["b"]
         assert isinstance(inner, DictObject)
         assert inner["x"] == 10
+
+    def test_pop_nested_dict_returns_materialized_value(self, ns, r):
+        ns["d"] = {"nested": {"x": 1}}
+        d = ns["d"]
+        anon_name = d["nested"].name
+
+        popped = d.pop("nested")
+
+        assert popped == {"x": 1}
+        assert "nested" not in d
+        assert not r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_del_nested_dict_item_cascades_removed_child(self, ns, r):
+        ns["d"] = {"nested": {"x": 1}, "other": 2}
+        d = ns["d"]
+        anon_name = d["nested"].name
+
+        del d["nested"]
+
+        assert "nested" not in d
+        assert not r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_clear_dict_cascades_nested_anons(self, ns, r):
+        ns["d"] = {"a": [1, 2, 3], "b": {"x": 1}}
+        d = ns["d"]
+        first = d["a"].name
+        second = d["b"].name
+
+        d.clear()
+
+        assert dict(d.items()) == {}
+        assert not r.exists(make_object_key(DOMAIN, NS, first))
+        assert not r.exists(make_raw_key(DOMAIN, NS, first))
+        assert not r.exists(make_object_key(DOMAIN, NS, second))
+        assert not r.exists(make_raw_key(DOMAIN, NS, second))
+
+    def test_del_nested_dict_item_via_shared_handle_cascades_removed_child(self, ns, r):
+        ns["x"] = {"a": [1, 2, 3]}
+        ns["y"] = ns["x"]
+        shared = ns["y"]
+        anon_name = shared["a"].name
+
+        del shared["a"]
+
+        assert "a" not in shared
+        assert not r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_clear_dict_via_shared_handle_cascades_nested_anons(self, ns, r):
+        ns["x"] = {"a": [1, 2, 3], "b": {"x": 1}}
+        ns["y"] = ns["x"]
+        shared = ns["y"]
+        first = shared["a"].name
+        second = shared["b"].name
+
+        shared.clear()
+
+        assert dict(shared.items()) == {}
+        assert not r.exists(make_object_key(DOMAIN, NS, first))
+        assert not r.exists(make_raw_key(DOMAIN, NS, first))
+        assert not r.exists(make_object_key(DOMAIN, NS, second))
+        assert not r.exists(make_raw_key(DOMAIN, NS, second))
+
+    def test_delete_dict_duplicate_nested_handle_preserves_remaining_slot(self, ns, r):
+        ns["d"] = {"a": {"x": 1}}
+        d = ns["d"]
+        d["b"] = d["a"]
+        anon_name = d["a"].name
+
+        del d["a"]
+
+        assert d["b"]["x"] == 1
+        assert r.exists(make_ref_key(DOMAIN, NS, anon_name))
+        assert r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert r.exists(make_raw_key(DOMAIN, NS, anon_name))
+
+    def test_delete_named_container_nested_ref_preserves_named_child(self, ns):
+        ns["child"] = {"x": 1}
+        ns["parent"] = {}
+        parent = ns["parent"]
+        parent["nested"] = ns["child"]
+
+        del parent["nested"]
+
+        assert "child" in ns
+        assert ns["child"]["x"] == 1
+
+    def test_pop_named_container_nested_ref_preserves_named_child(self, ns):
+        ns["child"] = {"x": 1}
+        ns["parent"] = {}
+        parent = ns["parent"]
+        parent["nested"] = ns["child"]
+
+        popped = parent.pop("nested")
+
+        assert popped == {"x": 1}
+        assert "child" in ns
+        assert ns["child"]["x"] == 1
+
+    def test_clear_named_container_nested_refs_preserves_named_children(self, ns):
+        ns["child_a"] = {"x": 1}
+        ns["child_b"] = {"y": 2}
+        ns["parent"] = {}
+        parent = ns["parent"]
+        parent["a"] = ns["child_a"]
+        parent["b"] = ns["child_b"]
+
+        parent.clear()
+
+        assert "child_a" in ns
+        assert "child_b" in ns
+        assert ns["child_a"]["x"] == 1
+        assert ns["child_b"]["y"] == 2
+
+    def test_rehomed_hidden_owner_cleanup_preserves_named_child(self, ns):
+        ns["child"] = {"x": 1}
+        ns["parent"] = {}
+        ns["parent"]["nested"] = ns["child"]
+        ns["alias"] = ns["parent"]
+
+        del ns["parent"]
+        ns["alias"] = 42
+
+        assert "child" in ns
+        assert ns["child"]["x"] == 1
+
+    def test_nested_ref_to_top_level_alias_survives_alias_delete(self, ns):
+        ns["a"] = [1]
+        ns["b"] = ns["a"]
+        ns["parent"] = {}
+        ns["parent"]["nested"] = ns["b"]
+
+        del ns["b"]
+
+        assert list(ns["a"]) == [1]
+        assert list(ns["parent"]["nested"]) == [1]
+
+    def test_delete_parent_cleans_named_child_referrer(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = {}
+        ns["parent"]["nested"] = ns["child"]
+
+        del ns["parent"]
+
+        assert r.smembers(make_ref_key(DOMAIN, NS, "child")) == set()
+        assert ns["child"]["x"] == 1
+
+    def test_rehome_parent_moves_named_child_referrer_to_hidden_owner(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = {}
+        ns["parent"]["nested"] = ns["child"]
+        ns["alias"] = ns["parent"]
+
+        del ns["parent"]
+
+        child_referrers = r.smembers(make_ref_key(DOMAIN, NS, "child"))
+
+        assert "parent" not in child_referrers
+        assert "alias" not in child_referrers
+        assert len(child_referrers) == 1
+        hidden_owner = next(iter(child_referrers))
+        assert hidden_owner.startswith("~anon:")
+        assert ns["alias"]["nested"]["x"] == 1
+
+        del ns["alias"]
+
+        assert r.smembers(make_ref_key(DOMAIN, NS, "child")) == set()
+        assert ns["child"]["x"] == 1
 
 
 class TestCopyDeepCopy:

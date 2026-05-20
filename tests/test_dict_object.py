@@ -66,6 +66,20 @@ def setup_dict(r):
         def _redis(self):
             return r
 
+        def _cascade_delete_anonymous(self, anon_name):
+            obj_key = make_object_key(DOMAIN, NS, anon_name)
+            meta = r.hgetall(obj_key)
+            if not meta:
+                return
+
+            raw_key = meta.get("value", "")
+            ref_key = make_ref_key(DOMAIN, NS, anon_name)
+
+            if raw_key:
+                r.delete(raw_key)
+            r.delete(ref_key)
+            r.delete(obj_key)
+
     ns = FakeNamespace()
 
     DictCodec.delete_raw(ns, raw_key)
@@ -112,6 +126,32 @@ def test_setitem_new_key(setup_dict):
     obj["city"] = "NYC"
     assert obj["city"] == "NYC"
     assert len(obj) == 3
+
+
+def test_setitem_existing_container_slot_rejects_scalar(setup_dict):
+    obj, *_ = setup_dict
+    obj["nested"] = [1, 2, 3]
+
+    with pytest.raises(TypeError, match="Cannot overwrite an existing container slot"):
+        obj["nested"] = 1
+
+
+def test_setitem_existing_container_slot_rejects_container(setup_dict):
+    obj, *_ = setup_dict
+    obj["nested"] = [1, 2, 3]
+
+    with pytest.raises(TypeError, match="Cannot overwrite an existing container slot"):
+        obj["nested"] = {"x": 1}
+
+
+def test_delete_then_recreate_container_slot_is_allowed(setup_dict):
+    obj, *_ = setup_dict
+    obj["nested"] = [1, 2, 3]
+    del obj["nested"]
+
+    obj["nested"] = {"x": 1}
+
+    assert obj["nested"]["x"] == 1
 
 
 def test_delitem(setup_dict):
@@ -225,10 +265,16 @@ def test_value_getter(setup_dict):
     assert obj.value == {"name": "Alice", "age": 30}
 
 
-def test_value_setter(setup_dict):
-    obj, r, obj_key, raw_key, ref_key = setup_dict
-    obj.value = {"x": 1, "y": 2}
-    assert obj.value == {"x": 1, "y": 2}
+def test_value_setter_rejected(setup_dict):
+    obj, *_ = setup_dict
+
+    with pytest.raises(
+        TypeError,
+        match="Container value replacement is not supported; use explicit mutating methods instead",
+    ):
+        obj.value = {"x": 1, "y": 2}
+
+    assert obj.value == {"name": "Alice", "age": 30}
 
 
 def test_tuple_key_setget(setup_dict):

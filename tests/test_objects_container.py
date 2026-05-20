@@ -263,10 +263,16 @@ def test_value_getter(setup_list):
     assert obj.value == [10, 20, 30]
 
 
-def test_value_setter(setup_list):
+def test_value_setter_rejected(setup_list):
     obj, *_ = setup_list
-    obj.value = [1, 2, 3]
-    assert obj.value == [1, 2, 3]
+
+    with pytest.raises(
+        TypeError,
+        match="Container value replacement is not supported; use explicit mutating methods instead",
+    ):
+        obj.value = [1, 2, 3]
+
+    assert obj.value == [10, 20, 30]
 
 
 # ── referrers ─────────────────────────────────────────────────────────────────

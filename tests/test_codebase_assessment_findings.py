@@ -28,29 +28,32 @@ def isolated_ns(isolated_domain):
     return isolated_domain.get_namespace("testns")
 
 
-def test_nested_container_replacement_cleans_old_anonymous_refs(isolated_ns, clean_redis):
+def test_nested_container_replacement_is_rejected(isolated_ns, clean_redis):
     isolated_ns["d"] = {"a": [1, 2, 3]}
     anon_name = isolated_ns["d"]["a"].name
 
-    isolated_ns["d"]["a"] = "replaced"
+    with pytest.raises(TypeError, match="Cannot overwrite an existing container slot"):
+        isolated_ns["d"]["a"] = "replaced"
 
-    assert isolated_ns["d"]["a"] == "replaced"
-    assert not clean_redis.exists(make_ref_key("testdomain", "testns", anon_name))
-    assert not clean_redis.exists(make_object_key("testdomain", "testns", anon_name))
-    assert not clean_redis.exists(make_raw_key("testdomain", "testns", anon_name))
+    assert list(isolated_ns["d"]["a"]) == [1, 2, 3]
+    assert clean_redis.exists(make_ref_key("testdomain", "testns", anon_name))
+    assert clean_redis.exists(make_object_key("testdomain", "testns", anon_name))
+    assert clean_redis.exists(make_raw_key("testdomain", "testns", anon_name))
 
 
-def test_overwriting_container_owner_cleans_old_raw_subtree(isolated_ns, clean_redis):
+def test_overwriting_container_owner_is_rejected(isolated_ns, clean_redis):
     isolated_ns["x"] = {"a": [1, 2, 3]}
     anon_name = isolated_ns["x"]["a"].name
 
-    isolated_ns["x"] = 1
+    with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
+        isolated_ns["x"] = 1
 
-    assert isolated_ns["x"] == 1
-    assert not clean_redis.exists(make_raw_key("testdomain", "testns", "x"))
-    assert not clean_redis.exists(make_ref_key("testdomain", "testns", anon_name))
-    assert not clean_redis.exists(make_object_key("testdomain", "testns", anon_name))
-    assert not clean_redis.exists(make_raw_key("testdomain", "testns", anon_name))
+    assert isolated_ns["x"]["a"][0] == 1
+    assert clean_redis.hget(make_object_key("testdomain", "testns", "x"), "binding_kind") == "owner"
+    assert clean_redis.exists(make_raw_key("testdomain", "testns", "x"))
+    assert clean_redis.exists(make_ref_key("testdomain", "testns", anon_name))
+    assert clean_redis.exists(make_object_key("testdomain", "testns", anon_name))
+    assert clean_redis.exists(make_raw_key("testdomain", "testns", anon_name))
 
 
 def test_nested_cross_namespace_container_assignment_is_rejected(isolated_domain):
