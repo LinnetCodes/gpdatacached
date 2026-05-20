@@ -19,6 +19,214 @@ class GPDCCodec(ABC):
         """Decode a stored string back to a Python value."""
 
 
+class NoneCodec(GPDCCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if value is not None:
+            raise TypeError(f"NoneCodec cannot encode {type(value).__name__!r}")
+        return "none:None"
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        type_name = encoded[:colon_idx]
+        raw = encoded[colon_idx + 1 :]
+        if type_name != "none":
+            raise ValueError(f"NoneCodec cannot decode type {type_name!r}")
+        if raw != "None":
+            raise ValueError(f"Invalid scalar value for type 'none': {raw!r}")
+        return None
+
+
+class BoolCodec(GPDCCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if not isinstance(value, bool):
+            raise TypeError(f"BoolCodec cannot encode {type(value).__name__!r}")
+        return f"bool:{value}"
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        type_name = encoded[:colon_idx]
+        raw = encoded[colon_idx + 1 :]
+        if type_name != "bool":
+            raise ValueError(f"BoolCodec cannot decode type {type_name!r}")
+        if raw not in ("True", "False"):
+            raise ValueError(f"Invalid scalar value for type 'bool': {raw!r}")
+        return raw == "True"
+
+
+class IntCodec(GPDCCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"IntCodec cannot encode {type(value).__name__!r}")
+        return f"int:{value}"
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        type_name = encoded[:colon_idx]
+        raw = encoded[colon_idx + 1 :]
+        if type_name != "int":
+            raise ValueError(f"IntCodec cannot decode type {type_name!r}")
+        try:
+            return int(raw)
+        except (ValueError, OverflowError):
+            raise ValueError(f"Invalid scalar value for type 'int': {raw!r}")
+
+
+class FloatCodec(GPDCCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if not isinstance(value, float):
+            raise TypeError(f"FloatCodec cannot encode {type(value).__name__!r}")
+        return f"float:{value}"
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        type_name = encoded[:colon_idx]
+        raw = encoded[colon_idx + 1 :]
+        if type_name != "float":
+            raise ValueError(f"FloatCodec cannot decode type {type_name!r}")
+        try:
+            return float(raw)
+        except ValueError:
+            raise ValueError(f"Invalid scalar value for type 'float': {raw!r}")
+
+
+class StrCodec(GPDCCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError(f"StrCodec cannot encode {type(value).__name__!r}")
+        return f"str:{value}"
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        type_name = encoded[:colon_idx]
+        if type_name != "str":
+            raise ValueError(f"StrCodec cannot decode type {type_name!r}")
+        return encoded[colon_idx + 1 :]
+
+
+class DateTimeCodec(GPDCCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if not isinstance(value, datetime.datetime):
+            raise TypeError(f"DateTimeCodec cannot encode {type(value).__name__!r}")
+        return f"datetime:{value.isoformat()}"
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        type_name = encoded[:colon_idx]
+        raw = encoded[colon_idx + 1 :]
+        if type_name != "datetime":
+            raise ValueError(f"DateTimeCodec cannot decode type {type_name!r}")
+        try:
+            return datetime.datetime.fromisoformat(raw)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid scalar value for type 'datetime': {raw!r}")
+
+
+class DateCodec(GPDCCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if isinstance(value, datetime.datetime) or not isinstance(value, datetime.date):
+            raise TypeError(f"DateCodec cannot encode {type(value).__name__!r}")
+        return f"date:{value.isoformat()}"
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        type_name = encoded[:colon_idx]
+        raw = encoded[colon_idx + 1 :]
+        if type_name != "date":
+            raise ValueError(f"DateCodec cannot decode type {type_name!r}")
+        try:
+            return datetime.date.fromisoformat(raw)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid scalar value for type 'date': {raw!r}")
+
+
+class TimeCodec(GPDCCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if not isinstance(value, datetime.time):
+            raise TypeError(f"TimeCodec cannot encode {type(value).__name__!r}")
+        return f"time:{value.isoformat()}"
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        type_name = encoded[:colon_idx]
+        raw = encoded[colon_idx + 1 :]
+        if type_name != "time":
+            raise ValueError(f"TimeCodec cannot decode type {type_name!r}")
+        try:
+            return datetime.time.fromisoformat(raw)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid scalar value for type 'time': {raw!r}")
+
+
+class TupleCodec(GPDCCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if not isinstance(value, tuple):
+            raise TypeError(f"TupleCodec cannot encode {type(value).__name__!r}")
+        if not value:
+            raise ValueError("Cannot encode empty tuple")
+        from .types import GPDCTypeRegistry
+
+        encoded_elems = []
+        for elem in value:
+            if isinstance(elem, (list, dict, set)):
+                raise TypeError(f"Cannot encode non-scalar tuple element: {type(elem).__name__!r}")
+            entry = GPDCTypeRegistry.lookup_by_python_type(elem)
+            encoded_elems.append(entry.codec_class.encode_value(elem))
+        return "tuple:" + json.dumps(encoded_elems, separators=(",", ":"))
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        prefix = "tuple:"
+        if not encoded.startswith(prefix):
+            raise ValueError(f"Not a tuple-encoded string: {encoded!r}")
+        json_part = encoded[len(prefix) :]
+        encoded_elems = json.loads(json_part)
+        from .types import GPDCTypeRegistry
+
+        result = []
+        for elem_encoded in encoded_elems:
+            if not elem_encoded or ":" not in elem_encoded:
+                raise ValueError(f"Invalid tuple element encoding: {elem_encoded!r}")
+            colon_idx = elem_encoded.index(":")
+            type_name = elem_encoded[:colon_idx]
+            gpdc_type = f"scalar:{type_name}"
+            entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
+            result.append(entry.codec_class.decode_value(elem_encoded))
+        return tuple(result)
+
+
 class GPDCScalarCodec(GPDCCodec):
     """Global codec for all scalar types. Stateless; use class methods directly."""
 
