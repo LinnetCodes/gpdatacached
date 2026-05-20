@@ -22,6 +22,13 @@ class GPDCCodec(ABC):
 class GPDCScalarCodec(GPDCCodec):
     """Abstract base class for all scalar codecs."""
 
+    @classmethod
+    def _parse_encoded(cls, encoded: str) -> tuple[str, str]:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        return encoded[:colon_idx], encoded[colon_idx + 1 :]
+
 
 class NoneCodec(GPDCScalarCodec):
     @classmethod
@@ -32,11 +39,7 @@ class NoneCodec(GPDCScalarCodec):
 
     @classmethod
     def decode_value(cls, encoded: str) -> object:
-        if not encoded or ":" not in encoded:
-            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
-        colon_idx = encoded.index(":")
-        type_name = encoded[:colon_idx]
-        raw = encoded[colon_idx + 1 :]
+        type_name, raw = cls._parse_encoded(encoded)
         if type_name != "none":
             raise ValueError(f"NoneCodec cannot decode type {type_name!r}")
         if raw != "None":
@@ -53,11 +56,7 @@ class BoolCodec(GPDCScalarCodec):
 
     @classmethod
     def decode_value(cls, encoded: str) -> object:
-        if not encoded or ":" not in encoded:
-            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
-        colon_idx = encoded.index(":")
-        type_name = encoded[:colon_idx]
-        raw = encoded[colon_idx + 1 :]
+        type_name, raw = cls._parse_encoded(encoded)
         if type_name != "bool":
             raise ValueError(f"BoolCodec cannot decode type {type_name!r}")
         if raw not in ("True", "False"):
@@ -74,11 +73,7 @@ class IntCodec(GPDCScalarCodec):
 
     @classmethod
     def decode_value(cls, encoded: str) -> object:
-        if not encoded or ":" not in encoded:
-            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
-        colon_idx = encoded.index(":")
-        type_name = encoded[:colon_idx]
-        raw = encoded[colon_idx + 1 :]
+        type_name, raw = cls._parse_encoded(encoded)
         if type_name != "int":
             raise ValueError(f"IntCodec cannot decode type {type_name!r}")
         try:
@@ -96,11 +91,7 @@ class FloatCodec(GPDCScalarCodec):
 
     @classmethod
     def decode_value(cls, encoded: str) -> object:
-        if not encoded or ":" not in encoded:
-            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
-        colon_idx = encoded.index(":")
-        type_name = encoded[:colon_idx]
-        raw = encoded[colon_idx + 1 :]
+        type_name, raw = cls._parse_encoded(encoded)
         if type_name != "float":
             raise ValueError(f"FloatCodec cannot decode type {type_name!r}")
         try:
@@ -118,13 +109,10 @@ class StrCodec(GPDCScalarCodec):
 
     @classmethod
     def decode_value(cls, encoded: str) -> object:
-        if not encoded or ":" not in encoded:
-            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
-        colon_idx = encoded.index(":")
-        type_name = encoded[:colon_idx]
+        type_name, _ = cls._parse_encoded(encoded)
         if type_name != "str":
             raise ValueError(f"StrCodec cannot decode type {type_name!r}")
-        return encoded[colon_idx + 1 :]
+        return encoded[encoded.index(":") + 1 :]
 
 
 class DateTimeCodec(GPDCScalarCodec):
@@ -136,11 +124,7 @@ class DateTimeCodec(GPDCScalarCodec):
 
     @classmethod
     def decode_value(cls, encoded: str) -> object:
-        if not encoded or ":" not in encoded:
-            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
-        colon_idx = encoded.index(":")
-        type_name = encoded[:colon_idx]
-        raw = encoded[colon_idx + 1 :]
+        type_name, raw = cls._parse_encoded(encoded)
         if type_name != "datetime":
             raise ValueError(f"DateTimeCodec cannot decode type {type_name!r}")
         try:
@@ -158,11 +142,7 @@ class DateCodec(GPDCScalarCodec):
 
     @classmethod
     def decode_value(cls, encoded: str) -> object:
-        if not encoded or ":" not in encoded:
-            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
-        colon_idx = encoded.index(":")
-        type_name = encoded[:colon_idx]
-        raw = encoded[colon_idx + 1 :]
+        type_name, raw = cls._parse_encoded(encoded)
         if type_name != "date":
             raise ValueError(f"DateCodec cannot decode type {type_name!r}")
         try:
@@ -180,11 +160,7 @@ class TimeCodec(GPDCScalarCodec):
 
     @classmethod
     def decode_value(cls, encoded: str) -> object:
-        if not encoded or ":" not in encoded:
-            raise ValueError(f"Invalid scalar encoding: {encoded!r}")
-        colon_idx = encoded.index(":")
-        type_name = encoded[:colon_idx]
-        raw = encoded[colon_idx + 1 :]
+        type_name, raw = cls._parse_encoded(encoded)
         if type_name != "time":
             raise ValueError(f"TimeCodec cannot decode type {type_name!r}")
         try:
