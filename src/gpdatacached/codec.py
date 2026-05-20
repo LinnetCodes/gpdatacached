@@ -19,7 +19,11 @@ class GPDCCodec(ABC):
         """Decode a stored string back to a Python value."""
 
 
-class NoneCodec(GPDCCodec):
+class GPDCScalarCodec(GPDCCodec):
+    """Abstract base class for all scalar codecs."""
+
+
+class NoneCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if value is not None:
@@ -40,7 +44,7 @@ class NoneCodec(GPDCCodec):
         return None
 
 
-class BoolCodec(GPDCCodec):
+class BoolCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if not isinstance(value, bool):
@@ -61,7 +65,7 @@ class BoolCodec(GPDCCodec):
         return raw == "True"
 
 
-class IntCodec(GPDCCodec):
+class IntCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if isinstance(value, bool) or not isinstance(value, int):
@@ -83,7 +87,7 @@ class IntCodec(GPDCCodec):
             raise ValueError(f"Invalid scalar value for type 'int': {raw!r}")
 
 
-class FloatCodec(GPDCCodec):
+class FloatCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if not isinstance(value, float):
@@ -105,7 +109,7 @@ class FloatCodec(GPDCCodec):
             raise ValueError(f"Invalid scalar value for type 'float': {raw!r}")
 
 
-class StrCodec(GPDCCodec):
+class StrCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if not isinstance(value, str):
@@ -123,7 +127,7 @@ class StrCodec(GPDCCodec):
         return encoded[colon_idx + 1 :]
 
 
-class DateTimeCodec(GPDCCodec):
+class DateTimeCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if not isinstance(value, datetime.datetime):
@@ -145,7 +149,7 @@ class DateTimeCodec(GPDCCodec):
             raise ValueError(f"Invalid scalar value for type 'datetime': {raw!r}")
 
 
-class DateCodec(GPDCCodec):
+class DateCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if isinstance(value, datetime.datetime) or not isinstance(value, datetime.date):
@@ -167,7 +171,7 @@ class DateCodec(GPDCCodec):
             raise ValueError(f"Invalid scalar value for type 'date': {raw!r}")
 
 
-class TimeCodec(GPDCCodec):
+class TimeCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if not isinstance(value, datetime.time):
@@ -189,7 +193,7 @@ class TimeCodec(GPDCCodec):
             raise ValueError(f"Invalid scalar value for type 'time': {raw!r}")
 
 
-class TupleCodec(GPDCCodec):
+class TupleCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if not isinstance(value, tuple):
@@ -225,10 +229,6 @@ class TupleCodec(GPDCCodec):
             entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
             result.append(entry.codec_class.decode_value(elem_encoded))
         return tuple(result)
-
-
-class GPDCScalarCodec(GPDCCodec):
-    """Abstract base class for all scalar codecs."""
 
 
 class GPDCContainerCodec(ABC):

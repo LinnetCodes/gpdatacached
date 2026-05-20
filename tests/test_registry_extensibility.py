@@ -3,12 +3,12 @@ from decimal import Decimal
 
 import pytest
 
-from gpdatacached.codec import GPDCCodec
+from gpdatacached.codec import GPDCScalarCodec
 from gpdatacached.scalar import GPDCScalarObject
 from gpdatacached.types import GPDCTypeRegistry
 
 
-class DecimalCodec(GPDCCodec):
+class DecimalCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
         if not isinstance(value, Decimal):
