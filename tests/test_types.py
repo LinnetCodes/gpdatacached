@@ -84,10 +84,20 @@ class TestTypeRegistryExtension:
             GPDCTypeRegistry._by_gpdc_type = dict(original_gpdc)
             GPDCTypeRegistry._by_python_type = list(original_python)
 
+            class MyFakeCodec:
+                @staticmethod
+                def encode_value(value):
+                    return f"bytes:{value!r}"
+
+                @staticmethod
+                def decode_value(encoded):
+                    return eval(encoded[len("bytes:"):])
+
             GPDCTypeRegistry.register(
                 python_type=bytes,
                 gpdc_type="custom:bytes",
                 object_class=MyFakeObject,
+                codec_class=MyFakeCodec,
                 priority=0,
             )
             entry = GPDCTypeRegistry.lookup_by_python_type(b"hello")

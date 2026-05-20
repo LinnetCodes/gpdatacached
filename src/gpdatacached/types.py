@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
-from .codec import GPDCScalarCodec
 from .keys import make_object_key, make_raw_key, make_ref_key
 from ._base import GPDCDataObject
 
@@ -19,7 +18,7 @@ class TypeEntry:
     python_type: type | tuple[type, ...]
     gpdc_type: str
     object_class: type[GPDCDataObject]
-    codec_class: type | None
+    codec_class: type
     priority: int
 
     @property
@@ -41,7 +40,7 @@ class GPDCTypeRegistry:
         python_type: type | tuple[type, ...],
         gpdc_type: str,
         object_class: type[GPDCDataObject],
-        codec_class: type | None = None,
+        codec_class: type,
         priority: int = 0,
     ) -> None:
         entry = TypeEntry(
@@ -89,9 +88,7 @@ def encode_element(
     if entry.is_container:
         _, ref_val = _create_anonymous_object(namespace, value, owner_name, cache_mode, ttl)
         return ref_val
-    if entry.codec_class is not None:
-        return entry.codec_class.encode_value(value)
-    return GPDCScalarCodec.encode_value(value)
+    return entry.codec_class.encode_value(value)
 
 
 def decode_element(encoded: str, namespace: GPDCNamespace) -> object:
@@ -102,14 +99,8 @@ def decode_element(encoded: str, namespace: GPDCNamespace) -> object:
     colon_idx = encoded.index(":")
     type_name = encoded[:colon_idx]
     gpdc_type = f"scalar:{type_name}"
-    try:
-        entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
-        codec = entry.codec_class
-        if codec is not None:
-            return codec.decode_value(encoded)
-    except (ValueError, KeyError):
-        pass
-    return GPDCScalarCodec.decode_value(encoded)
+    entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
+    return entry.codec_class.decode_value(encoded)
 
 
 def encode_key(value: object) -> str:
@@ -196,7 +187,7 @@ def _create_anonymous_object(
         },
     )
 
-    if entry.is_container and entry.codec_class is not None:
+    if entry.is_container:
         from .codec import GPDCContainerCodec
 
         if issubclass(entry.codec_class, GPDCContainerCodec):
@@ -213,7 +204,20 @@ def _create_anonymous_object(
 
 
 def _register_builtin_types() -> None:
-    from .codec import GPDCScalarCodec, ListCodec, DictCodec, SetCodec
+    from .codec import (
+        NoneCodec,
+        BoolCodec,
+        IntCodec,
+        FloatCodec,
+        StrCodec,
+        DateTimeCodec,
+        DateCodec,
+        TimeCodec,
+        TupleCodec,
+        ListCodec,
+        DictCodec,
+        SetCodec,
+    )
     from .scalar import (
         IntObject,
         FloatObject,
@@ -223,6 +227,7 @@ def _register_builtin_types() -> None:
         DateObject,
         TimeObject,
         NoneObject,
+        TupleObject,
     )
     from .container import ListObject, DictObject, SetObject
 
@@ -230,51 +235,86 @@ def _register_builtin_types() -> None:
         python_type=type(None),
         gpdc_type="scalar:none",
         object_class=NoneObject,
-        codec_class=GPDCScalarCodec,
+        codec_class=NoneCodec,
         priority=0,
     )
     GPDCTypeRegistry.register(
-        python_type=bool, gpdc_type="scalar:bool", object_class=BoolObject, codec_class=GPDCScalarCodec, priority=10
+        python_type=bool,
+        gpdc_type="scalar:bool",
+        object_class=BoolObject,
+        codec_class=BoolCodec,
+        priority=10,
     )
     GPDCTypeRegistry.register(
-        python_type=int, gpdc_type="scalar:int", object_class=IntObject, codec_class=GPDCScalarCodec, priority=0
+        python_type=int,
+        gpdc_type="scalar:int",
+        object_class=IntObject,
+        codec_class=IntCodec,
+        priority=0,
     )
     GPDCTypeRegistry.register(
-        python_type=float, gpdc_type="scalar:float", object_class=FloatObject, codec_class=GPDCScalarCodec, priority=0
+        python_type=float,
+        gpdc_type="scalar:float",
+        object_class=FloatObject,
+        codec_class=FloatCodec,
+        priority=0,
     )
     GPDCTypeRegistry.register(
-        python_type=str, gpdc_type="scalar:str", object_class=StrObject, codec_class=GPDCScalarCodec, priority=0
+        python_type=str,
+        gpdc_type="scalar:str",
+        object_class=StrObject,
+        codec_class=StrCodec,
+        priority=0,
     )
     GPDCTypeRegistry.register(
         python_type=datetime.datetime,
         gpdc_type="scalar:datetime",
         object_class=DateTimeObject,
-        codec_class=GPDCScalarCodec,
-        priority=0,
+        codec_class=DateTimeCodec,
+        priority=10,
     )
     GPDCTypeRegistry.register(
         python_type=datetime.date,
         gpdc_type="scalar:date",
         object_class=DateObject,
-        codec_class=GPDCScalarCodec,
+        codec_class=DateCodec,
         priority=0,
     )
     GPDCTypeRegistry.register(
         python_type=datetime.time,
         gpdc_type="scalar:time",
         object_class=TimeObject,
-        codec_class=GPDCScalarCodec,
+        codec_class=TimeCodec,
+        priority=0,
+    )
+    GPDCTypeRegistry.register(
+        python_type=tuple,
+        gpdc_type="scalar:tuple",
+        object_class=TupleObject,
+        codec_class=TupleCodec,
         priority=0,
     )
 
     GPDCTypeRegistry.register(
-        python_type=list, gpdc_type="collection:list", object_class=ListObject, codec_class=ListCodec, priority=0
+        python_type=list,
+        gpdc_type="collection:list",
+        object_class=ListObject,
+        codec_class=ListCodec,
+        priority=0,
     )
     GPDCTypeRegistry.register(
-        python_type=dict, gpdc_type="collection:dict", object_class=DictObject, codec_class=DictCodec, priority=0
+        python_type=dict,
+        gpdc_type="collection:dict",
+        object_class=DictObject,
+        codec_class=DictCodec,
+        priority=0,
     )
     GPDCTypeRegistry.register(
-        python_type=set, gpdc_type="collection:set", object_class=SetObject, codec_class=SetCodec, priority=0
+        python_type=set,
+        gpdc_type="collection:set",
+        object_class=SetObject,
+        codec_class=SetCodec,
+        priority=0,
     )
 
 
