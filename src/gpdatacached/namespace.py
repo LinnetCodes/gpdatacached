@@ -229,35 +229,37 @@ class GPDCNamespace(MutableMapping):
                 r.sadd(nested_ref_key, hidden_owner_name)
 
     def _write_scalar_meta(
-        self, obj_key: str, entry, encoded_value: str, cache_mode: str, ttl: int, now: str, *, is_new: bool
+        self, obj_key: str, entry, encoded_value: str, policy, now: str, *, is_new: bool
     ) -> None:
+        from .ttl import meta_ttl_value, apply_policy
+
         r = self._redis()
         mapping = {
             "type": entry.gpdc_type,
             "codec": "native",
             "value": encoded_value,
-            "cache_mode": cache_mode,
-            "ttl": str(ttl) if ttl else "",
+            "cache_mode": policy.cache_mode,
+            "ttl": meta_ttl_value(policy),
             "updated_at": now,
         }
         if is_new:
             mapping["created_at"] = now
         r.hset(obj_key, mapping=mapping)
-        if cache_mode in ("ttl", "sliding") and ttl > 0:
-            r.expire(obj_key, ttl)
+        apply_policy(r, obj_key, policy)
 
     def _write_container_meta(
         self,
         obj_key: str,
         entry,
         raw_key: str,
-        cache_mode: str,
-        ttl: int,
+        policy,
         now: str,
         *,
         is_new: bool,
         binding_kind: str,
     ) -> None:
+        from .ttl import meta_ttl_value, apply_policy
+
         r = self._redis()
         mapping = {
             "type": entry.gpdc_type,
@@ -267,12 +269,12 @@ class GPDCNamespace(MutableMapping):
         }
         if is_new:
             mapping["codec"] = "native"
-            mapping["cache_mode"] = cache_mode
-            mapping["ttl"] = str(ttl) if ttl else ""
+            mapping["cache_mode"] = policy.cache_mode
+            mapping["ttl"] = meta_ttl_value(policy)
             mapping["created_at"] = now
         r.hset(obj_key, mapping=mapping)
-        if is_new and cache_mode in ("ttl", "sliding") and ttl > 0:
-            r.expire(obj_key, ttl)
+        if is_new:
+            apply_policy(r, obj_key, policy)
 
     def _setitem_container_ref(self, key: str, container, existing: dict) -> None:
         from .container import GPDCContainerObject
@@ -344,14 +346,18 @@ class GPDCNamespace(MutableMapping):
         if entry.is_container:
             raw_key = make_raw_key(self._domain.name, self._name, key)
             is_new = not existing
-            cache_mode = self._get_default_cache_mode() if is_new else existing.get("cache_mode", "permanent")
-            ttl = self._get_default_ttl_seconds() if is_new else (int(existing["ttl"]) if existing.get("ttl") else 0)
+            from .ttl import policy_from_defaults, policy_from_meta
+
+            policy = (
+                policy_from_defaults(self._get_default_cache_mode(), self._get_default_ttl_seconds())
+                if is_new
+                else policy_from_meta(existing)
+            )
             self._write_container_meta(
                 obj_key,
                 entry,
                 raw_key,
-                cache_mode,
-                ttl,
+                policy,
                 now,
                 is_new=is_new,
                 binding_kind="owner",
@@ -359,17 +365,18 @@ class GPDCNamespace(MutableMapping):
             if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
                 if existing:
                     entry.codec_class.delete_raw(self, raw_key)
-                entry.codec_class.create_raw(self, raw_key, value, key, cache_mode, ttl)
+                entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
         else:
             codec = entry.codec_class
             encoded = codec.encode_value(value)
-            if existing:
-                cache_mode = existing.get("cache_mode", "permanent")
-                ttl = int(existing["ttl"]) if existing.get("ttl") else 0
-            else:
-                cache_mode = self._get_default_cache_mode()
-                ttl = self._get_default_ttl_seconds()
-            self._write_scalar_meta(obj_key, entry, encoded, cache_mode, ttl, now, is_new=not existing)
+            from .ttl import policy_from_defaults, policy_from_meta
+
+            policy = (
+                policy_from_defaults(self._get_default_cache_mode(), self._get_default_ttl_seconds())
+                if not existing
+                else policy_from_meta(existing)
+            )
+            self._write_scalar_meta(obj_key, entry, encoded, policy, now, is_new=not existing)
 
     def _get_object(self, key: str):
         validate_object_name(key)
