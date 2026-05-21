@@ -164,3 +164,98 @@ def test_namespace_contains_excludes_anonymous_objects(isolated_ns):
 def test_decode_invalid_bool_payload_raises_value_error():
     with pytest.raises(ValueError):
         BoolCodec.decode_value("bool:not-bool")
+
+
+def test_alias_metadata_matches_source_declared_ttl(isolated_ns, clean_redis):
+    isolated_ns["src"] = [1, 2, 3]
+    src = isolated_ns.get_object("src")
+    src.cache_mode = "ttl"
+    src.ttl = 300
+    isolated_ns["alias"] = isolated_ns["src"]
+
+    src_key = make_object_key("testdomain", "testns", "src")
+    alias_key = make_object_key("testdomain", "testns", "alias")
+    src_meta = clean_redis.hgetall(src_key)
+    alias_meta = clean_redis.hgetall(alias_key)
+
+    assert alias_meta["cache_mode"] == src_meta["cache_mode"]
+    assert alias_meta["ttl"] == src_meta["ttl"]
+    assert clean_redis.ttl(alias_key) <= clean_redis.ttl(src_key)
+
+
+def test_anonymous_object_inherits_declared_policy_not_remaining(isolated_ns, clean_redis):
+    from gpdatacached.config import GPDCNamespaceConfig
+    from gpdatacached.namespace import GPDCNamespace
+
+    cfg = GPDCNamespaceConfig(default_cache_mode="ttl", default_ttl_seconds=600)
+    ns = GPDCNamespace("ttl_ns", isolated_ns.domain, config=cfg)
+    ns["holder"] = {"nested": [1, 2, 3]}
+
+    nested_obj = ns["holder"]["nested"]
+    anon_key = make_object_key("testdomain", "ttl_ns", nested_obj.name)
+
+    anon_meta = clean_redis.hgetall(anon_key)
+    assert anon_meta["cache_mode"] == "ttl"
+    assert anon_meta["ttl"] == "600"
+
+    anon_remaining = clean_redis.ttl(anon_key)
+    assert anon_remaining > 0
+    assert anon_remaining <= 600
+
+
+def test_sliding_touch_resets_expiry_to_declared_ttl(isolated_ns, clean_redis):
+    isolated_ns["x"] = [1, 2, 3]
+    obj = isolated_ns.get_object("x")
+    obj.cache_mode = "sliding"
+    obj.ttl = 300
+
+    key = make_object_key("testdomain", "testns", "x")
+    import time
+    time.sleep(1)
+
+    obj.append(4)
+
+    remaining = clean_redis.ttl(key)
+    assert remaining > 290
+
+
+def test_rehome_preserves_declared_policy_with_remaining_countdown(isolated_ns, clean_redis):
+    isolated_ns["owner"] = [1, 2, 3]
+    obj = isolated_ns.get_object("owner")
+    obj.cache_mode = "ttl"
+    obj.ttl = 300
+
+    isolated_ns["ref"] = isolated_ns["owner"]
+
+    del isolated_ns["owner"]
+
+    import time
+    time.sleep(0.1)
+
+    ref_key = make_object_key("testdomain", "testns", "ref")
+    ref_meta = clean_redis.hgetall(ref_key)
+    assert ref_meta["cache_mode"] == "ttl"
+    assert ref_meta["ttl"] == "300"
+
+    pattern = "gpdc:testdomain:testns:obj:~anon:*"
+    cursor = 0
+    hidden_key = None
+    while True:
+        cursor, keys = clean_redis.scan(cursor=cursor, match=pattern, count=100)
+        for k in keys:
+            hidden_key = k
+            break
+        if cursor == 0 or hidden_key:
+            break
+
+    assert hidden_key is not None
+    hidden_meta = clean_redis.hgetall(hidden_key)
+    assert hidden_meta["cache_mode"] == "ttl"
+    assert hidden_meta["ttl"] == "300"
+    assert clean_redis.ttl(hidden_key) > 0
+
+
+def test_permanent_object_has_no_redis_expiry(isolated_ns, clean_redis):
+    isolated_ns["perm"] = 42
+    key = make_object_key("testdomain", "testns", "perm")
+    assert clean_redis.ttl(key) == -1
