@@ -166,8 +166,11 @@ def _create_anonymous_object(
     cache_mode: str,
     ttl: int,
 ) -> tuple[str, str]:
+    from .ttl import policy_from_defaults, meta_ttl_value, apply_policy
+
     entry = GPDCTypeRegistry.lookup_by_python_type(python_value)
     now = datetime.datetime.now(datetime.UTC).isoformat()
+    policy = policy_from_defaults(cache_mode, ttl)
 
     anon_name = f"~anon:{uuid.uuid4()}"
     obj_key = make_object_key(namespace.domain.name, namespace.name, anon_name)
@@ -180,8 +183,8 @@ def _create_anonymous_object(
             "type": entry.gpdc_type,
             "codec": "native",
             "value": raw_key,
-            "cache_mode": cache_mode,
-            "ttl": str(ttl) if ttl else "",
+            "cache_mode": policy.cache_mode,
+            "ttl": meta_ttl_value(policy),
             "created_at": now,
             "updated_at": now,
         },
@@ -191,13 +194,12 @@ def _create_anonymous_object(
         from .codec import GPDCContainerCodec
 
         if issubclass(entry.codec_class, GPDCContainerCodec):
-            entry.codec_class.create_raw(namespace, raw_key, python_value, anon_name, cache_mode, ttl)
+            entry.codec_class.create_raw(namespace, raw_key, python_value, anon_name, policy.cache_mode, policy.declared_ttl)
 
     ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
     r.sadd(ref_key, parent_name)
 
-    if cache_mode in ("ttl", "sliding") and ttl > 0:
-        r.expire(obj_key, ttl)
+    apply_policy(r, obj_key, policy)
 
     ref_val = f"ref:{obj_key}"
     return anon_name, ref_val
