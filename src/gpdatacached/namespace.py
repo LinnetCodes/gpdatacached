@@ -278,6 +278,7 @@ class GPDCNamespace(MutableMapping):
 
     def _setitem_container_ref(self, key: str, container, existing: dict) -> None:
         from .container import GPDCContainerObject
+        from .ttl import policy_for_alias, meta_ttl_value, apply_policy
 
         assert isinstance(container, GPDCContainerObject)
         if container._namespace is not self:
@@ -288,9 +289,8 @@ class GPDCNamespace(MutableMapping):
         shared_raw_key = src_meta.get("value", "")
         owner_name = self._owner_name_from_raw_key(shared_raw_key)
         now = datetime.datetime.now(datetime.UTC).isoformat()
-        cache_mode = src_meta.get("cache_mode", self._get_default_cache_mode())
-        ttl_str = src_meta.get("ttl", "")
-        ttl = int(ttl_str) if ttl_str else self._get_default_ttl_seconds()
+        source_remaining = r.ttl(src_obj_key)
+        policy = policy_for_alias(src_meta, source_remaining, self._get_default_ttl_seconds())
         obj_key = make_object_key(self._domain.name, self._name, key)
         created_at = existing.get("created_at", now) if existing else now
         r.hset(
@@ -299,8 +299,8 @@ class GPDCNamespace(MutableMapping):
                 "type": src_meta.get("type", "collection:list"),
                 "codec": "native",
                 "value": shared_raw_key,
-                "cache_mode": cache_mode,
-                "ttl": str(ttl) if ttl else "",
+                "cache_mode": policy.cache_mode,
+                "ttl": meta_ttl_value(policy),
                 "binding_kind": "ref",
                 "created_at": created_at,
                 "updated_at": now,
@@ -308,13 +308,7 @@ class GPDCNamespace(MutableMapping):
         )
         ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
         r.sadd(ref_owner_key, key)
-
-        if cache_mode in ("ttl", "sliding") and ttl > 0:
-            source_remaining = r.ttl(src_obj_key)
-            if source_remaining > 0:
-                r.expire(obj_key, source_remaining)
-            else:
-                r.expire(obj_key, ttl)
+        apply_policy(r, obj_key, policy)
 
     def __setitem__(self, key: str, value: object) -> None:
         validate_object_name(key)
