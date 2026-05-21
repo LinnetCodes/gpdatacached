@@ -66,17 +66,16 @@ class GPDCDataObject(ABC):
 
     @cache_mode.setter
     def cache_mode(self, mode: str) -> None:
+        from .ttl import policy_from_meta, policy_for_cache_mode_change, apply_policy
+
         if mode not in ("permanent", "ttl", "sliding"):
             raise ValueError(f"Invalid cache_mode: {mode!r}")
         key = self._redis_key()
         r = self._redis()
+        current = policy_from_meta(r.hgetall(key))
         r.hset(key, "cache_mode", mode)
-        if mode == "permanent":
-            r.persist(key)
-        elif mode in ("ttl", "sliding"):
-            ttl = self.ttl
-            if ttl > 0:
-                r.expire(key, ttl)
+        new_policy = policy_for_cache_mode_change(current, mode)
+        apply_policy(r, key, new_policy)
 
     @property
     def ttl(self) -> int:
@@ -85,11 +84,14 @@ class GPDCDataObject(ABC):
 
     @ttl.setter
     def ttl(self, seconds: int) -> None:
+        from .ttl import policy_from_meta, policy_for_ttl_change, apply_policy
+
         key = self._redis_key()
         r = self._redis()
+        current = policy_from_meta(r.hgetall(key))
         r.hset(key, "ttl", str(seconds))
-        if self.cache_mode in ("ttl", "sliding") and seconds > 0:
-            r.expire(key, seconds)
+        new_policy = policy_for_ttl_change(current, seconds)
+        apply_policy(r, key, new_policy)
 
     @property
     def created_at(self) -> datetime.datetime | None:
