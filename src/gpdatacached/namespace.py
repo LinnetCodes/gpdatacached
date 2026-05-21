@@ -182,6 +182,8 @@ class GPDCNamespace(MutableMapping):
             r.delete(ref_key_of_this)
 
     def _rehome_deleted_owner_container(self, key: str, meta: dict, referrers: set[str]) -> None:
+        from .ttl import policy_for_rehome, meta_ttl_value, apply_policy
+
         r = self._redis()
         stored_raw_key = meta.get("value", "")
         obj_type = meta.get("type", "")
@@ -192,6 +194,7 @@ class GPDCNamespace(MutableMapping):
         hidden_ref_key = make_ref_key(self._domain.name, self._name, hidden_owner_name)
         now = datetime.datetime.now(datetime.UTC).isoformat()
         obj_ttl = r.ttl(make_object_key(self._domain.name, self._name, key))
+        policy = policy_for_rehome(meta, obj_ttl)
 
         if stored_raw_key and r.exists(stored_raw_key):
             r.rename(stored_raw_key, hidden_raw_key)
@@ -206,14 +209,13 @@ class GPDCNamespace(MutableMapping):
                 "type": obj_type,
                 "codec": meta.get("codec", "native"),
                 "value": hidden_raw_key,
-                "cache_mode": meta.get("cache_mode", self._get_default_cache_mode()),
-                "ttl": meta.get("ttl", ""),
+                "cache_mode": policy.cache_mode,
+                "ttl": meta_ttl_value(policy),
                 "created_at": meta.get("created_at", now),
                 "updated_at": now,
             },
         )
-        if obj_ttl > 0:
-            r.expire(hidden_obj_key, obj_ttl)
+        apply_policy(r, hidden_obj_key, policy)
 
         for referrer in referrers:
             referrer_obj_key = make_object_key(self._domain.name, self._name, referrer)
