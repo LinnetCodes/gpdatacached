@@ -91,7 +91,7 @@ class TestTypeRegistryExtension:
 
                 @staticmethod
                 def decode_value(encoded):
-                    return eval(encoded[len("bytes:"):])
+                    return eval(encoded[len("bytes:") :])
 
             GPDCTypeRegistry.register(
                 python_type=bytes,

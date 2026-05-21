@@ -194,7 +194,9 @@ def _create_anonymous_object(
         from .codec import GPDCContainerCodec
 
         if issubclass(entry.codec_class, GPDCContainerCodec):
-            entry.codec_class.create_raw(namespace, raw_key, python_value, anon_name, policy.cache_mode, policy.declared_ttl)
+            entry.codec_class.create_raw(
+                namespace, raw_key, python_value, anon_name, policy.cache_mode, policy.declared_ttl
+            )
 
     ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
     r.sadd(ref_key, parent_name)

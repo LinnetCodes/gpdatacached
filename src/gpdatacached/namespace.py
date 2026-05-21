@@ -230,9 +230,7 @@ class GPDCNamespace(MutableMapping):
                     r.srem(nested_ref_key, *referrers)
                 r.sadd(nested_ref_key, hidden_owner_name)
 
-    def _write_scalar_meta(
-        self, obj_key: str, entry, encoded_value: str, policy, now: str, *, is_new: bool
-    ) -> None:
+    def _write_scalar_meta(self, obj_key: str, entry, encoded_value: str, policy, now: str, *, is_new: bool) -> None:
         from .ttl import meta_ttl_value, apply_policy
 
         r = self._redis()

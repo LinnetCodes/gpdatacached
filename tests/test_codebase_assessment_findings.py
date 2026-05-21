@@ -211,6 +211,7 @@ def test_sliding_touch_resets_expiry_to_declared_ttl(isolated_ns, clean_redis):
 
     key = make_object_key("testdomain", "testns", "x")
     import time
+
     time.sleep(1)
 
     obj.append(4)
@@ -230,6 +231,7 @@ def test_rehome_preserves_declared_policy_with_remaining_countdown(isolated_ns, 
     del isolated_ns["owner"]
 
     import time
+
     time.sleep(0.1)
 
     ref_key = make_object_key("testdomain", "testns", "ref")
