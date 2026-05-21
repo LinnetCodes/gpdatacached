@@ -29,14 +29,16 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         self.ref_key: str = make_ref_key(domain_name, ns_name, name)
 
     def _touch(self) -> None:
+        from .ttl import policy_from_meta, policy_for_sliding_touch, apply_policy
+
         key = self._redis_key()
         now = datetime.datetime.now(datetime.UTC).isoformat()
         r = self._redis()
         r.hset(key, "updated_at", now)
-        if self.cache_mode == "sliding":
-            ttl = self.ttl
-            if ttl > 0:
-                r.expire(key, ttl)
+        current = policy_from_meta(r.hgetall(key))
+        new_policy = policy_for_sliding_touch(current)
+        if new_policy is not current:
+            apply_policy(r, key, new_policy)
 
     def _unbind_old_ref(self, old_encoded: str) -> None:
         if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
