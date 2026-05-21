@@ -110,7 +110,20 @@ class GPDCDataObject(ABC):
         self._redis().expireat(self._redis_key(), when)
 
     def persist(self) -> None:
-        self._redis().persist(self._redis_key())
+        from .ttl import apply_policy, policy_from_meta, TTLPolicy
+
+        key = self._redis_key()
+        r = self._redis()
+        current = policy_from_meta(r.hgetall(key))
+        apply_policy(
+            r,
+            key,
+            TTLPolicy(
+                cache_mode=current.cache_mode,
+                declared_ttl=current.declared_ttl,
+                expire_seconds=None,
+            ),
+        )
 
     def remaining_ttl(self) -> int:
         return self._redis().ttl(self._redis_key())

@@ -268,13 +268,12 @@ class GPDCNamespace(MutableMapping):
             "binding_kind": binding_kind,
         }
         if is_new:
-            mapping["codec"] = "native"
-            mapping["cache_mode"] = policy.cache_mode
-            mapping["ttl"] = meta_ttl_value(policy)
             mapping["created_at"] = now
+        mapping["codec"] = "native"
+        mapping["cache_mode"] = policy.cache_mode
+        mapping["ttl"] = meta_ttl_value(policy)
         r.hset(obj_key, mapping=mapping)
-        if is_new:
-            apply_policy(r, obj_key, policy)
+        apply_policy(r, obj_key, policy)
 
     def _setitem_container_ref(self, key: str, container, existing: dict) -> None:
         from .container import GPDCContainerObject
@@ -290,7 +289,7 @@ class GPDCNamespace(MutableMapping):
         owner_name = self._owner_name_from_raw_key(shared_raw_key)
         now = datetime.datetime.now(datetime.UTC).isoformat()
         source_remaining = r.ttl(src_obj_key)
-        policy = policy_for_alias(src_meta, source_remaining, self._get_default_ttl_seconds())
+        policy = policy_for_alias(src_meta, source_remaining)
         obj_key = make_object_key(self._domain.name, self._name, key)
         created_at = existing.get("created_at", now) if existing else now
         r.hset(

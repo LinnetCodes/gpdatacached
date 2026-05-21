@@ -302,9 +302,12 @@ class TestCacheModeAndTTL:
         obj = ns.get_object("x")
         obj.cache_mode = "ttl"
         obj.ttl = 60
-        obj.persist()
         key = make_object_key("testdomain", "testns", "x")
+        assert clean_redis.hget(key, "ttl") == "60"
+        obj.persist()
         assert clean_redis.ttl(key) == -1
+        assert clean_redis.hget(key, "ttl") == "60"
+        assert clean_redis.hget(key, "cache_mode") == "ttl"
 
     def test_remaining_ttl_permanent(self, ns):
         ns["x"] = 1
@@ -334,6 +337,50 @@ class TestCacheModeAndTTL:
         obj = ns.get_object("x")
         with pytest.raises(ValueError):
             obj.cache_mode = "invalid"
+
+    def test_scalar_overwrite_preserves_and_reapplies_ttl(self, ns, clean_redis):
+        import time
+
+        ns["x"] = 1
+        obj = ns.get_object("x")
+        obj.cache_mode = "ttl"
+        obj.ttl = 300
+        key = make_object_key("testdomain", "testns", "x")
+
+        time.sleep(1)
+        remaining_before = clean_redis.ttl(key)
+        assert remaining_before < 300
+
+        ns["x"] = 42
+
+        data = clean_redis.hgetall(key)
+        assert data["cache_mode"] == "ttl"
+        assert data["ttl"] == "300"
+        remaining = clean_redis.ttl(key)
+        assert 290 <= remaining <= 300
+
+    def test_scalar_to_container_overwrite_preserves_and_reapplies_ttl(self, ns, clean_redis):
+        import time
+
+        ns["x"] = 1
+        obj = ns.get_object("x")
+        obj.cache_mode = "ttl"
+        obj.ttl = 300
+        key = make_object_key("testdomain", "testns", "x")
+
+        time.sleep(1)
+        remaining_before = clean_redis.ttl(key)
+        assert remaining_before < 300
+
+        ns["x"] = [1, 2, 3]
+
+        data = clean_redis.hgetall(key)
+        assert data["type"].startswith("collection:")
+        assert data["binding_kind"] == "owner"
+        assert data["cache_mode"] == "ttl"
+        assert data["ttl"] == "300"
+        remaining = clean_redis.ttl(key)
+        assert 290 <= remaining <= 300
 
 
 class TestNamespaceInitWithConfig:

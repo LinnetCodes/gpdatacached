@@ -88,30 +88,30 @@ class TestPolicyFromMeta:
 class TestPolicyForAlias:
     def test_uses_source_remaining_ttl_when_present(self):
         src = {"cache_mode": "ttl", "ttl": "300"}
-        p = policy_for_alias(src, source_remaining_ttl=200, fallback_ttl=300)
+        p = policy_for_alias(src, source_remaining_ttl=200)
         assert p.cache_mode == "ttl"
         assert p.declared_ttl == 300
         assert p.expire_seconds == 200
 
     def test_falls_back_to_declared_ttl_when_no_remaining(self):
         src = {"cache_mode": "ttl", "ttl": "300"}
-        p = policy_for_alias(src, source_remaining_ttl=-1, fallback_ttl=300)
+        p = policy_for_alias(src, source_remaining_ttl=-1)
         assert p.expire_seconds == 300
 
     def test_permanent_source_no_expire(self):
         src = {"cache_mode": "permanent", "ttl": ""}
-        p = policy_for_alias(src, source_remaining_ttl=-1, fallback_ttl=300)
+        p = policy_for_alias(src, source_remaining_ttl=-1)
         assert p.expire_seconds is None
 
-    def test_falls_back_to_fallback_when_no_declared_and_no_remaining(self):
+    def test_no_declared_ttl_copies_zero_from_source(self):
         src = {"cache_mode": "ttl", "ttl": ""}
-        p = policy_for_alias(src, source_remaining_ttl=-1, fallback_ttl=500)
-        assert p.declared_ttl == 500
-        assert p.expire_seconds == 500
+        p = policy_for_alias(src, source_remaining_ttl=-1)
+        assert p.declared_ttl == 0
+        assert p.expire_seconds is None
 
     def test_no_expire_when_all_ttls_absent(self):
         src = {"cache_mode": "ttl", "ttl": ""}
-        p = policy_for_alias(src, source_remaining_ttl=-1, fallback_ttl=0)
+        p = policy_for_alias(src, source_remaining_ttl=-1)
         assert p.expire_seconds is None
 
 

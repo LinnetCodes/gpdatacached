@@ -31,7 +31,7 @@ def policy_from_meta(meta: dict) -> TTLPolicy:
     return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl, expire_seconds=None)
 
 
-def policy_for_alias(src_meta: dict, source_remaining_ttl: int, fallback_ttl: int) -> TTLPolicy:
+def policy_for_alias(src_meta: dict, source_remaining_ttl: int) -> TTLPolicy:
     cache_mode = src_meta.get("cache_mode") or "permanent"
     ttl_str = src_meta.get("ttl", "")
     declared_ttl = int(ttl_str) if ttl_str else 0
@@ -41,11 +41,9 @@ def policy_for_alias(src_meta: dict, source_remaining_ttl: int, fallback_ttl: in
         expire_seconds = source_remaining_ttl
     elif declared_ttl > 0:
         expire_seconds = declared_ttl
-    elif fallback_ttl > 0:
-        expire_seconds = fallback_ttl
     else:
         expire_seconds = None
-    return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl or fallback_ttl, expire_seconds=expire_seconds)
+    return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl, expire_seconds=expire_seconds)
 
 
 def policy_for_rehome(meta: dict, object_remaining_ttl: int) -> TTLPolicy:
