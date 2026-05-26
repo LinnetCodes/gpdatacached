@@ -149,3 +149,46 @@ class TestGCCleanupOnDomainClose:
         domain = GPDCDomain("gc_close_test", config)
         domain.close()
         assert domain._gc_thread is None or not domain._gc_thread.is_alive()
+
+
+class TestGCWithStringAliases:
+    """GC handles the new alias-as-string model."""
+
+    def test_gc_cleans_dangling_alias(self, ns, r):
+        """Alias whose canonical owner has been removed by TTL expiry gets cleaned."""
+        from gpdatacached.gc import run_gc_for_namespace
+
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        owner_key = make_object_key(DOMAIN, NS, "owner")
+        raw_owner = make_raw_key(DOMAIN, NS, "owner")
+        ref_owner = make_ref_key(DOMAIN, NS, "owner")
+        r.delete(owner_key, raw_owner, ref_owner)
+
+        deleted = run_gc_for_namespace(r, DOMAIN, NS)
+        assert deleted > 0
+        alias_key = make_object_key(DOMAIN, NS, "alias")
+        assert not r.exists(alias_key)
+
+    def test_gc_preserves_valid_alias(self, ns, r):
+        """GC does not touch aliases that still point to valid owners."""
+        from gpdatacached.gc import run_gc_for_namespace
+
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        run_gc_for_namespace(r, DOMAIN, NS)
+        assert "alias" in ns
+        assert "owner" in ns
+
+    def test_gc_cleans_stale_ref_set_member(self, ns, r):
+        """GC removes ref set members whose obj keys no longer exist."""
+        from gpdatacached.gc import run_gc_for_namespace
+
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        alias_key = make_object_key(DOMAIN, NS, "alias")
+        r.delete(alias_key)
+
+        run_gc_for_namespace(r, DOMAIN, NS)
+        ref_key = make_ref_key(DOMAIN, NS, "owner")
+        assert "alias" not in r.smembers(ref_key)
