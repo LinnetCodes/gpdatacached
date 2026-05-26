@@ -246,3 +246,41 @@ class TestBindingResolution:
         assert result is not None
         assert result["binding_kind"] == "owner"
         assert result["type"] == "scalar:int"
+
+
+class TestContainerThroughAlias:
+    """Container operations through alias handle work correctly."""
+
+    def test_list_append_through_alias(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        ns["alias"].append(3)
+        assert ns["owner"].value == [1, 2, 3]
+
+    def test_dict_setitem_through_alias(self, ns):
+        ns["owner"] = {"a": 1}
+        ns["alias"] = ns["owner"]
+        ns["alias"]["b"] = 2
+        assert ns["owner"].value == {"a": 1, "b": 2}
+
+    def test_set_add_through_alias(self, ns):
+        ns["owner"] = {1, 2}
+        ns["alias"] = ns["owner"]
+        ns["alias"].add(3)
+        assert 3 in ns["owner"]
+
+    def test_alias_referrers_returns_canonical_refs(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        owner_obj = ns.get_object("owner")
+        alias_obj = ns.get_object("alias")
+        assert owner_obj.referrers() == {"alias"}
+        assert alias_obj.referrers() == {"alias"}
+
+    def test_alias_touch_updates_canonical_timestamp(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        owner_updated = ns.get_object("owner").updated_at
+        ns["alias"].append(99)
+        new_updated = ns.get_object("owner").updated_at
+        assert new_updated >= owner_updated
