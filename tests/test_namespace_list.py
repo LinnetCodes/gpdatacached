@@ -7,6 +7,7 @@ import redis as redis_lib
 
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
+from gpdatacached.exceptions import CanonicalObjectReferencedError
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 from gpdatacached.objects import ListObject
 
@@ -191,14 +192,11 @@ class TestDeletion:
         assert not r.exists(make_raw_key(DOMAIN, NS, "a"))
         assert not r.exists(make_ref_key(DOMAIN, NS, "a"))
 
-    @pytest.mark.skip(reason="Pending refactor")
-    def test_delete_with_referrers_keeps_referrer_accessible(self, ns, r):
+    def test_delete_with_referrers_raises_error(self, ns):
         ns["a"] = [1, 2, 3]
         ns["b"] = ns["a"]
-        del ns["a"]
-        assert not r.exists(make_object_key(DOMAIN, NS, "a"))
-        assert not r.exists(make_raw_key(DOMAIN, NS, "a"))
-        assert list(ns["b"]) == [1, 2, 3]
+        with pytest.raises(CanonicalObjectReferencedError):
+            del ns["a"]
 
     def test_delete_referrer_removes_from_original_ref_set(self, ns, r):
         ns["a"] = [1, 2, 3]

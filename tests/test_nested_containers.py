@@ -7,6 +7,7 @@ import redis as redis_lib
 
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
+from gpdatacached.exceptions import CanonicalObjectReferencedError
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 from gpdatacached.objects import DictObject, ListObject, SetObject
 
@@ -278,14 +279,11 @@ class TestCascadeDeletion:
         assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
         assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
 
-    @pytest.mark.skip(reason="Pending refactor")
-    def test_delete_shared_anon_preserves_if_referrers_exist(self, ns, r):
+    def test_delete_shared_anon_blocked_when_referrers(self, ns):
         ns["x"] = {"a": [1, 2, 3]}
         ns["y"] = ns["x"]
-        raw_data = r.hgetall(make_raw_key(DOMAIN, NS, "x"))
-        anon_name = raw_data["str:a"].split(":obj:")[1]
-        del ns["x"]
-        assert r.exists(make_object_key(DOMAIN, NS, anon_name))
+        with pytest.raises(CanonicalObjectReferencedError):
+            del ns["x"]
 
 
 class TestDictSetNested:

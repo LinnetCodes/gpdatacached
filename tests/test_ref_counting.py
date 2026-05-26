@@ -7,6 +7,7 @@ import redis as redis_lib
 
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
+from gpdatacached.exceptions import CanonicalObjectReferencedError
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 
 REDIS_HOST = "127.0.0.1"
@@ -52,16 +53,10 @@ def ns(r):
 
 
 class TestReassignmentRefCleanup:
-    @pytest.mark.skip(reason="Pending refactor - old owner-reassignment-rejected semantic")
-    def test_reassign_owner_list_to_scalar_is_rejected(self, ns, r):
+    def test_overwrite_owner_list_with_scalar_when_no_refs(self, ns):
         ns["x"] = [1, 2, 3]
-        ref_x = make_ref_key(DOMAIN, NS, "x")
-
-        with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
-            ns["x"] = 42
-
-        assert list(ns["x"]) == [1, 2, 3]
-        assert r.smembers(ref_x) == set()
+        ns["x"] = 42
+        assert ns["x"] == 42
 
     def test_reassign_dict_to_scalar_cleans_ref(self, ns, r):
         ns["x"] = {"a": 1}
@@ -81,17 +76,16 @@ class TestReassignmentRefCleanup:
         ns["y"] = 99
         assert "y" not in r.smembers(ref_x)
 
-    @pytest.mark.skip(reason="Pending refactor - old owner-reassignment-rejected semantic")
-    def test_reassign_ref_to_new_container_cleans_ref(self, ns, r):
-        ns["x"] = [1, 2, 3]
-        ns["y"] = ns["x"]
-        ns["y"] = [4, 5, 6]
-        ref_x = make_ref_key(DOMAIN, NS, "x")
-        assert "y" not in r.smembers(ref_x)
-        assert list(ns["x"]) == [1, 2, 3]
-        assert list(ns["y"]) == [4, 5, 6]
+    def test_reassign_alias_to_new_container_cleans_ref(self, ns, r):
+        ns["a"] = [1, 2]
+        ns["b"] = ns["a"]
+        ns["c"] = [10, 20]
+        ns["b"] = ns["c"]
+        ref_a = make_ref_key(DOMAIN, NS, "a")
+        ref_c = make_ref_key(DOMAIN, NS, "c")
+        assert "b" not in r.smembers(ref_a)
+        assert "b" in r.smembers(ref_c)
 
-    @pytest.mark.skip(reason="Pending refactor - old owner-reassignment-rejected semantic")
     def test_reassign_ref_to_existing_container_cleans_old_ref(self, ns, r):
         ns["x"] = [1, 2]
         ns["y"] = [3, 4]
@@ -129,17 +123,13 @@ class TestMultipleRefs:
         assert r.exists(raw_x)
         assert r.exists(obj_x)
 
-    @pytest.mark.skip(reason="Pending refactor - old owner-reassignment-rejected semantic")
-    def test_recreating_deleted_owner_name_does_not_reuse_shared_raw_data(self, ns, r):
-        ns["x"] = [1, 2, 3]
+    def test_delete_owner_blocked_when_refs_exist(self, ns):
+        ns["x"] = [1, 2]
         ns["y"] = ns["x"]
-
-        del ns["x"]
-        ns["x"] = ["new"]
-
-        assert list(ns["x"]) == ["new"]
-        assert list(ns["y"]) == [1, 2, 3]
-        assert r.hget(make_object_key(DOMAIN, NS, "x"), "value") != r.hget(make_object_key(DOMAIN, NS, "y"), "value")
+        with pytest.raises(CanonicalObjectReferencedError):
+            del ns["x"]
+        assert ns["x"].value == [1, 2]
+        assert ns["y"].value == [1, 2]
 
 
 class TestReassignToDifferentContainerType:

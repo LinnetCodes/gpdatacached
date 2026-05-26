@@ -11,6 +11,7 @@ import pytest
 from gpdatacached.codec import BoolCodec
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
+from gpdatacached.exceptions import CanonicalObjectReferencedError
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 from gpdatacached.scalar import GPDCScalarObject
 from gpdatacached.types import GPDCTypeRegistry
@@ -41,20 +42,17 @@ def test_nested_container_replacement_is_rejected(isolated_ns, clean_redis):
     assert clean_redis.exists(make_raw_key("testdomain", "testns", anon_name))
 
 
-@pytest.mark.skip(reason="Pending refactor")
-def test_overwriting_container_owner_is_rejected(isolated_ns, clean_redis):
-    isolated_ns["x"] = {"a": [1, 2, 3]}
-    anon_name = isolated_ns["x"]["a"].name
+def test_overwriting_container_owner_allowed_without_refs(isolated_ns, clean_redis):
+    isolated_ns["x"] = [1, 2, 3]
+    isolated_ns["x"] = 42
+    assert isolated_ns["x"] == 42
 
-    with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
-        isolated_ns["x"] = 1
 
-    assert isolated_ns["x"]["a"][0] == 1
-    assert clean_redis.hget(make_object_key("testdomain", "testns", "x"), "binding_kind") == "owner"
-    assert clean_redis.exists(make_raw_key("testdomain", "testns", "x"))
-    assert clean_redis.exists(make_ref_key("testdomain", "testns", anon_name))
-    assert clean_redis.exists(make_object_key("testdomain", "testns", anon_name))
-    assert clean_redis.exists(make_raw_key("testdomain", "testns", anon_name))
+def test_overwriting_container_owner_blocked_with_refs(isolated_ns, clean_redis):
+    isolated_ns["x"] = [1, 2, 3]
+    isolated_ns["y"] = isolated_ns["x"]
+    with pytest.raises(CanonicalObjectReferencedError):
+        isolated_ns["x"] = 42
 
 
 def test_nested_cross_namespace_container_assignment_is_rejected(isolated_domain):
@@ -67,23 +65,16 @@ def test_nested_cross_namespace_container_assignment_is_rejected(isolated_domain
         ns2["holder"]["foreign"] = ns1["lst"]
 
 
-@pytest.mark.skip(reason="Pending refactor")
-def test_alias_object_applies_real_redis_expiry_when_source_uses_ttl(isolated_ns, clean_redis):
-    isolated_ns["a"] = [1, 2, 3]
-    obj = isolated_ns.get_object("a")
-    obj.cache_mode = "ttl"
-    obj.ttl = 60
-
-    isolated_ns["b"] = isolated_ns["a"]
-
-    source_key = make_object_key("testdomain", "testns", "a")
-    alias_key = make_object_key("testdomain", "testns", "b")
-    source_remaining = clean_redis.ttl(source_key)
-    alias_remaining = clean_redis.ttl(alias_key)
-
-    assert source_remaining > 0
-    assert alias_remaining > 0
-    assert alias_remaining <= source_remaining
+def test_alias_lifecycle_delegates_to_canonical_owner(isolated_ns):
+    isolated_ns["owner"] = [1, 2, 3]
+    isolated_ns.get_object("owner").cache_mode = "ttl"
+    isolated_ns.get_object("owner").ttl = 300
+    isolated_ns["alias"] = isolated_ns["owner"]
+    alias_obj = isolated_ns.get_object("alias")
+    owner_obj = isolated_ns.get_object("owner")
+    assert alias_obj.cache_mode == "ttl"
+    assert alias_obj.ttl == 300
+    assert alias_obj.created_at == owner_obj.created_at
 
 
 def test_scalar_object_rejects_value_of_different_declared_type(isolated_ns):
@@ -168,22 +159,13 @@ def test_decode_invalid_bool_payload_raises_value_error():
         BoolCodec.decode_value("bool:not-bool")
 
 
-@pytest.mark.skip(reason="Pending refactor")
-def test_alias_metadata_matches_source_declared_ttl(isolated_ns, clean_redis):
-    isolated_ns["src"] = [1, 2, 3]
-    src = isolated_ns.get_object("src")
-    src.cache_mode = "ttl"
-    src.ttl = 300
-    isolated_ns["alias"] = isolated_ns["src"]
-
-    src_key = make_object_key("testdomain", "testns", "src")
-    alias_key = make_object_key("testdomain", "testns", "alias")
-    src_meta = clean_redis.hgetall(src_key)
-    alias_meta = clean_redis.hgetall(alias_key)
-
-    assert alias_meta["cache_mode"] == src_meta["cache_mode"]
-    assert alias_meta["ttl"] == src_meta["ttl"]
-    assert clean_redis.ttl(alias_key) <= clean_redis.ttl(src_key)
+def test_alias_reads_canonical_ttl(isolated_ns):
+    isolated_ns["owner"] = [1, 2, 3]
+    isolated_ns.get_object("owner").cache_mode = "ttl"
+    isolated_ns.get_object("owner").ttl = 600
+    isolated_ns["alias"] = isolated_ns["owner"]
+    assert isolated_ns.get_object("alias").ttl == 600
+    assert isolated_ns.get_object("alias").cache_mode == "ttl"
 
 
 def test_anonymous_object_inherits_declared_policy_not_remaining(isolated_ns, clean_redis):

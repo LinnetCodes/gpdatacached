@@ -3,7 +3,8 @@ import datetime
 import pytest
 
 from gpdatacached import GPDCNamespace, ListObject, __version__
-from gpdatacached.keys import GLOBAL_META_KEY, make_object_key
+from gpdatacached.exceptions import CanonicalObjectReferencedError
+from gpdatacached.keys import GLOBAL_META_KEY
 
 
 class TestSpecVerification:
@@ -296,16 +297,21 @@ class TestSpecVerification:
         raw_y = f"gpdc:{d}:{n}:raw:y"
         assert clean_redis.exists(raw_y)
 
-    @pytest.mark.skip(reason="Pending refactor")
-    def test_list_owner_reassign_is_rejected(self, domain, clean_redis):
+    def test_list_owner_overwrite_allowed_without_refs(self, domain, clean_redis):
         ns = domain.get_namespace("spec_verification")
 
         ns["x"] = [1, 2, 3]
+        ns["x"] = 42
+        assert ns["x"] == 42
 
-        with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
-            ns["x"] = [4, 5, 6]
+    def test_list_owner_overwrite_blocked_with_refs(self, domain, clean_redis):
+        ns = domain.get_namespace("spec_verification")
 
-        assert list(ns["x"]) == [1, 2, 3]
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+
+        with pytest.raises(CanonicalObjectReferencedError):
+            ns["x"] = 42
 
     def test_list_copy_deepcopy(self, domain, clean_redis):
         # ── §7 copy / deepcopy ──────────────────────────────────────
@@ -372,34 +378,13 @@ class TestSpecVerification:
         assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:alone")
         assert not clean_redis.exists(f"gpdc:{d}:{n}:ref:alone")
 
-    @pytest.mark.skip(reason="Pending refactor")
-    def test_list_delete_with_refs(self, domain, clean_redis):
-        # ── §10.1 删除有引用的容器对象（保留共享访问能力） ──────────
+    def test_list_delete_with_refs_raises_error(self, domain, clean_redis):
         ns = domain.get_namespace("spec_verification")
-        d = "testdomain"
-        n = "spec_verification"
 
         ns["owner"] = [10, 20]
         ns["sharer"] = ns["owner"]
-        del ns["owner"]
-        sharer_obj_key = make_object_key(d, n, "sharer")
-        hidden_raw_key = clean_redis.hget(sharer_obj_key, "value")
-        hidden_name = hidden_raw_key.split(":raw:", 1)[1]
-
-        assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:owner")
-        assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:owner")
-        assert not clean_redis.exists(f"gpdc:{d}:{n}:ref:owner")
-        assert list(ns["sharer"]) == [10, 20]
-        assert hidden_raw_key.startswith(f"gpdc:{d}:{n}:raw:~anon:")
-        assert clean_redis.exists(hidden_raw_key)
-        assert clean_redis.exists(make_object_key(d, n, hidden_name))
-        assert clean_redis.smembers(f"gpdc:{d}:{n}:ref:{hidden_name}") == {"sharer"}
-
-        del ns["sharer"]
-        assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:sharer")
-        assert not clean_redis.exists(hidden_raw_key)
-        assert not clean_redis.exists(make_object_key(d, n, hidden_name))
-        assert not clean_redis.exists(f"gpdc:{d}:{n}:ref:{hidden_name}")
+        with pytest.raises(CanonicalObjectReferencedError):
+            del ns["owner"]
 
     def test_list_delete_referrer(self, domain, clean_redis):
         # ── §10.1 删除引用者（从原 ref set 移除） ───────────────────
@@ -1025,9 +1010,7 @@ class TestSpecVerification:
         after = clean_redis.hget(obj_touch, "updated_at")
         assert after >= before
 
-    @pytest.mark.skip(reason="Pending refactor")
     def test_set_reassign_ref_cleanup(self, domain, clean_redis):
-        # ── §5.2 重新赋值的完整处理 — 清理旧引用 ────────────────────
         ns = domain.get_namespace("spec_verification")
         d = "testdomain"
         n = "spec_verification"
@@ -1037,15 +1020,9 @@ class TestSpecVerification:
         ref_rx = f"gpdc:{d}:{n}:ref:rx"
         assert "ry" in clean_redis.smembers(ref_rx)
 
-        # 重新赋值为新 set
         ns["ry"] = {4, 5}
         assert "ry" not in clean_redis.smembers(ref_rx)
         assert set(ns["rx"]) == {1, 2, 3}
-        assert set(ns["ry"]) == {4, 5}
-
-        with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
-            ns["ry"] = 42
-
         assert set(ns["ry"]) == {4, 5}
 
     def test_set_cross_type_ref_sharing(self, domain, clean_redis):
@@ -1063,9 +1040,7 @@ class TestSpecVerification:
         ref_s.add(30)
         assert 30 in ns["shared_s"]
 
-    @pytest.mark.skip(reason="Pending refactor")
     def test_set_delete_ref_cleanup(self, domain, clean_redis):
-        # ── §5.4 删除对象时的完整引用清理 ─────────────────────────────
         ns = domain.get_namespace("spec_verification")
         d = "testdomain"
         n = "spec_verification"
@@ -1079,34 +1054,16 @@ class TestSpecVerification:
         assert "del_y" not in clean_redis.smembers(ref_del_x)
         assert set(ns["del_x"]) == {1, 2}
 
-        # 删除 owner — 有引用者时保留共享访问能力
         ns["del_o"] = {5, 6}
         ns["del_r"] = ns["del_o"]
-        del ns["del_o"]
-        del_r_obj_key = make_object_key(d, n, "del_r")
-        hidden_raw_key = clean_redis.hget(del_r_obj_key, "value")
-        hidden_name = hidden_raw_key.split(":raw:", 1)[1]
+        with pytest.raises(CanonicalObjectReferencedError):
+            del ns["del_o"]
 
-        assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:del_o")
-        assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:del_o")
-        assert not clean_redis.exists(f"gpdc:{d}:{n}:ref:del_o")
-        assert set(ns["del_r"]) == {5, 6}
-        assert hidden_raw_key.startswith(f"gpdc:{d}:{n}:raw:~anon:")
-        assert clean_redis.exists(hidden_raw_key)
-        assert clean_redis.exists(make_object_key(d, n, hidden_name))
-        assert clean_redis.smembers(f"gpdc:{d}:{n}:ref:{hidden_name}") == {"del_r"}
-
-        # 删除无引用的 set — 全部清理
         ns["alone_s"] = {7, 8}
         del ns["alone_s"]
         assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:alone_s")
         assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:alone_s")
         assert not clean_redis.exists(f"gpdc:{d}:{n}:ref:alone_s")
-
-        del ns["del_r"]
-        assert not clean_redis.exists(hidden_raw_key)
-        assert not clean_redis.exists(make_object_key(d, n, hidden_name))
-        assert not clean_redis.exists(f"gpdc:{d}:{n}:ref:{hidden_name}")
 
     def test_set_as_dict_value(self, domain, clean_redis):
         # ── §7.1 三种容器类型可以任意嵌套 — Set 作为 Dict 的值 ────

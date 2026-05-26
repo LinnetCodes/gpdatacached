@@ -1,6 +1,3 @@
-import pytest
-
-
 def test_setitem_scalar_new(ns):
     ns["x"] = 42
     assert ns["x"] == 42
@@ -47,20 +44,16 @@ def test_setitem_scalar_object(ns):
     assert ns["y"] == 42
 
 
-@pytest.mark.skip(reason="Pending refactor")
-def test_setitem_list_owner_overwrite_to_scalar_rejected(ns):
+def test_setitem_list_owner_overwrite_to_scalar_succeeds(ns):
     ns["x"] = [1, 2, 3]
+    ns["x"] = 42
+    assert ns["x"] == 42
 
-    with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
-        ns["x"] = 42
 
-
-@pytest.mark.skip(reason="Pending refactor")
-def test_setitem_owner_overwrite_to_native_container_rejected(ns):
+def test_setitem_owner_overwrite_to_dict_succeeds(ns):
     ns["x"] = [1, 2, 3]
-
-    with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
-        ns["x"] = {"a": 1}
+    ns["x"] = {"a": 1}
+    assert ns["x"].value == {"a": 1}
 
 
 def test_setitem_referrer_can_rebind_to_scalar(ns):

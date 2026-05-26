@@ -7,6 +7,7 @@ import redis as redis_lib
 
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
+from gpdatacached.exceptions import CanonicalObjectReferencedError
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 from gpdatacached.objects import DictObject
 
@@ -104,14 +105,11 @@ class TestDictDeletion:
         assert not r.exists(make_raw_key(DOMAIN, NS, "d"))
         assert not r.exists(make_ref_key(DOMAIN, NS, "d"))
 
-    @pytest.mark.skip(reason="Pending refactor")
-    def test_delete_with_referrers_keeps_referrer_accessible(self, ns, r):
+    def test_delete_with_referrers_raises_error(self, ns):
         ns["a"] = {"x": 1}
         ns["b"] = ns["a"]
-        del ns["a"]
-        assert not r.exists(make_object_key(DOMAIN, NS, "a"))
-        assert isinstance(ns["b"], DictObject)
-        assert ns["b"]["x"] == 1
+        with pytest.raises(CanonicalObjectReferencedError):
+            del ns["a"]
 
     def test_delete_nonexistent_raises(self, ns):
         with pytest.raises(KeyError):
@@ -134,15 +132,10 @@ class TestDictReassignment:
         assert isinstance(result, DictObject)
         assert result["a"] == 1
 
-    @pytest.mark.skip(reason="Pending refactor")
-    def test_reassign_dict_to_scalar(self, ns):
+    def test_reassign_dict_to_scalar_no_refs(self, ns):
         ns["x"] = {"a": 1}
-        with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
-            ns["x"] = 42
-
-        result = ns["x"]
-        assert isinstance(result, DictObject)
-        assert result["a"] == 1
+        ns["x"] = 42
+        assert ns["x"] == 42
 
 
 class TestMixedTypes:
