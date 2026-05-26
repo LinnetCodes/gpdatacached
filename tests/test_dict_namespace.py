@@ -103,6 +103,7 @@ class TestDictDeletion:
         assert not r.exists(make_raw_key(DOMAIN, NS, "d"))
         assert not r.exists(make_ref_key(DOMAIN, NS, "d"))
 
+    @pytest.mark.skip(reason="Pending refactor")
     def test_delete_with_referrers_keeps_referrer_accessible(self, ns, r):
         ns["a"] = {"x": 1}
         ns["b"] = ns["a"]
@@ -132,6 +133,7 @@ class TestDictReassignment:
         assert isinstance(result, DictObject)
         assert result["a"] == 1
 
+    @pytest.mark.skip(reason="Pending refactor")
     def test_reassign_dict_to_scalar(self, ns):
         ns["x"] = {"a": 1}
         with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):

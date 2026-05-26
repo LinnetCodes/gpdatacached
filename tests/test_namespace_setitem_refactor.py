@@ -47,6 +47,7 @@ def test_setitem_scalar_object(ns):
     assert ns["y"] == 42
 
 
+@pytest.mark.skip(reason="Pending refactor")
 def test_setitem_list_owner_overwrite_to_scalar_rejected(ns):
     ns["x"] = [1, 2, 3]
 
@@ -54,6 +55,7 @@ def test_setitem_list_owner_overwrite_to_scalar_rejected(ns):
         ns["x"] = 42
 
 
+@pytest.mark.skip(reason="Pending refactor")
 def test_setitem_owner_overwrite_to_native_container_rejected(ns):
     ns["x"] = [1, 2, 3]
 

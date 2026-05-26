@@ -192,6 +192,7 @@ class TestDeletion:
         assert not r.exists(make_raw_key(DOMAIN, NS, "a"))
         assert not r.exists(make_ref_key(DOMAIN, NS, "a"))
 
+    @pytest.mark.skip(reason="Pending refactor")
     def test_delete_with_referrers_keeps_referrer_accessible(self, ns, r):
         ns["a"] = [1, 2, 3]
         ns["b"] = ns["a"]

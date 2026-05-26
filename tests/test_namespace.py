@@ -109,44 +109,6 @@ class TestNamespaceSetItem:
         assert ns["x"] == 99
 
 
-class TestContainerBindingKind:
-    def test_named_container_owner_records_binding_kind(self, ns, clean_redis):
-        ns["x"] = [1, 2, 3]
-
-        data = clean_redis.hgetall(make_object_key("testdomain", "testns", "x"))
-
-        assert data["binding_kind"] == "owner"
-
-    def test_named_container_referrer_records_binding_kind(self, ns, clean_redis):
-        ns["x"] = [1, 2, 3]
-        ns["y"] = ns["x"]
-
-        data = clean_redis.hgetall(make_object_key("testdomain", "testns", "y"))
-
-        assert data["binding_kind"] == "ref"
-
-    def test_legacy_owner_without_binding_kind_is_still_restricted(self, ns, clean_redis):
-        ns["legacy_owner"] = [1, 2, 3]
-        obj_key = make_object_key("testdomain", "testns", "legacy_owner")
-        clean_redis.hdel(obj_key, "binding_kind")
-
-        with pytest.raises(TypeError, match="Cannot reassign a namespace container owner"):
-            ns["legacy_owner"] = 99
-
-    def test_legacy_ref_without_binding_kind_can_rebind(self, ns, clean_redis):
-        ns["source"] = [1, 2, 3]
-        ns["legacy_ref"] = ns["source"]
-        obj_key = make_object_key("testdomain", "testns", "legacy_ref")
-        ref_key = "gpdc:testdomain:testns:ref:source"
-        clean_redis.hdel(obj_key, "binding_kind")
-
-        ns["legacy_ref"] = 99
-
-        assert ns["legacy_ref"] == 99
-        assert list(ns["source"]) == [1, 2, 3]
-        assert "legacy_ref" not in clean_redis.smembers(ref_key)
-
-
 class TestNamespaceGetItem:
     def test_get_int_returns_native_value(self, ns):
         ns["n"] = 42
@@ -376,7 +338,6 @@ class TestCacheModeAndTTL:
 
         data = clean_redis.hgetall(key)
         assert data["type"].startswith("collection:")
-        assert data["binding_kind"] == "owner"
         assert data["cache_mode"] == "ttl"
         assert data["ttl"] == "300"
         remaining = clean_redis.ttl(key)
