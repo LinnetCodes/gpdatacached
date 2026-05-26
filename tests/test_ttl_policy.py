@@ -6,8 +6,6 @@ from gpdatacached.ttl import (
     TTLPolicy,
     policy_from_defaults,
     policy_from_meta,
-    policy_for_alias,
-    policy_for_rehome,
     policy_for_cache_mode_change,
     policy_for_ttl_change,
     policy_for_sliding_touch,
@@ -82,61 +80,6 @@ class TestPolicyFromMeta:
     def test_ttl_meta_with_missing_ttl(self):
         p = policy_from_meta({"cache_mode": "ttl"})
         assert p.declared_ttl == 0
-        assert p.expire_seconds is None
-
-
-class TestPolicyForAlias:
-    def test_uses_source_remaining_ttl_when_present(self):
-        src = {"cache_mode": "ttl", "ttl": "300"}
-        p = policy_for_alias(src, source_remaining_ttl=200)
-        assert p.cache_mode == "ttl"
-        assert p.declared_ttl == 300
-        assert p.expire_seconds == 200
-
-    def test_falls_back_to_declared_ttl_when_no_remaining(self):
-        src = {"cache_mode": "ttl", "ttl": "300"}
-        p = policy_for_alias(src, source_remaining_ttl=-1)
-        assert p.expire_seconds == 300
-
-    def test_permanent_source_no_expire(self):
-        src = {"cache_mode": "permanent", "ttl": ""}
-        p = policy_for_alias(src, source_remaining_ttl=-1)
-        assert p.expire_seconds is None
-
-    def test_no_declared_ttl_copies_zero_from_source(self):
-        src = {"cache_mode": "ttl", "ttl": ""}
-        p = policy_for_alias(src, source_remaining_ttl=-1)
-        assert p.declared_ttl == 0
-        assert p.expire_seconds is None
-
-    def test_no_expire_when_all_ttls_absent(self):
-        src = {"cache_mode": "ttl", "ttl": ""}
-        p = policy_for_alias(src, source_remaining_ttl=-1)
-        assert p.expire_seconds is None
-
-
-@pytest.mark.skip(reason="Pending refactor")
-class TestPolicyForRehome:
-    def test_preserves_remaining_ttl(self):
-        meta = {"cache_mode": "ttl", "ttl": "300"}
-        p = policy_for_rehome(meta, object_remaining_ttl=150)
-        assert p.cache_mode == "ttl"
-        assert p.declared_ttl == 300
-        assert p.expire_seconds == 150
-
-    def test_falls_back_to_declared_ttl(self):
-        meta = {"cache_mode": "ttl", "ttl": "300"}
-        p = policy_for_rehome(meta, object_remaining_ttl=-1)
-        assert p.expire_seconds == 300
-
-    def test_permanent_rehome(self):
-        meta = {"cache_mode": "permanent", "ttl": ""}
-        p = policy_for_rehome(meta, object_remaining_ttl=-1)
-        assert p.expire_seconds is None
-
-    def test_no_ttl_field(self):
-        meta = {"cache_mode": "sliding", "ttl": ""}
-        p = policy_for_rehome(meta, object_remaining_ttl=-1)
         assert p.expire_seconds is None
 
 

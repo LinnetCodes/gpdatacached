@@ -31,36 +31,6 @@ def policy_from_meta(meta: dict) -> TTLPolicy:
     return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl, expire_seconds=None)
 
 
-def policy_for_alias(src_meta: dict, source_remaining_ttl: int) -> TTLPolicy:
-    cache_mode = src_meta.get("cache_mode") or "permanent"
-    ttl_str = src_meta.get("ttl", "")
-    declared_ttl = int(ttl_str) if ttl_str else 0
-    if cache_mode == "permanent":
-        return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl, expire_seconds=None)
-    if source_remaining_ttl > 0:
-        expire_seconds = source_remaining_ttl
-    elif declared_ttl > 0:
-        expire_seconds = declared_ttl
-    else:
-        expire_seconds = None
-    return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl, expire_seconds=expire_seconds)
-
-
-def policy_for_rehome(meta: dict, object_remaining_ttl: int) -> TTLPolicy:
-    cache_mode = meta.get("cache_mode") or "permanent"
-    ttl_str = meta.get("ttl", "")
-    declared_ttl = int(ttl_str) if ttl_str else 0
-    if cache_mode == "permanent":
-        return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl, expire_seconds=None)
-    if object_remaining_ttl > 0:
-        expire_seconds = object_remaining_ttl
-    elif declared_ttl > 0:
-        expire_seconds = declared_ttl
-    else:
-        expire_seconds = None
-    return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl, expire_seconds=expire_seconds)
-
-
 def policy_for_cache_mode_change(current: TTLPolicy, new_mode: str) -> TTLPolicy:
     if new_mode not in ("permanent", "ttl", "sliding"):
         raise ValueError(f"Invalid cache_mode: {new_mode!r}")
