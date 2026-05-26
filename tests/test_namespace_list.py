@@ -93,9 +93,10 @@ class TestReferenceSharing:
     def test_assign_list_object_shares_raw_key(self, ns, r):
         ns["a"] = [1, 2, 3]
         ns["b"] = ns["a"]
-        obj_a_raw = r.hget(make_object_key(DOMAIN, NS, "a"), "value")
-        obj_b_raw = r.hget(make_object_key(DOMAIN, NS, "b"), "value")
-        assert obj_a_raw == obj_b_raw
+        obj_a_key = make_object_key(DOMAIN, NS, "a")
+        obj_b_key = make_object_key(DOMAIN, NS, "b")
+        assert r.type(obj_b_key) == "string"
+        assert r.get(obj_b_key) == f"ref:{obj_a_key}"
 
     def test_assign_list_object_adds_to_ref_set(self, ns, r):
         ns["a"] = [1, 2, 3]
@@ -118,11 +119,9 @@ class TestReferenceSharing:
         ns["a"] = [1, 2, 3]
         ns["b"] = ns["a"]
         raw_b = make_raw_key(DOMAIN, NS, "b")
-        raw_a = make_raw_key(DOMAIN, NS, "a")
-        # b's raw key should be the same as a's, not a separate key
-        obj_b_value = r.hget(make_object_key(DOMAIN, NS, "b"), "value")
-        assert obj_b_value == raw_a
-        # raw:b should NOT exist (b shares raw:a)
+        obj_b_key = make_object_key(DOMAIN, NS, "b")
+        assert r.type(obj_b_key) == "string"
+        assert r.get(obj_b_key).startswith("ref:")
         assert not r.exists(raw_b)
 
 

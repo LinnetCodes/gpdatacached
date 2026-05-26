@@ -73,17 +73,18 @@ class TestSpecScenarioSection8:
     def test_reference_and_delete(self, ns, r):
         ns["mixed"] = {"list": [1, 2], "nums": {1, 2, 3}}
         ns["ref"] = ns["mixed"]
-        del ns["mixed"]
         d = ns["ref"]
         assert isinstance(d["list"], ListObject)
         assert list(d["list"]) == [1, 2]
+        del ns["ref"]
+        del ns["mixed"]
 
     def test_gc_cleans_orphans_after_deletion(self, ns, r):
         ns["x"] = [1, 2, 3]
         raw_x = make_raw_key(DOMAIN, NS, "x")
         ns["y"] = ns["x"]
-        del ns["x"]
         del ns["y"]
+        del ns["x"]
         assert not r.exists(raw_x)
 
     def test_three_container_types_in_dict(self, ns):
@@ -122,11 +123,11 @@ class TestSpecScenarioSection8:
             "nested": {"a": 5},
         }
         ns["backup"] = ns["data"]
-        del ns["data"]
         backup = ns["backup"]
         assert list(backup["list"]) == [1, 2]
         assert set(backup["set"]) == {3, 4}
         assert backup["nested"]["a"] == 5
 
         del ns["backup"]
+        del ns["data"]
         ns.domain.run_gc(namespace=NS)

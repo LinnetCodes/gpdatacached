@@ -30,6 +30,8 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
     while True:
         cursor, keys = r.scan(cursor=cursor, match=obj_pattern, count=100)
         for obj_key in keys:
+            if r.type(obj_key) != "hash":
+                continue
             meta = r.hgetall(obj_key)
             obj_type = meta.get("type", "")
             raw_key = meta.get("value", "")

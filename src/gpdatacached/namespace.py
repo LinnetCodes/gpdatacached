@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime
-import uuid
 from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, Iterator
 
@@ -18,6 +17,7 @@ from .keys import (
     make_object_key_prefix,
     make_raw_key,
     make_ref_key,
+    make_uri,
     validate_namespace_name,
     validate_object_name,
 )
@@ -107,128 +107,100 @@ class GPDCNamespace(MutableMapping):
 
     # ── Dict-like interface ──────────────────────────────────────────────────
 
-    def _owner_name_from_raw_key(self, raw_key: str) -> str:
-        """Extract object name from a raw key like gpdc:{domain}:{ns}:raw:{name}."""
-        prefix = f"gpdc:{self._domain.name}:{self._name}:raw:"
-        return raw_key[len(prefix) :]
+    def _resolve_binding(self, key: str) -> dict | None:
+        """Resolve a namespace binding key to its canonical owner."""
+        r = self._redis()
+        obj_key = make_object_key(self._domain.name, self._name, key)
+        key_type = r.type(obj_key)
 
-    def _cleanup_old_container_ref(self, key: str, existing_meta: dict) -> None:
-        """If key previously referenced another container, remove key from that ref set."""
-        old_type = existing_meta.get("type", "")
-        if not old_type.startswith("collection:"):
-            return
-        old_raw_key = existing_meta.get("value", "")
-        if not old_raw_key:
-            return
-        owner_name = self._owner_name_from_raw_key(old_raw_key)
-        if owner_name != key:
-            ref_key = make_ref_key(self._domain.name, self._name, owner_name)
-            r = self._redis()
-            r.srem(ref_key, key)
-            if owner_name.startswith("~") and not r.smembers(ref_key):
-                self._cascade_delete_anonymous(owner_name)
+        if key_type == "hash":
+            meta = r.hgetall(obj_key)
+            if not meta:
+                return None
+            obj_type = meta.get("type", "")
+            raw_key = meta.get("value", "") if obj_type.startswith("collection:") else ""
+            return {
+                "binding_name": key,
+                "canonical_name": key,
+                "binding_kind": "owner",
+                "binding_obj_key": obj_key,
+                "canonical_obj_key": obj_key,
+                "canonical_raw_key": raw_key,
+                "type": obj_type,
+                "meta": meta,
+            }
+        elif key_type == "string":
+            ref_value = r.get(obj_key)
+            if not ref_value or not ref_value.startswith("ref:"):
+                return None
+            canonical_obj_key = ref_value[len("ref:") :]
+            canonical_name = canonical_obj_key.rsplit(":obj:", 1)[-1]
+            canonical_meta = r.hgetall(canonical_obj_key)
+            if not canonical_meta:
+                return None
+            obj_type = canonical_meta.get("type", "")
+            raw_key = canonical_meta.get("value", "") if obj_type.startswith("collection:") else ""
+            return {
+                "binding_name": key,
+                "canonical_name": canonical_name,
+                "binding_kind": "reference",
+                "binding_obj_key": obj_key,
+                "canonical_obj_key": canonical_obj_key,
+                "canonical_raw_key": raw_key,
+                "type": obj_type,
+                "meta": canonical_meta,
+            }
+        return None
 
-    def _is_same_container_ref_assignment(self, key: str, existing: dict, container) -> bool:
-        from .container import GPDCContainerObject
+    def _cleanup_alias_binding(self, key: str, existing: dict) -> None:
+        """Remove an alias string binding and clean up its ref set entry."""
+        r = self._redis()
+        canonical_name = existing["canonical_name"]
+        ref_key = make_ref_key(self._domain.name, self._name, canonical_name)
+        r.srem(ref_key, key)
+        r.delete(existing["binding_obj_key"])
+        if canonical_name.startswith("~") and not r.smembers(ref_key):
+            self._cascade_delete_anonymous(canonical_name)
 
-        if not existing or self._effective_binding_kind(key, existing) != "ref":
-            return False
-        if not isinstance(container, GPDCContainerObject) or container._namespace is not self:
-            return False
-        container._binding_owner_name()
-        return existing.get("value", "") == container.raw_key
+    def _cleanup_existing_for_overwrite(self, key: str, existing: dict) -> None:
+        """Clean up an existing binding before it is overwritten with a container alias."""
+        from .exceptions import CanonicalObjectReferencedError
 
-    def _effective_binding_kind(self, key: str, meta: dict) -> str:
-        binding_kind = meta.get("binding_kind", "")
-        if binding_kind in {"owner", "ref"}:
-            return binding_kind
-        if not meta.get("type", "").startswith("collection:"):
-            return ""
-        raw_key = meta.get("value", "")
-        if not raw_key:
-            return ""
-        owner_name = self._owner_name_from_raw_key(raw_key)
-        return "owner" if owner_name == key else "ref"
-
-    def _validate_container_reassignment(self, key: str, existing: dict) -> None:
-        if not existing.get("type", "").startswith("collection:"):
-            return
-        if self._effective_binding_kind(key, existing) == "owner":
-            raise TypeError(
-                "Cannot reassign a namespace container owner; delete it first if you want to end its lifecycle"
-            )
+        r = self._redis()
+        if existing["binding_kind"] == "reference":
+            self._cleanup_alias_binding(key, existing)
+        elif existing["binding_kind"] == "owner" and existing["type"].startswith("collection:"):
+            ref_key = make_ref_key(self._domain.name, self._name, key)
+            referrers = r.smembers(ref_key)
+            if referrers:
+                raise CanonicalObjectReferencedError(
+                    canonical_name=key,
+                    canonical_uri=make_uri(self._domain.name, self._name, key),
+                    referrers=sorted(referrers),
+                )
+            self._teardown_owner_container(key, existing["meta"])
+            r.delete(existing["binding_obj_key"])
+        else:
+            r.delete(existing["binding_obj_key"])
 
     def _teardown_owner_container(self, key: str, meta: dict) -> None:
         """Remove an owner container's raw data, anonymous children, and ref sets."""
         r = self._redis()
         stored_raw_key = meta.get("value", "")
         obj_type = meta.get("type", "")
-        ref_key_of_this = make_ref_key(self._domain.name, self._name, key)
+        ref_key = make_ref_key(self._domain.name, self._name, key)
 
-        referrers = r.smembers(ref_key_of_this)
         if stored_raw_key and obj_type.startswith("collection:"):
             nested_ref_names = self._collect_nested_ref_names(stored_raw_key, obj_type)
             for nested_name in nested_ref_names:
                 nested_ref_key = make_ref_key(self._domain.name, self._name, nested_name)
                 r.srem(nested_ref_key, key)
-                if referrers:
-                    r.sadd(nested_ref_key, *referrers)
                 if nested_name.startswith("~"):
                     self._cascade_delete_anonymous(nested_name)
 
-        if not referrers:
-            if stored_raw_key:
-                r.delete(stored_raw_key)
-            r.delete(ref_key_of_this)
-
-    def _rehome_deleted_owner_container(self, key: str, meta: dict, referrers: set[str]) -> None:
-        from .ttl import policy_for_rehome, meta_ttl_value, apply_policy
-
-        r = self._redis()
-        stored_raw_key = meta.get("value", "")
-        obj_type = meta.get("type", "")
-        old_ref_key = make_ref_key(self._domain.name, self._name, key)
-        hidden_owner_name = f"~anon:{uuid.uuid4()}"
-        hidden_obj_key = make_object_key(self._domain.name, self._name, hidden_owner_name)
-        hidden_raw_key = make_raw_key(self._domain.name, self._name, hidden_owner_name)
-        hidden_ref_key = make_ref_key(self._domain.name, self._name, hidden_owner_name)
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        obj_ttl = r.ttl(make_object_key(self._domain.name, self._name, key))
-        policy = policy_for_rehome(meta, obj_ttl)
-
-        if stored_raw_key and r.exists(stored_raw_key):
-            r.rename(stored_raw_key, hidden_raw_key)
-        if r.exists(old_ref_key):
-            r.rename(old_ref_key, hidden_ref_key)
-        elif referrers:
-            r.sadd(hidden_ref_key, *referrers)
-
-        r.hset(
-            hidden_obj_key,
-            mapping={
-                "type": obj_type,
-                "codec": meta.get("codec", "native"),
-                "value": hidden_raw_key,
-                "cache_mode": policy.cache_mode,
-                "ttl": meta_ttl_value(policy),
-                "created_at": meta.get("created_at", now),
-                "updated_at": now,
-            },
-        )
-        apply_policy(r, hidden_obj_key, policy)
-
-        for referrer in referrers:
-            referrer_obj_key = make_object_key(self._domain.name, self._name, referrer)
-            r.hset(referrer_obj_key, mapping={"value": hidden_raw_key, "updated_at": now})
-
-        if stored_raw_key and obj_type.startswith("collection:"):
-            nested_ref_names = self._collect_nested_ref_names(hidden_raw_key, obj_type)
-            for nested_name in nested_ref_names:
-                nested_ref_key = make_ref_key(self._domain.name, self._name, nested_name)
-                r.srem(nested_ref_key, key)
-                if referrers:
-                    r.srem(nested_ref_key, *referrers)
-                r.sadd(nested_ref_key, hidden_owner_name)
+        if stored_raw_key:
+            r.delete(stored_raw_key)
+        r.delete(ref_key)
 
     def _write_scalar_meta(self, obj_key: str, entry, encoded_value: str, policy, now: str, *, is_new: bool) -> None:
         from .ttl import meta_ttl_value, apply_policy
@@ -256,78 +228,60 @@ class GPDCNamespace(MutableMapping):
         now: str,
         *,
         is_new: bool,
-        binding_kind: str,
     ) -> None:
         from .ttl import meta_ttl_value, apply_policy
 
         r = self._redis()
         mapping = {
             "type": entry.gpdc_type,
+            "codec": "native",
             "value": raw_key,
+            "cache_mode": policy.cache_mode,
+            "ttl": meta_ttl_value(policy),
             "updated_at": now,
-            "binding_kind": binding_kind,
         }
         if is_new:
             mapping["created_at"] = now
-        mapping["codec"] = "native"
-        mapping["cache_mode"] = policy.cache_mode
-        mapping["ttl"] = meta_ttl_value(policy)
         r.hset(obj_key, mapping=mapping)
         apply_policy(r, obj_key, policy)
 
-    def _setitem_container_ref(self, key: str, container, existing: dict) -> None:
+    def _setitem_container_ref(self, key: str, container) -> None:
         from .container import GPDCContainerObject
-        from .ttl import policy_for_alias, meta_ttl_value, apply_policy
 
         assert isinstance(container, GPDCContainerObject)
         if container._namespace is not self:
             raise ValueError("Cross-namespace container reference sharing is not supported")
+
         r = self._redis()
-        src_obj_key = make_object_key(self._domain.name, container._namespace.name, container._name)
-        src_meta = r.hgetall(src_obj_key)
-        shared_raw_key = src_meta.get("value", "")
-        owner_name = self._owner_name_from_raw_key(shared_raw_key)
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        source_remaining = r.ttl(src_obj_key)
-        policy = policy_for_alias(src_meta, source_remaining)
-        obj_key = make_object_key(self._domain.name, self._name, key)
-        created_at = existing.get("created_at", now) if existing else now
-        r.hset(
-            obj_key,
-            mapping={
-                "type": src_meta.get("type", "collection:list"),
-                "codec": "native",
-                "value": shared_raw_key,
-                "cache_mode": policy.cache_mode,
-                "ttl": meta_ttl_value(policy),
-                "binding_kind": "ref",
-                "created_at": created_at,
-                "updated_at": now,
-            },
-        )
-        ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
-        r.sadd(ref_owner_key, key)
-        apply_policy(r, obj_key, policy)
+        canonical_name = container.canonical_name
+        canonical_obj_key = make_object_key(self._domain.name, self._name, canonical_name)
+
+        alias_obj_key = make_object_key(self._domain.name, self._name, key)
+        r.set(alias_obj_key, f"ref:{canonical_obj_key}")
+
+        ref_key = make_ref_key(self._domain.name, self._name, canonical_name)
+        r.sadd(ref_key, key)
 
     def __setitem__(self, key: str, value: object) -> None:
         validate_object_name(key)
         from .container import GPDCContainerObject
         from .scalar import GPDCScalarObject
         from .codec import GPDCContainerCodec
+        from .exceptions import CanonicalObjectReferencedError
 
         r = self._redis()
         obj_key = make_object_key(self._domain.name, self._name, key)
-        existing = r.hgetall(obj_key)
 
-        if self._is_same_container_ref_assignment(key, existing, value):
-            return
-
-        if existing:
-            self._validate_container_reassignment(key, existing)
-            self._cleanup_old_container_ref(key, existing)
+        existing = self._resolve_binding(key)
 
         if isinstance(value, GPDCContainerObject):
-            self._setitem_container_ref(key, value, existing)
+            if value._namespace is not self:
+                raise ValueError("Cross-namespace container reference sharing is not supported")
+            if existing and existing["canonical_name"] == value.canonical_name:
+                return
+            if existing:
+                self._cleanup_existing_for_overwrite(key, existing)
+            self._setitem_container_ref(key, value)
             return
 
         if isinstance(value, GPDCScalarObject):
@@ -336,59 +290,67 @@ class GPDCNamespace(MutableMapping):
         entry = GPDCTypeRegistry.lookup_by_python_type(value)
         now = datetime.datetime.now(datetime.UTC).isoformat()
 
+        is_new = True
+        policy = None
+
+        if existing:
+            if existing["binding_kind"] == "owner" and existing["type"].startswith("collection:"):
+                ref_key = make_ref_key(self._domain.name, self._name, key)
+                referrers = r.smembers(ref_key)
+                if referrers:
+                    raise CanonicalObjectReferencedError(
+                        canonical_name=key,
+                        canonical_uri=make_uri(self._domain.name, self._name, key),
+                        referrers=sorted(referrers),
+                    )
+                self._teardown_owner_container(key, existing["meta"])
+                r.delete(obj_key)
+            elif existing["binding_kind"] == "reference":
+                self._cleanup_alias_binding(key, existing)
+            elif existing["binding_kind"] == "owner":
+                is_new = False
+                from .ttl import policy_from_meta
+
+                policy = policy_from_meta(existing["meta"])
+
+        if policy is None:
+            from .ttl import policy_from_defaults
+
+            policy = policy_from_defaults(self._get_default_cache_mode(), self._get_default_ttl_seconds())
+
         if entry.is_container:
             raw_key = make_raw_key(self._domain.name, self._name, key)
-            is_new = not existing
-            from .ttl import policy_from_defaults, policy_from_meta
-
-            policy = (
-                policy_from_defaults(self._get_default_cache_mode(), self._get_default_ttl_seconds())
-                if is_new
-                else policy_from_meta(existing)
-            )
-            self._write_container_meta(
-                obj_key,
-                entry,
-                raw_key,
-                policy,
-                now,
-                is_new=is_new,
-                binding_kind="owner",
-            )
+            self._write_container_meta(obj_key, entry, raw_key, policy, now, is_new=is_new)
             if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
-                if existing:
+                if not is_new:
                     entry.codec_class.delete_raw(self, raw_key)
                 entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
         else:
             codec = entry.codec_class
             encoded = codec.encode_value(value)
-            from .ttl import policy_from_defaults, policy_from_meta
-
-            policy = (
-                policy_from_defaults(self._get_default_cache_mode(), self._get_default_ttl_seconds())
-                if not existing
-                else policy_from_meta(existing)
-            )
-            self._write_scalar_meta(obj_key, entry, encoded, policy, now, is_new=not existing)
+            self._write_scalar_meta(obj_key, entry, encoded, policy, now, is_new=is_new)
 
     def _get_object(self, key: str):
         validate_object_name(key)
         from .container import GPDCContainerObject
 
-        obj_key = make_object_key(self._domain.name, self._name, key)
-        r = self._redis()
-        meta = r.hgetall(obj_key)
-        if not meta:
+        resolution = self._resolve_binding(key)
+        if not resolution:
             raise KeyError(f"{key!r} not found in namespace {self._name!r}")
-        type_str = meta.get("type")
-        if type_str is None:
-            raise KeyError(f"{key!r} not found in namespace {self._name!r}")
+
+        type_str = resolution["type"]
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(type_str)
-        obj = entry.object_class(key, self)
+
+        canonical_name = resolution["canonical_name"]
+        is_ref = resolution["binding_kind"] == "reference"
+
+        obj = entry.object_class(key, self, canonical_name=canonical_name if is_ref else None)
+
         if isinstance(obj, GPDCContainerObject):
-            stored_raw_key = meta.get("value", "")
+            stored_raw_key = resolution["canonical_raw_key"]
             if stored_raw_key:
                 obj.raw_key = stored_raw_key
+
         return obj
 
     def __getitem__(self, key: str):
@@ -410,44 +372,41 @@ class GPDCNamespace(MutableMapping):
 
     def __delitem__(self, key: str) -> None:
         validate_object_name(key)
+        from .exceptions import CanonicalObjectReferencedError
+
         r = self._redis()
-        obj_key = make_object_key(self._domain.name, self._name, key)
-        meta = r.hgetall(obj_key)
-        if not meta:
+        resolution = self._resolve_binding(key)
+        if not resolution:
             raise KeyError(f"{key!r} not found in namespace {self._name!r}")
 
-        obj_type = meta.get("type", "")
+        obj_key = resolution["binding_obj_key"]
+
+        if resolution["binding_kind"] == "reference":
+            canonical_name = resolution["canonical_name"]
+            ref_key = make_ref_key(self._domain.name, self._name, canonical_name)
+            r.srem(ref_key, key)
+            r.delete(obj_key)
+            if canonical_name.startswith("~") and not r.smembers(ref_key):
+                self._cascade_delete_anonymous(canonical_name)
+            return
+
+        obj_type = resolution["type"]
 
         if not obj_type.startswith("collection:"):
             r.delete(obj_key)
             return
 
-        stored_raw_key = meta.get("value", "")
-        owner_name = self._owner_name_from_raw_key(stored_raw_key) if stored_raw_key else key
-        ref_key_of_this = make_ref_key(self._domain.name, self._name, key)
+        ref_key = make_ref_key(self._domain.name, self._name, key)
+        referrers = r.smembers(ref_key)
+        if referrers:
+            raise CanonicalObjectReferencedError(
+                canonical_name=key,
+                canonical_uri=make_uri(self._domain.name, self._name, key),
+                referrers=sorted(referrers),
+            )
 
-        if owner_name != key and stored_raw_key:
-            ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
-            r.srem(ref_owner_key, key)
-
-        if owner_name == key:
-            referrers = r.smembers(ref_key_of_this)
-            if referrers:
-                self._rehome_deleted_owner_container(key, meta, referrers)
-            else:
-                self._teardown_owner_container(key, meta)
-
+        self._teardown_owner_container(key, resolution["meta"])
         r.delete(obj_key)
-
-        if owner_name != key:
-            r.delete(ref_key_of_this)
-            if stored_raw_key:
-                ref_owner_key = make_ref_key(self._domain.name, self._name, owner_name)
-                owner_obj_key = make_object_key(self._domain.name, self._name, owner_name)
-                if owner_name.startswith("~") and not r.exists(ref_owner_key) and r.exists(owner_obj_key):
-                    self._cascade_delete_anonymous(owner_name)
-                elif not r.exists(owner_obj_key) and not r.exists(ref_owner_key):
-                    r.delete(stored_raw_key)
 
     def _collect_nested_ref_names(self, raw_key: str, raw_type: str) -> list[str]:
         r = self._redis()

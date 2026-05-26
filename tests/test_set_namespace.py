@@ -114,9 +114,10 @@ class TestNamespaceSetReferenceSharing:
     def test_assign_setobject_shares_raw(self, ns, r):
         ns["a"] = {1, 2, 3}
         ns["b"] = ns["a"]
-        raw_a = make_raw_key(DOMAIN, NS, "a")
+        obj_a_key = make_object_key(DOMAIN, NS, "a")
         obj_b = make_object_key(DOMAIN, NS, "b")
-        assert r.hget(obj_b, "value") == raw_a
+        assert r.type(obj_b) == "string"
+        assert r.get(obj_b) == f"ref:{obj_a_key}"
 
     def test_ref_set_tracks_referrer(self, ns, r):
         ns["a"] = {1, 2, 3}

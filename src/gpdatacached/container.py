@@ -31,7 +31,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
     def _touch(self) -> None:
         from .ttl import policy_from_meta, policy_for_sliding_touch, apply_policy
 
-        key = self._redis_key()
+        key = self._canonical_redis_key()
         now = datetime.datetime.now(datetime.UTC).isoformat()
         r = self._redis()
         r.hset(key, "updated_at", now)
@@ -84,6 +84,8 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         return value
 
     def _binding_owner_name(self) -> str:
+        if self._is_reference:
+            return self._canonical_name
         meta = self._redis().hgetall(self._redis_key())
         raw_key = meta.get("value", "") or self.raw_key
         prefix = f"gpdc:{self._namespace.domain.name}:{self._namespace.name}:raw:"

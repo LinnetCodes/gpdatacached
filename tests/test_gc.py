@@ -97,8 +97,6 @@ class TestGCPreservesValidData:
     def test_gc_preserves_referenced_raw(self, ns, r):
         ns["x"] = [1, 2, 3]
         ns["y"] = ns["x"]
-        r.delete(make_object_key(DOMAIN, NS, "x"))
-        r.delete(make_ref_key(DOMAIN, NS, "x"))
 
         raw_x = make_raw_key(DOMAIN, NS, "x")
         ns.domain.run_gc(namespace=NS)

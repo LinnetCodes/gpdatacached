@@ -78,9 +78,10 @@ class TestDictReferenceSharing:
     def test_assign_dict_object_shares_raw_key(self, ns, r):
         ns["a"] = {"x": 1}
         ns["b"] = ns["a"]
-        obj_a_raw = r.hget(make_object_key(DOMAIN, NS, "a"), "value")
-        obj_b_raw = r.hget(make_object_key(DOMAIN, NS, "b"), "value")
-        assert obj_a_raw == obj_b_raw
+        obj_a_key = make_object_key(DOMAIN, NS, "a")
+        obj_b_key = make_object_key(DOMAIN, NS, "b")
+        assert r.type(obj_b_key) == "string"
+        assert r.get(obj_b_key) == f"ref:{obj_a_key}"
 
     def test_assign_dict_object_adds_to_ref_set(self, ns, r):
         ns["a"] = {"x": 1}

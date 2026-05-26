@@ -257,12 +257,10 @@ class TestSpecVerification:
 
         obj_a = f"gpdc:{d}:{n}:obj:a"
         obj_b = f"gpdc:{d}:{n}:obj:b"
-        raw_a = f"gpdc:{d}:{n}:raw:a"
-        raw_b = f"gpdc:{d}:{n}:raw:b"
         ref_a = f"gpdc:{d}:{n}:ref:a"
 
-        assert clean_redis.hget(obj_b, "value") == clean_redis.hget(obj_a, "value")
-        assert clean_redis.hget(obj_b, "value") == raw_a
+        assert clean_redis.type(obj_b) == "string"
+        assert clean_redis.get(obj_b) == f"ref:{obj_a}"
         assert "b" in clean_redis.smembers(ref_a)
         assert "b" in ns["a"].referrers()
 
@@ -301,8 +299,6 @@ class TestSpecVerification:
     @pytest.mark.skip(reason="Pending refactor")
     def test_list_owner_reassign_is_rejected(self, domain, clean_redis):
         ns = domain.get_namespace("spec_verification")
-        d = "testdomain"
-        n = "spec_verification"
 
         ns["x"] = [1, 2, 3]
 
@@ -755,18 +751,16 @@ class TestSpecVerification:
         assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:{anon_a_name}")
         assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:{anon_a_name}")
 
-        # §10.2 级联删除示例 — 有引用者时保留匿名对象
+        # §10.2 — owner with referrers: deletion is blocked
         ns["x"] = {"a": [1, 2, 3]}
         ns["y"] = ns["x"]
-        x_raw = f"gpdc:{d}:{n}:raw:x"
-        x_anon_ref = clean_redis.hget(x_raw, "str:a")
-        x_anon_name = x_anon_ref.split(":obj:")[1]
 
+        with pytest.raises(Exception):
+            del ns["x"]
+        del ns["y"]
         del ns["x"]
         assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:x")
-        assert clean_redis.exists(f"gpdc:{d}:{n}:obj:{x_anon_name}")
         assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:x")
-        assert list(ns["y"]["a"]) == [1, 2, 3]
 
         # §10.1 Dict 引用共享
         ns["d_ref_a"] = {"x": 1}
@@ -776,12 +770,11 @@ class TestSpecVerification:
         ns["d_ref_b"]["y"] = 2
         assert ns["d_ref_a"]["y"] == 2
 
-        # 删除引用共享的容器
+        # 删除引用共享的容器 — must delete referrer first
+        del ns["d_ref_b"]
         del ns["d_ref_a"]
         assert not clean_redis.exists(f"gpdc:{d}:{n}:obj:d_ref_a")
         assert not clean_redis.exists(f"gpdc:{d}:{n}:raw:d_ref_a")
-        assert ns["d_ref_b"]["x"] == 1
-        assert ns["d_ref_b"]["y"] == 2
 
     def test_dict_write_updates_timestamp(self, domain, clean_redis):
         # ── §9.4 写操作更新 updated_at ───────────────────────────────
@@ -1222,11 +1215,9 @@ class TestSpecVerification:
         assert clean_redis.exists(f"gpdc:{d}:{n}:obj:gc_valid")
         assert clean_redis.exists(f"gpdc:{d}:{n}:raw:gc_valid")
 
-        # GC 不删除有引用者的 raw
+        # GC 不删除有引用者的 raw (alias still exists pointing to owner)
         ns["gc_owned"] = {7, 8}
         ns["gc_ref"] = ns["gc_owned"]
-        clean_redis.delete(f"gpdc:{d}:{n}:obj:gc_owned")
-        clean_redis.delete(f"gpdc:{d}:{n}:ref:gc_owned")
         gc_owned_raw = f"gpdc:{d}:{n}:raw:gc_owned"
         domain.run_gc(namespace="spec_verification")
         assert clean_redis.exists(gc_owned_raw)
@@ -1269,7 +1260,6 @@ class TestSpecVerification:
 
         ns["mixed"] = {"list": [1, 2], "nums": {1, 2, 3}}
         ns["ref"] = ns["mixed"]
-        del ns["mixed"]
         ref_d = ns["ref"]
         assert isinstance(ref_d["list"], ListObject)
         assert list(ref_d["list"]) == [1, 2]
@@ -1277,3 +1267,5 @@ class TestSpecVerification:
 
         assert isinstance(ref_d["nums"], SetObject)
         assert set(ref_d["nums"]) == {1, 2, 3}
+        del ns["ref"]
+        del ns["mixed"]
