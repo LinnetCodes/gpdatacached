@@ -46,7 +46,6 @@ class TestDualIdentity:
         assert obj.is_reference is False
         assert obj.uri == obj.canonical_uri
 
-    @pytest.mark.xfail(reason="Requires namespace refactor to pass canonical_name to constructor")
     def test_alias_handle_identity(self, ns):
         """Alias handle preserves alias name, exposes canonical name."""
         ns["owner"] = [10, 20]
