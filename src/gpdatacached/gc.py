@@ -43,7 +43,7 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
                 raw_to_obj[raw_key] = obj_key
 
                 if not r.exists(raw_key):
-                    ref_key = ref_prefix + obj_key[len(obj_prefix):]
+                    ref_key = ref_prefix + obj_key[len(obj_prefix) :]
                     r.delete(obj_key, ref_key)
                     deleted += 2
 
@@ -53,7 +53,7 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
                     r.delete(obj_key)
                     deleted += 1
                     continue
-                canonical_obj_key = ref_value[len("ref:"):]
+                canonical_obj_key = ref_value[len("ref:") :]
                 if not r.exists(canonical_obj_key):
                     r.delete(obj_key)
                     deleted += 1
@@ -68,7 +68,7 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
         for raw_key in keys:
             if raw_key in raw_to_obj:
                 continue
-            name = raw_key[len(raw_prefix):]
+            name = raw_key[len(raw_prefix) :]
             ref_key = ref_prefix + name
             referrers = r.smembers(ref_key)
             if not referrers:
@@ -93,7 +93,7 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
     while True:
         cursor, keys = r.scan(cursor=cursor, match=ref_pattern, count=100)
         for ref_key in keys:
-            name = ref_key[len(ref_prefix):]
+            name = ref_key[len(ref_prefix) :]
             raw_key = raw_prefix + name
             obj_key = obj_prefix + name
             if not r.exists(raw_key) and not r.exists(obj_key):

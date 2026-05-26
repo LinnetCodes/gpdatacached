@@ -1,7 +1,6 @@
 # tests/test_base.py
 """Tests for _base.py module and objects.py re-exports (Phase 1 circular import resolution)."""
 
-import pytest
 from gpdatacached._base import GPDCDataObject
 
 
