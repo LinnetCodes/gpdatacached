@@ -1,10 +1,11 @@
 # tests/test_base.py
 """Tests for _base.py module and objects.py re-exports (Phase 1 circular import resolution)."""
 
+import pytest
+from gpdatacached._base import GPDCDataObject
+
 
 def test_base_module_exports_gpdcdataobject():
-    from gpdatacached._base import GPDCDataObject
-
     assert GPDCDataObject is not None
     assert hasattr(GPDCDataObject, "name")
     assert hasattr(GPDCDataObject, "namespace")
@@ -16,19 +17,51 @@ def test_base_module_exports_gpdcdataobject():
 
 def test_objects_module_reexports():
     import gpdatacached.objects as obj_mod
-    from gpdatacached._base import GPDCDataObject as BaseClass
 
-    assert obj_mod.GPDCDataObject is BaseClass
-    assert issubclass(obj_mod.IntObject, BaseClass)
-    assert issubclass(obj_mod.ListObject, BaseClass)
-    assert issubclass(obj_mod.GPDCScalarObject, BaseClass)
-    assert issubclass(obj_mod.GPDCContainerObject, BaseClass)
-    assert issubclass(obj_mod.FloatObject, BaseClass)
-    assert issubclass(obj_mod.StrObject, BaseClass)
-    assert issubclass(obj_mod.BoolObject, BaseClass)
-    assert issubclass(obj_mod.DateTimeObject, BaseClass)
-    assert issubclass(obj_mod.DateObject, BaseClass)
-    assert issubclass(obj_mod.TimeObject, BaseClass)
-    assert issubclass(obj_mod.NoneObject, BaseClass)
-    assert issubclass(obj_mod.DictObject, BaseClass)
-    assert issubclass(obj_mod.SetObject, BaseClass)
+    assert obj_mod.GPDCDataObject is GPDCDataObject
+    assert issubclass(obj_mod.IntObject, GPDCDataObject)
+    assert issubclass(obj_mod.ListObject, GPDCDataObject)
+    assert issubclass(obj_mod.GPDCScalarObject, GPDCDataObject)
+    assert issubclass(obj_mod.GPDCContainerObject, GPDCDataObject)
+    assert issubclass(obj_mod.FloatObject, GPDCDataObject)
+    assert issubclass(obj_mod.StrObject, GPDCDataObject)
+    assert issubclass(obj_mod.BoolObject, GPDCDataObject)
+    assert issubclass(obj_mod.DateTimeObject, GPDCDataObject)
+    assert issubclass(obj_mod.DateObject, GPDCDataObject)
+    assert issubclass(obj_mod.TimeObject, GPDCDataObject)
+    assert issubclass(obj_mod.NoneObject, GPDCDataObject)
+    assert issubclass(obj_mod.DictObject, GPDCDataObject)
+    assert issubclass(obj_mod.SetObject, GPDCDataObject)
+
+
+class TestDualIdentity:
+    """Test dual-identity properties on GPDCDataObject."""
+
+    def test_owner_handle_defaults(self, ns):
+        """Owner handle: canonical_name == name, is_reference == False."""
+        ns["mylist"] = [1, 2, 3]
+        obj = ns.get_object("mylist")
+        assert obj.name == "mylist"
+        assert obj.canonical_name == "mylist"
+        assert obj.is_reference is False
+        assert obj.uri == obj.canonical_uri
+
+    @pytest.mark.xfail(reason="Requires namespace refactor to pass canonical_name to constructor")
+    def test_alias_handle_identity(self, ns):
+        """Alias handle preserves alias name, exposes canonical name."""
+        ns["owner"] = [10, 20]
+        ns["alias"] = ns["owner"]
+        obj = ns.get_object("alias")
+        assert obj.name == "alias"
+        assert obj.canonical_name == "owner"
+        assert obj.is_reference is True
+        assert "alias" in obj.uri
+        assert "owner" in obj.canonical_uri
+        assert obj.uri != obj.canonical_uri
+
+    def test_scalar_is_never_reference(self, ns):
+        """Scalar objects are always canonical owners."""
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        assert obj.is_reference is False
+        assert obj.canonical_name == "x"

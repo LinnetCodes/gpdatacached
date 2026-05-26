@@ -21,8 +21,8 @@ from .types import encode_element, decode_element, encode_key, decode_key
 class GPDCContainerObject(GPDCDataObject, ABC):
     """Abstract base class for all container GPDC objects."""
 
-    def __init__(self, name: str, namespace: "GPDCNamespace") -> None:
-        super().__init__(name, namespace)
+    def __init__(self, name: str, namespace: "GPDCNamespace", *, canonical_name: str | None = None) -> None:
+        super().__init__(name, namespace, canonical_name=canonical_name)
         domain_name = namespace.domain.name
         ns_name = namespace.name
         self.raw_key: str = make_raw_key(domain_name, ns_name, name)

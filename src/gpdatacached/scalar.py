@@ -36,7 +36,7 @@ class GPDCScalarObject(GPDCDataObject):
         if not isinstance(new_value, expected_python_type):
             raise TypeError(f"Cannot assign {type(new_value).__name__!r} to {self.TYPE}")
         encoded = entry.codec_class.encode_value(new_value)
-        key = self._redis_key()
+        key = self._canonical_redis_key()
         now = datetime.datetime.now(datetime.UTC).isoformat()
         r = self._redis()
         r.hset(key, mapping={"value": encoded, "updated_at": now})

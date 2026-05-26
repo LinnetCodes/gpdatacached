@@ -21,9 +21,17 @@ from .keys import make_object_key, make_uri
 class GPDCDataObject(ABC):
     """Abstract base class for all GPDC data objects."""
 
-    def __init__(self, name: str, namespace: "GPDCNamespace") -> None:
+    def __init__(
+        self,
+        name: str,
+        namespace: "GPDCNamespace",
+        *,
+        canonical_name: str | None = None,
+    ) -> None:
         self._name = name
         self._namespace = namespace
+        self._canonical_name = canonical_name if canonical_name is not None else name
+        self._is_reference = canonical_name is not None and canonical_name != name
 
     @property
     def name(self) -> str:
@@ -42,6 +50,18 @@ class GPDCDataObject(ABC):
         return make_uri(self.domain.name, self._namespace.name, self._name)
 
     @property
+    def is_reference(self) -> bool:
+        return self._is_reference
+
+    @property
+    def canonical_name(self) -> str:
+        return self._canonical_name
+
+    @property
+    def canonical_uri(self) -> str:
+        return make_uri(self.domain.name, self._namespace.name, self._canonical_name)
+
+    @property
     @abstractmethod
     def type(self) -> str:
         """GPDC type string, e.g., 'scalar:int'."""
@@ -54,11 +74,14 @@ class GPDCDataObject(ABC):
     def _redis_key(self) -> str:
         return make_object_key(self.domain.name, self._namespace.name, self._name)
 
+    def _canonical_redis_key(self) -> str:
+        return make_object_key(self.domain.name, self._namespace.name, self._canonical_name)
+
     def _redis(self):
         return self.domain.redis
 
     def _hget(self, field: str) -> str:
-        return self._redis().hget(self._redis_key(), field) or ""
+        return self._redis().hget(self._canonical_redis_key(), field) or ""
 
     @property
     def cache_mode(self) -> str:
@@ -70,7 +93,7 @@ class GPDCDataObject(ABC):
 
         if mode not in ("permanent", "ttl", "sliding"):
             raise ValueError(f"Invalid cache_mode: {mode!r}")
-        key = self._redis_key()
+        key = self._canonical_redis_key()
         r = self._redis()
         current = policy_from_meta(r.hgetall(key))
         r.hset(key, "cache_mode", mode)
@@ -86,7 +109,7 @@ class GPDCDataObject(ABC):
     def ttl(self, seconds: int) -> None:
         from .ttl import policy_from_meta, policy_for_ttl_change, apply_policy
 
-        key = self._redis_key()
+        key = self._canonical_redis_key()
         r = self._redis()
         current = policy_from_meta(r.hgetall(key))
         r.hset(key, "ttl", str(seconds))
@@ -104,15 +127,15 @@ class GPDCDataObject(ABC):
         return datetime.datetime.fromisoformat(raw) if raw else None
 
     def expire_in(self, seconds: int) -> None:
-        self._redis().expire(self._redis_key(), seconds)
+        self._redis().expire(self._canonical_redis_key(), seconds)
 
     def expire_at(self, when: datetime.datetime) -> None:
-        self._redis().expireat(self._redis_key(), when)
+        self._redis().expireat(self._canonical_redis_key(), when)
 
     def persist(self) -> None:
         from .ttl import apply_policy, policy_from_meta, TTLPolicy
 
-        key = self._redis_key()
+        key = self._canonical_redis_key()
         r = self._redis()
         current = policy_from_meta(r.hgetall(key))
         apply_policy(
@@ -126,4 +149,4 @@ class GPDCDataObject(ABC):
         )
 
     def remaining_ttl(self) -> int:
-        return self._redis().ttl(self._redis_key())
+        return self._redis().ttl(self._canonical_redis_key())
