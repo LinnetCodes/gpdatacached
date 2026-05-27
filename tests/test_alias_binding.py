@@ -247,6 +247,36 @@ class TestBindingResolution:
         assert result["binding_kind"] == "owner"
         assert result["type"] == "scalar:int"
 
+    def test_resolve_malformed_ref_returns_none(self, ns):
+        r = ns._redis()
+        alias_key = make_object_key(ns.domain.name, ns.name, "bad_alias")
+        r.set(alias_key, "ref:gpdc:other_domain:other_ns:obj:something")
+        result = ns._resolve_binding("bad_alias")
+        assert result is None
+        r.delete(alias_key)
+
+    def test_resolve_alias_to_alias_returns_none(self, ns):
+        r = ns._redis()
+        ns["owner"] = [1, 2]
+        ns["alias1"] = ns["owner"]
+        alias1_key = make_object_key(ns.domain.name, ns.name, "alias1")
+        alias2_key = make_object_key(ns.domain.name, ns.name, "alias2")
+        r.set(alias2_key, f"ref:{alias1_key}")
+        result = ns._resolve_binding("alias2")
+        assert result is None
+        r.delete(alias2_key)
+
+    def test_resolve_string_binding_to_non_hash_returns_none(self, ns):
+        r = ns._redis()
+        owner_key = make_object_key(ns.domain.name, ns.name, "owner")
+        alias_key = make_object_key(ns.domain.name, ns.name, "bad_alias")
+        r.set(owner_key, "not_a_hash_value")
+        r.set(alias_key, f"ref:{owner_key}")
+        result = ns._resolve_binding("bad_alias")
+        assert result is None
+        r.delete(alias_key)
+        r.delete(owner_key)
+
 
 class TestContainerThroughAlias:
     """Container operations through alias handle work correctly."""

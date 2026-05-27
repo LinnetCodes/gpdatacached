@@ -134,7 +134,13 @@ class GPDCNamespace(MutableMapping):
             if not ref_value or not ref_value.startswith("ref:"):
                 return None
             canonical_obj_key = ref_value[len("ref:") :]
-            canonical_name = canonical_obj_key.rsplit(":obj:", 1)[-1]
+            obj_prefix = make_object_key_prefix(self._domain.name, self._name)
+            if not canonical_obj_key.startswith(obj_prefix):
+                return None
+            canonical_key_type = r.type(canonical_obj_key)
+            if canonical_key_type != "hash":
+                return None
+            canonical_name = canonical_obj_key[len(obj_prefix) :]
             canonical_meta = r.hgetall(canonical_obj_key)
             if not canonical_meta:
                 return None
