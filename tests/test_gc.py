@@ -192,3 +192,71 @@ class TestGCWithStringAliases:
         run_gc_for_namespace(r, DOMAIN, NS)
         ref_key = make_ref_key(DOMAIN, NS, "owner")
         assert "alias" not in r.smembers(ref_key)
+
+
+class TestGCStaleRefSetMembers:
+    """GC removes stale ref-set members whose bindings no longer match."""
+
+    def test_gc_removes_alias_reassigned_to_different_owner(self, ns, r):
+        """Alias reassigned to a different owner is removed from old owner's ref set."""
+        from gpdatacached.gc import run_gc_for_namespace
+
+        ns["owner_a"] = [1, 2, 3]
+        ns["owner_b"] = [10, 20]
+        ns["alias"] = ns["owner_a"]
+
+        alias_key = make_object_key(DOMAIN, NS, "alias")
+        owner_b_key = make_object_key(DOMAIN, NS, "owner_b")
+        r.set(alias_key, f"ref:{owner_b_key}")
+        ref_key_a = make_ref_key(DOMAIN, NS, "owner_a")
+        assert "alias" in r.smembers(ref_key_a)
+
+        run_gc_for_namespace(r, DOMAIN, NS)
+
+        assert "alias" not in r.smembers(ref_key_a)
+
+    def test_gc_removes_container_member_no_longer_referencing(self, ns, r):
+        """Container holder removed from ref set when its raw data no longer refs the canonical owner."""
+        from gpdatacached.gc import run_gc_for_namespace
+
+        ns["target"] = [100, 200]
+        ns["holder"] = [1, 2]
+        holder_raw_key = make_raw_key(DOMAIN, NS, "holder")
+
+        ns["holder"].append(ns["target"])
+
+        ref_key = make_ref_key(DOMAIN, NS, "target")
+        assert "holder" in r.smembers(ref_key)
+
+        r.delete(holder_raw_key)
+        r.rpush(holder_raw_key, "plain_value")
+
+        run_gc_for_namespace(r, DOMAIN, NS)
+        assert "holder" not in r.smembers(ref_key)
+
+    def test_gc_preserves_container_member_still_referencing(self, ns, r):
+        """Container holder kept in ref set when its raw data still refs the canonical owner."""
+        from gpdatacached.gc import run_gc_for_namespace
+
+        ns["target"] = [100, 200]
+        ns["holder"] = [1, 2]
+        ns["holder"].append(ns["target"])
+
+        ref_key = make_ref_key(DOMAIN, NS, "target")
+        assert "holder" in r.smembers(ref_key)
+
+        run_gc_for_namespace(r, DOMAIN, NS)
+        assert "holder" in r.smembers(ref_key)
+
+    def test_gc_removes_non_collection_hash_member_from_ref_set(self, ns, r):
+        """Scalar hash member (non-collection) in ref set is removed."""
+        from gpdatacached.gc import run_gc_for_namespace
+
+        ns["target"] = [100, 200]
+        ns["scalar"] = 42
+        ref_key = make_ref_key(DOMAIN, NS, "target")
+        r.sadd(ref_key, "scalar")
+        assert "scalar" in r.smembers(ref_key)
+
+        run_gc_for_namespace(r, DOMAIN, NS)
+        assert "scalar" not in r.smembers(ref_key)

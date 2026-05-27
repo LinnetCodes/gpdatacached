@@ -103,7 +103,40 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
             members = r.smembers(ref_key)
             for member in members:
                 member_obj_key = obj_prefix + member
-                if not r.exists(member_obj_key):
+                member_type = r.type(member_obj_key)
+                if member_type == "string":
+                    member_ref = r.get(member_obj_key)
+                    if not member_ref or not member_ref.startswith("ref:"):
+                        r.srem(ref_key, member)
+                        continue
+                    member_target = member_ref[len("ref:") :]
+                    if member_target != obj_key:
+                        r.srem(ref_key, member)
+                elif member_type == "hash":
+                    member_meta = r.hgetall(member_obj_key)
+                    member_raw_key = member_meta.get("value", "")
+                    member_obj_type = member_meta.get("type", "")
+                    if not member_raw_key or not member_obj_type.startswith("collection:"):
+                        r.srem(ref_key, member)
+                        continue
+                    expected_ref = f"ref:{obj_key}"
+                    still_refs = False
+                    if member_obj_type == "collection:dict":
+                        for val in r.hvals(member_raw_key):
+                            if val == expected_ref:
+                                still_refs = True
+                                break
+                    elif member_obj_type == "collection:list":
+                        for val in r.lrange(member_raw_key, 0, -1):
+                            if val == expected_ref:
+                                still_refs = True
+                                break
+                    elif member_obj_type == "collection:set":
+                        if expected_ref in r.smembers(member_raw_key):
+                            still_refs = True
+                    if not still_refs:
+                        r.srem(ref_key, member)
+                else:
                     r.srem(ref_key, member)
         if cursor == 0:
             break
