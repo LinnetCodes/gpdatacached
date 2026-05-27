@@ -4,7 +4,7 @@ import datetime
 
 import pytest
 from gpdatacached.exceptions import CanonicalObjectReferencedError
-from gpdatacached.keys import make_object_key, make_ref_key
+from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 
 
 class TestAliasStorageModel:
@@ -290,7 +290,17 @@ class TestBindingResolution:
     def test_resolve_malformed_ref_returns_none(self, ns):
         r = ns._redis()
         alias_key = make_object_key(ns.domain.name, ns.name, "bad_alias")
-        r.set(alias_key, "ref:gpdc:other_domain:other_ns:obj:something")
+        raw_key = make_raw_key(ns.domain.name, ns.name, "owner")
+        r.set(alias_key, f"ref:{raw_key}")
+        result = ns._resolve_binding("bad_alias")
+        assert result is None
+        r.delete(alias_key)
+
+    def test_resolve_cross_namespace_ref_returns_none(self, ns):
+        r = ns._redis()
+        alias_key = make_object_key(ns.domain.name, ns.name, "bad_alias")
+        cross_ns_obj_key = make_object_key(ns.domain.name, "other_ns", "owner")
+        r.set(alias_key, f"ref:{cross_ns_obj_key}")
         result = ns._resolve_binding("bad_alias")
         assert result is None
         r.delete(alias_key)
