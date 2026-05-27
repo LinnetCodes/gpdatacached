@@ -1,5 +1,7 @@
 """Tests for the new alias-as-string binding model."""
 
+import datetime
+
 import pytest
 from gpdatacached.exceptions import CanonicalObjectReferencedError
 from gpdatacached.keys import make_object_key, make_ref_key
@@ -122,6 +124,44 @@ class TestAliasLifecycleResolvesToCanonical:
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         assert ns.get_object("alias").created_at == ns.get_object("owner").created_at
+
+    def test_updated_at_reads_from_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        assert ns.get_object("alias").updated_at == ns.get_object("owner").updated_at
+
+    def test_remaining_ttl_resolves_to_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
+        alias_obj.ttl = 300
+        owner_obj = ns.get_object("owner")
+        assert alias_obj.remaining_ttl() == owner_obj.remaining_ttl()
+
+    def test_expire_in_through_alias_affects_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        alias_obj.expire_in(600)
+        assert ns.get_object("owner").remaining_ttl() > 0
+
+    def test_expire_at_through_alias_affects_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=600)
+        alias_obj.expire_at(future)
+        assert ns.get_object("owner").remaining_ttl() > 0
+
+    def test_persist_through_alias_affects_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
+        alias_obj.ttl = 300
+        alias_obj.persist()
+        assert ns.get_object("owner").remaining_ttl() == -1
 
 
 class TestOwnerDeletionBlocking:
