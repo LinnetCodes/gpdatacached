@@ -132,6 +132,12 @@ class TestTTLExpiryConsistency:
         obj_key = make_object_key(DOMAIN + "_ttl", NS, "lst")
         assert r.ttl(obj_key) > 0
 
+    def test_ttl_named_container_raw_has_ttl(self, r):
+        ns = _make_namespace(r, DOMAIN + "_ttl", cache_mode="ttl", ttl=300)
+        ns["lst"] = [1, 2, 3]
+        raw_key = make_raw_key(DOMAIN + "_ttl", NS, "lst")
+        assert r.ttl(raw_key) > 0
+
     def test_ttl_container_with_nested_has_ttl_on_all_keys(self, r):
         ns = _make_namespace(r, DOMAIN + "_ttl2", cache_mode="ttl", ttl=300)
         ns["d"] = {"nested": [10, 20], "x": 1}

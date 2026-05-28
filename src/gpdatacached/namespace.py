@@ -238,8 +238,6 @@ class GPDCNamespace(MutableMapping):
         item_count: int = 0,
     ) -> None:
         from .ttl import meta_ttl_value
-        from .meta import apply_lifecycle
-        from .keys import make_ref_key
 
         r = self._redis()
         mapping = {
@@ -254,9 +252,6 @@ class GPDCNamespace(MutableMapping):
         if is_new:
             mapping["created_at"] = now
         r.hset(obj_key, mapping=mapping)
-        name = obj_key.split(":obj:")[1] if ":obj:" in obj_key else ""
-        ref_key = make_ref_key(self._domain.name, self._name, name)
-        apply_lifecycle(r, obj_key, raw_key, ref_key, True, policy)
 
     def _setitem_container_ref(self, key: str, container) -> None:
         from .container import GPDCContainerObject
@@ -338,6 +333,10 @@ class GPDCNamespace(MutableMapping):
                 if not is_new:
                     entry.codec_class.delete_raw(self, raw_key)
                 entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
+            from .meta import apply_lifecycle
+
+            ref_key = make_ref_key(self._domain.name, self._name, key)
+            apply_lifecycle(r, obj_key, raw_key, ref_key, True, policy)
         else:
             codec = entry.codec_class
             encoded = codec.encode_value(value)
