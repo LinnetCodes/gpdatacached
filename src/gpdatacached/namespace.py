@@ -475,13 +475,13 @@ class GPDCNamespace(MutableMapping):
             return False
         if key.startswith("~"):
             return False
-        obj_key = make_object_key(self._domain.name, self._name, key)
-        return self._redis().exists(obj_key) > 0
+        return self._resolve_binding(key) is not None
 
     def __iter__(self) -> Iterator[str]:
         """Iterate over named object names using SCAN (no KEYS).
 
         Anonymous objects (names starting with ``~``) are excluded.
+        Stale aliases whose canonical owner no longer exists are excluded.
         """
         pattern = make_object_key(self._domain.name, self._name, "*")
         prefix = make_object_key_prefix(self._domain.name, self._name)
@@ -491,7 +491,8 @@ class GPDCNamespace(MutableMapping):
             for k in keys:
                 name = k[len(prefix) :]
                 if not name.startswith("~"):
-                    yield name
+                    if self._resolve_binding(name) is not None:
+                        yield name
             if cursor == 0:
                 break
 

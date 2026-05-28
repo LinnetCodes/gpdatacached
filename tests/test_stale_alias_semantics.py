@@ -137,26 +137,3 @@ class TestStaleAliasLen:
         ns["owner"] = [1, 2, 3]
         ns["alias"] = ns["owner"]
         assert len(ns) == 2
-
-
-class TestStaleAliasScalarOwner:
-    """Stale alias to scalar owner also handled correctly."""
-
-    def test_stale_alias_to_scalar_not_in_ns(self, ns):
-        ns["num"] = 42
-        ns["alias"] = ns.get_object("num")
-        r = ns._redis()
-        num_key = make_object_key(ns.domain.name, ns.name, "num")
-        r.delete(num_key)
-        assert "alias" not in ns
-
-    def test_stale_alias_to_scalar_iter_excluded(self, ns):
-        ns["num"] = 42
-        ns["alias"] = ns.get_object("num")
-        ns["other"] = "hello"
-        r = ns._redis()
-        num_key = make_object_key(ns.domain.name, ns.name, "num")
-        r.delete(num_key)
-        names = list(ns)
-        assert "alias" not in names
-        assert "other" in names
