@@ -180,8 +180,8 @@ def test_anonymous_object_inherits_declared_policy_not_remaining(isolated_ns, cl
     anon_key = make_object_key("testdomain", "ttl_ns", nested_obj.name)
 
     anon_meta = clean_redis.hgetall(anon_key)
-    assert anon_meta["cache_mode"] == "ttl"
-    assert anon_meta["ttl"] == "600"
+    assert anon_meta["cache_mode"] == "inherited"
+    assert anon_meta["ttl"] == ""
 
     anon_remaining = clean_redis.ttl(anon_key)
     assert anon_remaining > 0

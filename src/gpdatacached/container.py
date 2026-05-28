@@ -29,7 +29,8 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         self.ref_key: str = make_ref_key(domain_name, ns_name, name)
 
     def _touch(self) -> None:
-        from .ttl import policy_from_meta, policy_for_sliding_touch, apply_policy
+        from .ttl import policy_from_meta, policy_for_sliding_touch
+        from .meta import apply_lifecycle, propagate_lifecycle
 
         key = self._canonical_redis_key()
         now = datetime.datetime.now(datetime.UTC).isoformat()
@@ -39,7 +40,8 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         current = policy_from_meta(r.hgetall(key))
         new_policy = policy_for_sliding_touch(current)
         if new_policy is not current:
-            apply_policy(r, key, new_policy)
+            apply_lifecycle(r, key, self.raw_key, self.ref_key, True, new_policy)
+            propagate_lifecycle(r, self.domain.name, self.namespace.name, self._binding_owner_name(), set())
 
     @abstractmethod
     def _current_item_count(self) -> int:

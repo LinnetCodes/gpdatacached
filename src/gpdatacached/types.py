@@ -166,7 +166,8 @@ def _create_anonymous_object(
     cache_mode: str,
     ttl: int,
 ) -> tuple[str, str]:
-    from .ttl import policy_from_defaults, meta_ttl_value, apply_policy
+    from .ttl import policy_from_defaults
+    from .meta import apply_lifecycle
 
     entry = GPDCTypeRegistry.lookup_by_python_type(python_value)
     now = datetime.datetime.now(datetime.UTC).isoformat()
@@ -175,14 +176,15 @@ def _create_anonymous_object(
     anon_name = f"~anon:{uuid.uuid4()}"
     obj_key = make_object_key(namespace.domain.name, namespace.name, anon_name)
     raw_key = make_raw_key(namespace.domain.name, namespace.name, anon_name)
+    ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
 
     r = namespace._redis()
     mapping = {
         "type": entry.gpdc_type,
         "codec": "native",
         "value": raw_key,
-        "cache_mode": policy.cache_mode,
-        "ttl": meta_ttl_value(policy),
+        "cache_mode": "inherited",
+        "ttl": "",
         "created_at": now,
         "updated_at": now,
     }
@@ -198,10 +200,9 @@ def _create_anonymous_object(
                 namespace, raw_key, python_value, anon_name, policy.cache_mode, policy.declared_ttl
             )
 
-    ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
     r.sadd(ref_key, parent_name)
 
-    apply_policy(r, obj_key, policy)
+    apply_lifecycle(r, obj_key, raw_key, ref_key, entry.is_container, policy)
 
     ref_val = f"ref:{obj_key}"
     return anon_name, ref_val

@@ -209,7 +209,8 @@ class GPDCNamespace(MutableMapping):
         r.delete(ref_key)
 
     def _write_scalar_meta(self, obj_key: str, entry, encoded_value: str, policy, now: str, *, is_new: bool) -> None:
-        from .ttl import meta_ttl_value, apply_policy
+        from .ttl import meta_ttl_value
+        from .meta import apply_lifecycle
 
         r = self._redis()
         mapping = {
@@ -223,7 +224,7 @@ class GPDCNamespace(MutableMapping):
         if is_new:
             mapping["created_at"] = now
         r.hset(obj_key, mapping=mapping)
-        apply_policy(r, obj_key, policy)
+        apply_lifecycle(r, obj_key, "", "", False, policy)
 
     def _write_container_meta(
         self,
@@ -236,7 +237,9 @@ class GPDCNamespace(MutableMapping):
         is_new: bool,
         item_count: int = 0,
     ) -> None:
-        from .ttl import meta_ttl_value, apply_policy
+        from .ttl import meta_ttl_value
+        from .meta import apply_lifecycle
+        from .keys import make_ref_key
 
         r = self._redis()
         mapping = {
@@ -251,7 +254,9 @@ class GPDCNamespace(MutableMapping):
         if is_new:
             mapping["created_at"] = now
         r.hset(obj_key, mapping=mapping)
-        apply_policy(r, obj_key, policy)
+        name = obj_key.split(":obj:")[1] if ":obj:" in obj_key else ""
+        ref_key = make_ref_key(self._domain.name, self._name, name)
+        apply_lifecycle(r, obj_key, raw_key, ref_key, True, policy)
 
     def _setitem_container_ref(self, key: str, container) -> None:
         from .container import GPDCContainerObject

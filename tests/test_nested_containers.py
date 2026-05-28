@@ -466,15 +466,14 @@ class TestSpecDataFlow:
         assert isinstance(inner, DictObject)
         assert inner["name"] == "Alice"
 
-    def test_anon_cache_mode_inherits_parent(self, ns, r):
-        """Spec §5.4: anonymous objects inherit parent's cache_mode."""
+    def test_anon_cache_mode_is_inherited(self, ns, r):
+        """Anonymous objects use cache_mode='inherited'."""
         ns["d"] = {"a": [1, 2, 3]}
         raw_data = r.hgetall(make_raw_key(DOMAIN, NS, "d"))
         anon_name = raw_data["str:a"].split(":obj:")[1]
         anon_obj_key = make_object_key(DOMAIN, NS, anon_name)
-        parent_cache_mode = r.hget(make_object_key(DOMAIN, NS, "d"), "cache_mode")
         anon_cache_mode = r.hget(anon_obj_key, "cache_mode")
-        assert anon_cache_mode == parent_cache_mode
+        assert anon_cache_mode == "inherited"
 
 
 class TestDictNestedSet:

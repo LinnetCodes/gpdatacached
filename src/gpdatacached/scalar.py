@@ -29,7 +29,8 @@ class GPDCScalarObject(GPDCDataObject):
     @value.setter
     def value(self, new_value: object) -> None:
         from .types import GPDCTypeRegistry
-        from .ttl import policy_from_meta, policy_for_sliding_touch, apply_policy
+        from .ttl import policy_from_meta, policy_for_sliding_touch
+        from .meta import apply_lifecycle
 
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(self.TYPE)
         expected_python_type = entry.python_type
@@ -43,7 +44,7 @@ class GPDCScalarObject(GPDCDataObject):
         current = policy_from_meta(r.hgetall(key))
         new_policy = policy_for_sliding_touch(current)
         if new_policy is not current:
-            apply_policy(r, key, new_policy)
+            apply_lifecycle(r, key, "", "", False, new_policy)
 
 
 # ── Scalar type subclasses ────────────────────────────────────────────────────

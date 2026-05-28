@@ -176,7 +176,7 @@ def _collect_child_names(r, raw_key: str, raw_type: str) -> list[str]:
 
 def _maybe_add_name(encoded: str, names: list[str]) -> None:
     if isinstance(encoded, str) and encoded.startswith("ref:"):
-        obj_key = encoded[len("ref:"):]
+        obj_key = encoded[len("ref:") :]
         parts = obj_key.split(":obj:")
         if len(parts) == 2:
             names.append(parts[1])

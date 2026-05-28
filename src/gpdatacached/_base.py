@@ -89,7 +89,9 @@ class GPDCDataObject(ABC):
 
     @cache_mode.setter
     def cache_mode(self, mode: str) -> None:
-        from .ttl import policy_from_meta, policy_for_cache_mode_change, apply_policy
+        from .ttl import policy_from_meta, policy_for_cache_mode_change
+        from .meta import apply_lifecycle
+        from .keys import make_ref_key
 
         if mode not in ("permanent", "ttl", "sliding"):
             raise ValueError(f"Invalid cache_mode: {mode!r}")
@@ -98,7 +100,10 @@ class GPDCDataObject(ABC):
         current = policy_from_meta(r.hgetall(key))
         r.hset(key, "cache_mode", mode)
         new_policy = policy_for_cache_mode_change(current, mode)
-        apply_policy(r, key, new_policy)
+        is_collection = r.hexists(key, "item_count")
+        raw_key = r.hget(key, "value") if is_collection else ""
+        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
+        apply_lifecycle(r, key, raw_key, ref_key, is_collection, new_policy)
 
     @property
     def ttl(self) -> int:
@@ -107,14 +112,19 @@ class GPDCDataObject(ABC):
 
     @ttl.setter
     def ttl(self, seconds: int) -> None:
-        from .ttl import policy_from_meta, policy_for_ttl_change, apply_policy
+        from .ttl import policy_from_meta, policy_for_ttl_change
+        from .meta import apply_lifecycle
+        from .keys import make_ref_key
 
         key = self._canonical_redis_key()
         r = self._redis()
         current = policy_from_meta(r.hgetall(key))
         r.hset(key, "ttl", str(seconds))
         new_policy = policy_for_ttl_change(current, seconds)
-        apply_policy(r, key, new_policy)
+        is_collection = r.hexists(key, "item_count")
+        raw_key = r.hget(key, "value") if is_collection else ""
+        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
+        apply_lifecycle(r, key, raw_key, ref_key, is_collection, new_policy)
 
     @property
     def created_at(self) -> datetime.datetime | None:
@@ -127,20 +137,49 @@ class GPDCDataObject(ABC):
         return datetime.datetime.fromisoformat(raw) if raw else None
 
     def expire_in(self, seconds: int) -> None:
-        self._redis().expire(self._canonical_redis_key(), seconds)
+        from .meta import apply_lifecycle
+        from .ttl import TTLPolicy
+        from .keys import make_ref_key
+
+        key = self._canonical_redis_key()
+        r = self._redis()
+        is_collection = r.hexists(key, "item_count")
+        raw_key = r.hget(key, "value") if is_collection else ""
+        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
+        apply_lifecycle(r, key, raw_key, ref_key, is_collection, policy)
 
     def expire_at(self, when: datetime.datetime) -> None:
-        self._redis().expireat(self._canonical_redis_key(), when)
+        from .meta import apply_lifecycle
+        from .ttl import TTLPolicy
+        from .keys import make_ref_key
+
+        key = self._canonical_redis_key()
+        r = self._redis()
+        seconds = max(0, int((when - datetime.datetime.now(datetime.UTC)).total_seconds()))
+        is_collection = r.hexists(key, "item_count")
+        raw_key = r.hget(key, "value") if is_collection else ""
+        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
+        apply_lifecycle(r, key, raw_key, ref_key, is_collection, policy)
 
     def persist(self) -> None:
-        from .ttl import apply_policy, policy_from_meta, TTLPolicy
+        from .ttl import policy_from_meta, TTLPolicy
+        from .meta import apply_lifecycle
+        from .keys import make_ref_key
 
         key = self._canonical_redis_key()
         r = self._redis()
         current = policy_from_meta(r.hgetall(key))
-        apply_policy(
+        is_collection = r.hexists(key, "item_count")
+        raw_key = r.hget(key, "value") if is_collection else ""
+        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
+        apply_lifecycle(
             r,
             key,
+            raw_key,
+            ref_key,
+            is_collection,
             TTLPolicy(
                 cache_mode=current.cache_mode,
                 declared_ttl=current.declared_ttl,
