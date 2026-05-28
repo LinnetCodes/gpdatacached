@@ -77,14 +77,14 @@ class TestGCOrphanRef:
 
 
 class TestGCOrphanObj:
-    def test_gc_removes_orphan_obj_with_missing_raw(self, ns, r):
+    def test_gc_preserves_corrupted_container_with_missing_raw(self, ns, r):
         ns["x"] = [1, 2, 3]
         r.delete(make_raw_key(DOMAIN, NS, "x"))
 
         obj_x = make_object_key(DOMAIN, NS, "x")
         assert r.exists(obj_x)
         ns.domain.run_gc(namespace=NS)
-        assert not r.exists(obj_x)
+        assert r.exists(obj_x), "corrupted container should be preserved, not auto-deleted"
 
 
 class TestGCPreservesValidData:
