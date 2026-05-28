@@ -34,11 +34,16 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         key = self._canonical_redis_key()
         now = datetime.datetime.now(datetime.UTC).isoformat()
         r = self._redis()
-        r.hset(key, "updated_at", now)
+        item_count = self._current_item_count()
+        r.hset(key, mapping={"updated_at": now, "item_count": str(item_count)})
         current = policy_from_meta(r.hgetall(key))
         new_policy = policy_for_sliding_touch(current)
         if new_policy is not current:
             apply_policy(r, key, new_policy)
+
+    @abstractmethod
+    def _current_item_count(self) -> int:
+        """Return the current element count from Redis."""
 
     def _unbind_old_ref(self, old_encoded: str) -> None:
         if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
@@ -146,6 +151,9 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         self._reject_value_replacement()
 
     def __len__(self) -> int:
+        return self._redis().llen(self.raw_key)
+
+    def _current_item_count(self) -> int:
         return self._redis().llen(self.raw_key)
 
     def __getitem__(self, index: int) -> object:
@@ -346,6 +354,9 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
     def __len__(self) -> int:
         return self._redis().hlen(self.raw_key)
 
+    def _current_item_count(self) -> int:
+        return self._redis().hlen(self.raw_key)
+
     def __getitem__(self, key: object) -> object:
         encoded_key = encode_key(key)
         encoded_val = self._redis().hget(self.raw_key, encoded_key)
@@ -474,6 +485,9 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         self._reject_value_replacement()
 
     def __len__(self) -> int:
+        return self._redis().scard(self.raw_key)
+
+    def _current_item_count(self) -> int:
         return self._redis().scard(self.raw_key)
 
     def __contains__(self, item: object) -> bool:
