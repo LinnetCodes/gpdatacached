@@ -43,9 +43,17 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
                 raw_to_obj[raw_key] = obj_key
 
                 if not r.exists(raw_key):
-                    ref_key = ref_prefix + obj_key[len(obj_prefix) :]
-                    r.delete(obj_key, ref_key)
-                    deleted += 2
+                    item_count_str = meta.get("item_count")
+                    if item_count_str is not None:
+                        item_count = int(item_count_str)
+                        if item_count > 0:
+                            logger.warning(
+                                "Corrupted container: %s has item_count=%d but raw key %s missing",
+                                obj_key,
+                                item_count,
+                                raw_key,
+                            )
+                    continue
 
             elif key_type == "string":
                 ref_value = r.get(obj_key)
