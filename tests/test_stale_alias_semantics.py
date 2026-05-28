@@ -120,8 +120,8 @@ class TestStaleAliasLen:
         ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
         r.delete(owner_key)
         r.delete(ref_key)
-        assert len(ns) == 2
-        assert set(ns) == {"alias", "other"}
+        assert len(ns) == 1
+        assert set(ns) == {"other"}
 
     def test_stale_alias_not_counted_fix(self, ns):
         ns["owner"] = [1, 2, 3]
