@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from gpdatacached.meta import ObjectMeta
+from unittest.mock import MagicMock, call
+
+from gpdatacached.ttl import TTLPolicy
+from gpdatacached.meta import ObjectMeta, apply_lifecycle, effective_policy
 
 
 class TestObjectMetaFromRedis:
@@ -131,3 +134,80 @@ class TestObjectMetaHelpers:
     def test_declares_expiry_false_inherited(self):
         meta = ObjectMeta(type="collection:list", cache_mode="inherited", ttl=60)
         assert meta.declares_expiry() is False
+
+
+class TestApplyLifecycle:
+    def test_applies_ttl_to_obj_key(self):
+        r = MagicMock()
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
+        apply_lifecycle(r, "gpdc:d:ns:obj:x", "gpdc:d:ns:raw:x", "gpdc:d:ns:ref:x", True, policy)
+        r.expire.assert_any_call("gpdc:d:ns:obj:x", 300)
+
+    def test_applies_ttl_to_raw_and_ref_for_container(self):
+        r = MagicMock()
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
+        apply_lifecycle(r, "gpdc:d:ns:obj:x", "gpdc:d:ns:raw:x", "gpdc:d:ns:ref:x", True, policy)
+        assert call("gpdc:d:ns:obj:x", 300) in r.expire.call_args_list
+        assert call("gpdc:d:ns:raw:x", 300) in r.expire.call_args_list
+        assert call("gpdc:d:ns:ref:x", 300) in r.expire.call_args_list
+
+    def test_persist_all_keys(self):
+        r = MagicMock()
+        policy = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
+        apply_lifecycle(r, "gpdc:d:ns:obj:x", "gpdc:d:ns:raw:x", "gpdc:d:ns:ref:x", True, policy)
+        r.persist.assert_any_call("gpdc:d:ns:obj:x")
+        r.persist.assert_any_call("gpdc:d:ns:raw:x")
+        r.persist.assert_any_call("gpdc:d:ns:ref:x")
+
+    def test_scalar_skips_raw_and_ref(self):
+        r = MagicMock()
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
+        apply_lifecycle(r, "gpdc:d:ns:obj:x", "", "", False, policy)
+        r.expire.assert_called_once_with("gpdc:d:ns:obj:x", 300)
+
+
+class TestEffectivePolicy:
+    def test_non_inherited_returns_own_policy(self):
+        meta = ObjectMeta.from_redis({"type": "collection:list", "cache_mode": "ttl", "ttl": "300"})
+        r = MagicMock()
+        policy = effective_policy(meta, r, "d", "ns", "somename")
+        assert policy.cache_mode == "ttl"
+        assert policy.expire_seconds == 300
+
+    def test_permanent_non_inherited(self):
+        meta = ObjectMeta.from_redis({"type": "scalar:int", "cache_mode": "permanent"})
+        r = MagicMock()
+        policy = effective_policy(meta, r, "d", "ns", "somename")
+        assert policy.cache_mode == "permanent"
+        assert policy.expire_seconds is None
+
+    def test_inherited_with_permanent_parent(self):
+        meta = ObjectMeta.from_redis({"type": "collection:list", "cache_mode": "inherited", "ttl": "0"})
+        r = MagicMock()
+        r.smembers.return_value = {"parent1"}
+        r.hgetall.return_value = {"type": "collection:dict", "cache_mode": "permanent", "ttl": ""}
+        policy = effective_policy(meta, r, "d", "ns", "~anon:child1")
+        assert policy.cache_mode == "permanent"
+        assert policy.expire_seconds is None
+
+    def test_inherited_with_ttl_parent(self):
+        meta = ObjectMeta.from_redis({"type": "collection:list", "cache_mode": "inherited", "ttl": "0"})
+        r = MagicMock()
+        r.smembers.return_value = {"parent1"}
+
+        def hgetall_side_effect(key):
+            return {"type": "collection:dict", "cache_mode": "ttl", "ttl": "300"}
+
+        r.hgetall.side_effect = hgetall_side_effect
+        r.ttl.return_value = 250
+        policy = effective_policy(meta, r, "d", "ns", "~anon:child1")
+        assert policy.cache_mode == "ttl"
+        assert policy.expire_seconds == 250
+
+    def test_inherited_with_no_parents(self):
+        meta = ObjectMeta.from_redis({"type": "collection:list", "cache_mode": "inherited", "ttl": "0"})
+        r = MagicMock()
+        r.smembers.return_value = set()
+        policy = effective_policy(meta, r, "d", "ns", "~anon:child1")
+        assert policy.cache_mode == "permanent"
+        assert policy.expire_seconds is None

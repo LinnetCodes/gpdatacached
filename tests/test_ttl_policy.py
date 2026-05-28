@@ -180,3 +180,33 @@ class TestMetaTtlValue:
     def test_positive_ttl_returns_string(self):
         p = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
         assert meta_ttl_value(p) == "300"
+
+
+class TestPolicyFromMetaInherited:
+    def test_inherited_meta_returns_inherited_mode(self):
+        p = policy_from_meta({"cache_mode": "inherited", "ttl": "300"})
+        assert p.cache_mode == "inherited"
+        assert p.declared_ttl == 300
+
+    def test_inherited_meta_no_expire_seconds(self):
+        p = policy_from_meta({"cache_mode": "inherited", "ttl": "300"})
+        assert p.expire_seconds is None
+
+    def test_inherited_zero_ttl(self):
+        p = policy_from_meta({"cache_mode": "inherited", "ttl": "0"})
+        assert p.cache_mode == "inherited"
+        assert p.declared_ttl == 0
+        assert p.expire_seconds is None
+
+
+class TestPolicyFromDefaultsRejectsInherited:
+    def test_inherited_rejected_in_defaults(self):
+        with pytest.raises(ValueError, match="Invalid cache_mode"):
+            policy_from_defaults("inherited", 300)
+
+
+class TestPolicyForCacheModeChangeRejectsInherited:
+    def test_change_to_inherited_rejected(self):
+        current = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
+        with pytest.raises(ValueError, match="Invalid cache_mode"):
+            policy_for_cache_mode_change(current, "inherited")
