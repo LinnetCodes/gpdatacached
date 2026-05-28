@@ -177,18 +177,18 @@ def _create_anonymous_object(
     raw_key = make_raw_key(namespace.domain.name, namespace.name, anon_name)
 
     r = namespace._redis()
-    r.hset(
-        obj_key,
-        mapping={
-            "type": entry.gpdc_type,
-            "codec": "native",
-            "value": raw_key,
-            "cache_mode": policy.cache_mode,
-            "ttl": meta_ttl_value(policy),
-            "created_at": now,
-            "updated_at": now,
-        },
-    )
+    mapping = {
+        "type": entry.gpdc_type,
+        "codec": "native",
+        "value": raw_key,
+        "cache_mode": policy.cache_mode,
+        "ttl": meta_ttl_value(policy),
+        "created_at": now,
+        "updated_at": now,
+    }
+    if entry.is_container:
+        mapping["item_count"] = str(len(python_value))
+    r.hset(obj_key, mapping=mapping)
 
     if entry.is_container:
         from .codec import GPDCContainerCodec

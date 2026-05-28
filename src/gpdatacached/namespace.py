@@ -234,6 +234,7 @@ class GPDCNamespace(MutableMapping):
         now: str,
         *,
         is_new: bool,
+        item_count: int = 0,
     ) -> None:
         from .ttl import meta_ttl_value, apply_policy
 
@@ -245,6 +246,7 @@ class GPDCNamespace(MutableMapping):
             "cache_mode": policy.cache_mode,
             "ttl": meta_ttl_value(policy),
             "updated_at": now,
+            "item_count": str(item_count),
         }
         if is_new:
             mapping["created_at"] = now
@@ -326,7 +328,7 @@ class GPDCNamespace(MutableMapping):
 
         if entry.is_container:
             raw_key = make_raw_key(self._domain.name, self._name, key)
-            self._write_container_meta(obj_key, entry, raw_key, policy, now, is_new=is_new)
+            self._write_container_meta(obj_key, entry, raw_key, policy, now, is_new=is_new, item_count=len(value))
             if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
                 if not is_new:
                     entry.codec_class.delete_raw(self, raw_key)
