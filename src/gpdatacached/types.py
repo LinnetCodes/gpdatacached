@@ -139,6 +139,7 @@ def _ref_existing_container(
 
 def _load_ref_object(namespace: GPDCNamespace, ref_str: str):
     from .container import GPDCContainerObject
+    from .meta import ObjectMeta
 
     obj_key = ref_str[len("ref:") :]
     parts = obj_key.split(":obj:")
@@ -146,16 +147,14 @@ def _load_ref_object(namespace: GPDCNamespace, ref_str: str):
         raise ValueError(f"Invalid ref string: {ref_str!r}")
     anon_name = parts[1]
     r = namespace._redis()
-    meta = r.hgetall(obj_key)
-    if not meta:
+    meta = ObjectMeta.load(r, obj_key)
+    if meta is None:
         raise KeyError(f"Referenced object not found: {obj_key!r}")
-    type_str = meta.get("type", "")
-    entry = GPDCTypeRegistry.lookup_by_gpdc_type(type_str)
+    entry = GPDCTypeRegistry.lookup_by_gpdc_type(meta.type)
     obj = entry.object_class(anon_name, namespace)
     if isinstance(obj, GPDCContainerObject):
-        stored_raw_key = meta.get("value", "")
-        if stored_raw_key:
-            obj.raw_key = stored_raw_key
+        if meta.value:
+            obj.raw_key = meta.value
     return obj
 
 
@@ -167,10 +166,10 @@ def _create_anonymous_object(
     ttl: int,
 ) -> tuple[str, str]:
     from .ttl import policy_from_defaults
-    from .meta import apply_lifecycle
+    from .meta import ObjectMeta, apply_lifecycle
 
     entry = GPDCTypeRegistry.lookup_by_python_type(python_value)
-    now = datetime.datetime.now(datetime.UTC).isoformat()
+    now = datetime.datetime.now(datetime.UTC)
     policy = policy_from_defaults(cache_mode, ttl)
 
     anon_name = f"~anon:{uuid.uuid4()}"
@@ -179,18 +178,16 @@ def _create_anonymous_object(
     ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
 
     r = namespace._redis()
-    mapping = {
-        "type": entry.gpdc_type,
-        "codec": "native",
-        "value": raw_key,
-        "cache_mode": "inherited",
-        "ttl": "",
-        "created_at": now,
-        "updated_at": now,
-    }
-    if entry.is_container:
-        mapping["item_count"] = str(len(python_value))
-    r.hset(obj_key, mapping=mapping)
+    meta = ObjectMeta(
+        type=entry.gpdc_type,
+        value=raw_key,
+        cache_mode="inherited",
+        ttl=0,
+        created_at=now,
+        updated_at=now,
+        item_count=len(python_value) if entry.is_container else None,
+    )
+    meta.save(r, obj_key)
 
     if entry.is_container:
         from .codec import GPDCContainerCodec
