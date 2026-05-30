@@ -303,3 +303,51 @@ def test_write_updates_updated_at(setup_dict):
     obj["newkey"] = "newval"
     after = r.hget(obj_key, "updated_at")
     assert after >= before
+
+
+def test_update_calls_touch_once(setup_dict):
+    from unittest.mock import patch
+
+    obj, *_ = setup_dict
+    with patch.object(type(obj), "_touch", wraps=obj._touch) as mock_touch:
+        obj.update({"a": 1, "b": 2, "c": 3})
+        assert mock_touch.call_count == 1
+    assert obj["a"] == 1
+    assert obj["b"] == 2
+    assert obj["c"] == 3
+
+
+def test_update_empty_dict_no_touch(setup_dict):
+    from unittest.mock import patch
+
+    obj, *_ = setup_dict
+    with patch.object(type(obj), "_touch", wraps=obj._touch) as mock_touch:
+        obj.update({})
+        assert mock_touch.call_count == 0
+
+
+def test_update_kwargs_calls_touch_once(setup_dict):
+    from unittest.mock import patch
+
+    obj, *_ = setup_dict
+    with patch.object(type(obj), "_touch", wraps=obj._touch) as mock_touch:
+        obj.update(x=10, y=20)
+        assert mock_touch.call_count == 1
+    assert obj["x"] == 10
+    assert obj["y"] == 20
+
+
+def test_update_item_count(setup_dict):
+    obj, r, obj_key, *_ = setup_dict
+    assert len(obj) == 2
+    obj.update({"c": 3, "d": 4, "e": 5})
+    assert len(obj) == 5
+    item_count = r.hget(obj_key, "item_count")
+    assert item_count == "5"
+
+
+def test_update_overwrites_existing(setup_dict):
+    obj, *_ = setup_dict
+    obj.update({"name": "Bob", "age": 99})
+    assert obj["name"] == "Bob"
+    assert obj["age"] == 99

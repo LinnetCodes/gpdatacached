@@ -443,15 +443,32 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         return default
 
     def update(self, other=None, **kwargs):
+        pairs = []
         if other:
             if hasattr(other, "items"):
-                for k, v in other.items():
-                    self[k] = v
+                pairs = list(other.items())
             else:
-                for k, v in other:
-                    self[k] = v
-        for k, v in kwargs.items():
-            self[k] = v
+                pairs = list(other)
+        pairs.extend(kwargs.items())
+        if not pairs:
+            return
+        r = self._redis()
+        binding_owner = self._binding_owner_name()
+        dirty = False
+        try:
+            for k, v in pairs:
+                encoded_key = encode_key(k)
+                old_encoded = r.hget(self.raw_key, encoded_key)
+                if self._is_container_ref(old_encoded):
+                    self._reject_container_slot_overwrite()
+                if old_encoded is not None:
+                    self._unbind_old_ref(old_encoded)
+                encoded_val = encode_element(v, self._namespace, binding_owner, self.cache_mode, self.ttl)
+                r.hset(self.raw_key, encoded_key, encoded_val)
+                dirty = True
+        finally:
+            if dirty:
+                self._touch()
 
     def clear(self):
         encoded_vals = self._redis().hvals(self.raw_key)
