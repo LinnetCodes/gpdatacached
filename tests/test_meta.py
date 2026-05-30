@@ -15,7 +15,6 @@ class TestObjectMetaFromRedis:
     def test_parse_full_container_meta(self):
         data = {
             "type": "collection:list",
-            "codec": "native",
             "value": "raw:some:key",
             "cache_mode": "ttl",
             "ttl": "300",
@@ -25,7 +24,6 @@ class TestObjectMetaFromRedis:
         }
         meta = ObjectMeta.from_redis(data)
         assert meta.type == "collection:list"
-        assert meta.codec == "native"
         assert meta.value == "raw:some:key"
         assert meta.cache_mode == "ttl"
         assert meta.ttl == 300
@@ -41,7 +39,6 @@ class TestObjectMetaFromRedis:
         meta = ObjectMeta.from_redis(data)
         assert meta.type == "scalar:int"
         assert meta.value == "scalar:int:42"
-        assert meta.codec == "native"
         assert meta.cache_mode == "permanent"
         assert meta.ttl == 0
         assert meta.item_count is None
@@ -66,7 +63,6 @@ class TestObjectMetaToRedisMapping:
         now = datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         original = ObjectMeta(
             type="collection:dict",
-            codec="native",
             value="raw:abc",
             cache_mode="sliding",
             ttl=60,
@@ -77,7 +73,6 @@ class TestObjectMetaToRedisMapping:
         mapping = original.to_redis_mapping()
         assert mapping == {
             "type": "collection:dict",
-            "codec": "native",
             "value": "raw:abc",
             "cache_mode": "sliding",
             "ttl": "60",
@@ -141,7 +136,6 @@ class TestObjectMetaLoad:
         r = MagicMock()
         r.hgetall.return_value = {
             "type": "scalar:int",
-            "codec": "native",
             "value": "int:42",
             "cache_mode": "permanent",
             "ttl": "",
@@ -164,7 +158,6 @@ class TestObjectMetaLoad:
         r = MagicMock()
         r.hgetall.return_value = {
             "type": "collection:list",
-            "codec": "native",
             "value": "gpdc:d:ns:raw:x",
             "cache_mode": "ttl",
             "ttl": "300",

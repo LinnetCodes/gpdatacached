@@ -46,7 +46,6 @@ def setup_dict(r):
         obj_key,
         mapping={
             "type": "collection:dict",
-            "codec": "native",
             "value": raw_key,
             "cache_mode": "permanent",
             "ttl": "",

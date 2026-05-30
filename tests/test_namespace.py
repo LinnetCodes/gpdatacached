@@ -27,7 +27,6 @@ class TestNamespaceSetItem:
         data = clean_redis.hgetall(key)
         assert data["type"] == "scalar:int"
         assert data["value"] == "int:42"
-        assert data["codec"] == "native"
         assert data["cache_mode"] == "permanent"
 
     def test_set_str(self, ns, clean_redis):
@@ -444,7 +443,6 @@ class TestNamespaceMutableMapping:
             anon_key,
             mapping={
                 "type": "scalar:int",
-                "codec": "native",
                 "value": "int:99",
                 "cache_mode": "permanent",
                 "ttl": "",
@@ -469,7 +467,6 @@ class TestNamespaceMutableMapping:
             anon_key,
             mapping={
                 "type": "scalar:int",
-                "codec": "native",
                 "value": "int:7",
                 "cache_mode": "permanent",
                 "ttl": "",

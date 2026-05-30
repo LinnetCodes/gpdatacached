@@ -31,7 +31,6 @@ class TestSpecSection12CreateScalarObject:
         # Object hash
         obj_data = clean_redis.hgetall(make_object_key("testdomain", "myns", "counter"))
         assert obj_data["type"] == "scalar:int"
-        assert obj_data["codec"] == "native"
         assert obj_data["value"] == "int:42"
         assert obj_data["cache_mode"] == "permanent"
         assert obj_data["ttl"] == ""

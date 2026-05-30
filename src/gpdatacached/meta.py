@@ -8,7 +8,6 @@ from pydantic import BaseModel, model_validator
 
 class ObjectMeta(BaseModel):
     type: str
-    codec: str = "native"
     value: str = ""
     cache_mode: Literal["permanent", "ttl", "sliding", "inherited"] = "permanent"
     ttl: int = 0
@@ -32,7 +31,6 @@ class ObjectMeta(BaseModel):
         item_count_str = data.get("item_count")
         return cls(
             type=data.get("type", ""),
-            codec=data.get("codec", "native"),
             value=data.get("value", ""),
             cache_mode=cache_mode,
             ttl=ttl,
@@ -44,7 +42,6 @@ class ObjectMeta(BaseModel):
     def to_redis_mapping(self) -> dict[str, str]:
         mapping: dict[str, str] = {
             "type": self.type,
-            "codec": self.codec,
             "value": self.value,
             "cache_mode": self.cache_mode,
             "ttl": str(self.ttl) if self.ttl else "",

@@ -45,7 +45,6 @@ def setup_set(r):
         obj_key,
         mapping={
             "type": "collection:set",
-            "codec": "native",
             "value": raw_key,
             "cache_mode": "permanent",
             "ttl": "",
@@ -157,7 +156,6 @@ class TestSetObjectMutableSetOps:
             obj_key,
             mapping={
                 "type": "collection:set",
-                "codec": "native",
                 "value": raw_key,
                 "cache_mode": "permanent",
                 "ttl": "",
@@ -268,7 +266,6 @@ def _make_set_obj(r, name, value):
         obj_key,
         mapping={
             "type": "collection:set",
-            "codec": "native",
             "value": raw_key,
             "cache_mode": "permanent",
             "ttl": "",

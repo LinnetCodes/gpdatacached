@@ -99,7 +99,6 @@ class TestSpecVerification:
         ref_key = f"gpdc:{d}:{n}:ref:mylist"
 
         assert clean_redis.hget(obj_key, "type") == "collection:list"
-        assert clean_redis.hget(obj_key, "codec") == "native"
         assert clean_redis.hget(obj_key, "value") == raw_key
         assert clean_redis.hget(obj_key, "cache_mode") == "permanent"
         assert clean_redis.hget(obj_key, "ttl") == ""
@@ -446,7 +445,6 @@ class TestSpecVerification:
         ref_key = f"gpdc:{d}:{n}:ref:mydict"
 
         assert clean_redis.hget(obj_key, "type") == "collection:dict"
-        assert clean_redis.hget(obj_key, "codec") == "native"
         assert clean_redis.hget(obj_key, "value") == raw_key
         assert clean_redis.hget(obj_key, "cache_mode") == "permanent"
         assert clean_redis.hget(obj_key, "ttl") == ""
@@ -596,7 +594,6 @@ class TestSpecVerification:
         # §5.3 匿名对象的元数据
         anon_obj_key = f"gpdc:{d}:{n}:obj:{anon_name}"
         assert clean_redis.hget(anon_obj_key, "type") == "collection:list"
-        assert clean_redis.hget(anon_obj_key, "codec") == "native"
         assert clean_redis.hget(anon_obj_key, "cache_mode") == "inherited"
         assert clean_redis.hget(anon_obj_key, "ttl") == ""
         assert clean_redis.hget(anon_obj_key, "created_at") is not None
@@ -812,7 +809,6 @@ class TestSpecVerification:
         ref_key = f"gpdc:{d}:{n}:ref:myset"
 
         assert clean_redis.hget(obj_key, "type") == "collection:set"
-        assert clean_redis.hget(obj_key, "codec") == "native"
         assert clean_redis.hget(obj_key, "value") == raw_key
         assert clean_redis.hget(obj_key, "cache_mode") == "permanent"
         assert clean_redis.hget(obj_key, "ttl") == ""
