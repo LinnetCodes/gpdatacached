@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
 from .keys import make_object_key, make_uri
+from .meta import ObjectMeta
 
 
 class GPDCDataObject(ABC):
@@ -80,12 +81,10 @@ class GPDCDataObject(ABC):
     def _redis(self):
         return self.domain.redis
 
-    def _hget(self, field: str) -> str:
-        return self._redis().hget(self._canonical_redis_key(), field) or ""
-
     @property
     def cache_mode(self) -> str:
-        return self._hget("cache_mode")
+        meta = ObjectMeta.load(self._redis(), self._canonical_redis_key())
+        return meta.cache_mode if meta else ""
 
     @cache_mode.setter
     def cache_mode(self, mode: str) -> None:
@@ -97,18 +96,21 @@ class GPDCDataObject(ABC):
             raise ValueError(f"Invalid cache_mode: {mode!r}")
         key = self._canonical_redis_key()
         r = self._redis()
-        current = policy_from_meta(r.hgetall(key))
-        r.hset(key, "cache_mode", mode)
+        meta = ObjectMeta.load(r, key)
+        if meta is None:
+            return
+        current = policy_from_meta(meta)
+        meta.with_updates(cache_mode=mode).save(r, key)
         new_policy = policy_for_cache_mode_change(current, mode)
-        is_collection = r.hexists(key, "item_count")
-        raw_key = r.hget(key, "value") if is_collection else ""
+        is_collection = meta.is_collection()
+        raw_key = meta.value if is_collection else ""
         ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
         apply_lifecycle(r, key, raw_key, ref_key, is_collection, new_policy)
 
     @property
     def ttl(self) -> int:
-        raw = self._hget("ttl")
-        return int(raw) if raw else 0
+        meta = ObjectMeta.load(self._redis(), self._canonical_redis_key())
+        return meta.ttl if meta else 0
 
     @ttl.setter
     def ttl(self, seconds: int) -> None:
@@ -118,23 +120,26 @@ class GPDCDataObject(ABC):
 
         key = self._canonical_redis_key()
         r = self._redis()
-        current = policy_from_meta(r.hgetall(key))
-        r.hset(key, "ttl", str(seconds))
+        meta = ObjectMeta.load(r, key)
+        if meta is None:
+            return
+        current = policy_from_meta(meta)
+        meta.with_updates(ttl=seconds).save(r, key)
         new_policy = policy_for_ttl_change(current, seconds)
-        is_collection = r.hexists(key, "item_count")
-        raw_key = r.hget(key, "value") if is_collection else ""
+        is_collection = meta.is_collection()
+        raw_key = meta.value if is_collection else ""
         ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
         apply_lifecycle(r, key, raw_key, ref_key, is_collection, new_policy)
 
     @property
     def created_at(self) -> datetime.datetime | None:
-        raw = self._hget("created_at")
-        return datetime.datetime.fromisoformat(raw) if raw else None
+        meta = ObjectMeta.load(self._redis(), self._canonical_redis_key())
+        return meta.created_at if meta else None
 
     @property
     def updated_at(self) -> datetime.datetime | None:
-        raw = self._hget("updated_at")
-        return datetime.datetime.fromisoformat(raw) if raw else None
+        meta = ObjectMeta.load(self._redis(), self._canonical_redis_key())
+        return meta.updated_at if meta else None
 
     def expire_in(self, seconds: int) -> None:
         from .meta import apply_lifecycle
@@ -143,8 +148,11 @@ class GPDCDataObject(ABC):
 
         key = self._canonical_redis_key()
         r = self._redis()
-        is_collection = r.hexists(key, "item_count")
-        raw_key = r.hget(key, "value") if is_collection else ""
+        meta = ObjectMeta.load(r, key)
+        if meta is None:
+            return
+        is_collection = meta.is_collection()
+        raw_key = meta.value if is_collection else ""
         ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
         apply_lifecycle(r, key, raw_key, ref_key, is_collection, policy)
@@ -156,9 +164,12 @@ class GPDCDataObject(ABC):
 
         key = self._canonical_redis_key()
         r = self._redis()
+        meta = ObjectMeta.load(r, key)
+        if meta is None:
+            return
         seconds = max(0, int((when - datetime.datetime.now(datetime.UTC)).total_seconds()))
-        is_collection = r.hexists(key, "item_count")
-        raw_key = r.hget(key, "value") if is_collection else ""
+        is_collection = meta.is_collection()
+        raw_key = meta.value if is_collection else ""
         ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
         apply_lifecycle(r, key, raw_key, ref_key, is_collection, policy)
@@ -170,9 +181,12 @@ class GPDCDataObject(ABC):
 
         key = self._canonical_redis_key()
         r = self._redis()
-        current = policy_from_meta(r.hgetall(key))
-        is_collection = r.hexists(key, "item_count")
-        raw_key = r.hget(key, "value") if is_collection else ""
+        meta = ObjectMeta.load(r, key)
+        if meta is None:
+            return
+        current = policy_from_meta(meta)
+        is_collection = meta.is_collection()
+        raw_key = meta.value if is_collection else ""
         ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
         apply_lifecycle(
             r,
