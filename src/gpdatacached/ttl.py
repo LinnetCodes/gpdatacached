@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import redis
 
+    from .meta import ObjectMeta
+
 
 @dataclass(frozen=True)
 class TTLPolicy:
@@ -22,13 +24,10 @@ def policy_from_defaults(cache_mode: str, ttl: int) -> TTLPolicy:
     return TTLPolicy(cache_mode=cache_mode, declared_ttl=ttl, expire_seconds=expire_seconds)
 
 
-def policy_from_meta(meta: dict) -> TTLPolicy:
-    cache_mode = meta.get("cache_mode") or "permanent"
-    ttl_str = meta.get("ttl", "")
-    declared_ttl = int(ttl_str) if ttl_str else 0
-    if cache_mode in ("ttl", "sliding") and declared_ttl > 0:
-        return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl, expire_seconds=declared_ttl)
-    return TTLPolicy(cache_mode=cache_mode, declared_ttl=declared_ttl, expire_seconds=None)
+def policy_from_meta(meta: ObjectMeta) -> TTLPolicy:
+    if meta.cache_mode in ("ttl", "sliding") and meta.ttl > 0:
+        return TTLPolicy(cache_mode=meta.cache_mode, declared_ttl=meta.ttl, expire_seconds=meta.ttl)
+    return TTLPolicy(cache_mode=meta.cache_mode, declared_ttl=meta.ttl, expire_seconds=None)
 
 
 def policy_for_cache_mode_change(current: TTLPolicy, new_mode: str) -> TTLPolicy:

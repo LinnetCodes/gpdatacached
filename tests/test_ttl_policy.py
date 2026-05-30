@@ -2,6 +2,7 @@
 import pytest
 from unittest.mock import MagicMock
 
+from gpdatacached.meta import ObjectMeta
 from gpdatacached.ttl import (
     TTLPolicy,
     policy_from_defaults,
@@ -52,33 +53,33 @@ class TestPolicyFromDefaults:
 
 class TestPolicyFromMeta:
     def test_permanent_meta(self):
-        p = policy_from_meta({"cache_mode": "permanent", "ttl": ""})
+        p = policy_from_meta(ObjectMeta(type="scalar:int", cache_mode="permanent", ttl=0))
         assert p.cache_mode == "permanent"
         assert p.declared_ttl == 0
         assert p.expire_seconds is None
 
     def test_ttl_meta(self):
-        p = policy_from_meta({"cache_mode": "ttl", "ttl": "300"})
+        p = policy_from_meta(ObjectMeta(type="scalar:int", cache_mode="ttl", ttl=300))
         assert p.cache_mode == "ttl"
         assert p.declared_ttl == 300
         assert p.expire_seconds == 300
 
     def test_sliding_meta(self):
-        p = policy_from_meta({"cache_mode": "sliding", "ttl": "60"})
+        p = policy_from_meta(ObjectMeta(type="scalar:int", cache_mode="sliding", ttl=60))
         assert p.expire_seconds == 60
 
     def test_empty_meta_defaults_to_permanent(self):
-        p = policy_from_meta({})
+        p = policy_from_meta(ObjectMeta(type="scalar:int", cache_mode="permanent", ttl=0))
         assert p.cache_mode == "permanent"
         assert p.declared_ttl == 0
         assert p.expire_seconds is None
 
     def test_ttl_meta_with_zero_ttl(self):
-        p = policy_from_meta({"cache_mode": "ttl", "ttl": "0"})
+        p = policy_from_meta(ObjectMeta(type="scalar:int", cache_mode="ttl", ttl=0))
         assert p.expire_seconds is None
 
     def test_ttl_meta_with_missing_ttl(self):
-        p = policy_from_meta({"cache_mode": "ttl"})
+        p = policy_from_meta(ObjectMeta(type="scalar:int", cache_mode="ttl", ttl=0))
         assert p.declared_ttl == 0
         assert p.expire_seconds is None
 
@@ -184,16 +185,16 @@ class TestMetaTtlValue:
 
 class TestPolicyFromMetaInherited:
     def test_inherited_meta_returns_inherited_mode(self):
-        p = policy_from_meta({"cache_mode": "inherited", "ttl": "300"})
+        p = policy_from_meta(ObjectMeta(type="collection:list", cache_mode="inherited", ttl=300))
         assert p.cache_mode == "inherited"
         assert p.declared_ttl == 300
 
     def test_inherited_meta_no_expire_seconds(self):
-        p = policy_from_meta({"cache_mode": "inherited", "ttl": "300"})
+        p = policy_from_meta(ObjectMeta(type="collection:list", cache_mode="inherited", ttl=300))
         assert p.expire_seconds is None
 
     def test_inherited_zero_ttl(self):
-        p = policy_from_meta({"cache_mode": "inherited", "ttl": "0"})
+        p = policy_from_meta(ObjectMeta(type="collection:list", cache_mode="inherited", ttl=0))
         assert p.cache_mode == "inherited"
         assert p.declared_ttl == 0
         assert p.expire_seconds is None
