@@ -454,3 +454,42 @@ class TestObjectMetaExtAccessors:
         meta = ObjectMeta(type="scalar:int", ext={"compression": "gzip"})
         meta.update_ext({"compression": "zstd", "version": "2"})
         assert meta.ext == {"compression": "zstd", "version": "2"}
+
+
+class TestObjectMetaExtWithExistingMethods:
+    def test_with_updates_preserves_ext(self):
+        original = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
+        updated = original.with_updates(cache_mode="ttl", ttl=300)
+        assert updated.ext == {"compression": "zstd"}
+        assert updated.cache_mode == "ttl"
+        assert updated.ttl == 300
+
+    def test_with_updates_can_replace_ext(self):
+        original = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
+        updated = original.with_updates(ext={"version": "2"})
+        assert updated.ext == {"version": "2"}
+
+    def test_touch_preserves_ext(self):
+        now = datetime(2025, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+        original = ObjectMeta(type="collection:list", value="raw:1", ext={"compression": "zstd"})
+        touched = original.touch(now, item_count=5)
+        assert touched.ext == {"compression": "zstd"}
+        assert touched.updated_at == now
+        assert touched.item_count == 5
+
+    def test_save_and_load_roundtrip_with_ext(self):
+        r = MagicMock()
+        meta = ObjectMeta(
+            type="scalar:int",
+            value="int:42",
+            cache_mode="ttl",
+            ttl=300,
+            ext={"compression": "zstd", "version": "2"},
+        )
+        meta.save(r, "gpdc:d:ns:obj:x")
+        call_args = r.hset.call_args
+        mapping = call_args[1]["mapping"]
+        assert mapping["$compression"] == "zstd"
+        assert mapping["$version"] == "2"
+        restored = ObjectMeta.from_redis(mapping)
+        assert restored.ext == {"compression": "zstd", "version": "2"}
