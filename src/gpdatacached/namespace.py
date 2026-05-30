@@ -21,6 +21,7 @@ from .keys import (
     validate_namespace_name,
     validate_object_name,
 )
+from .meta import ObjectMeta
 from .types import GPDCTypeRegistry
 
 _MISSING = object()
@@ -114,11 +115,10 @@ class GPDCNamespace(MutableMapping):
         key_type = r.type(obj_key)
 
         if key_type == "hash":
-            meta = r.hgetall(obj_key)
-            if not meta:
+            meta = ObjectMeta.load(r, obj_key)
+            if meta is None:
                 return None
-            obj_type = meta.get("type", "")
-            raw_key = meta.get("value", "") if obj_type.startswith("collection:") else ""
+            raw_key = meta.value if meta.is_collection() else ""
             return {
                 "binding_name": key,
                 "canonical_name": key,
@@ -126,7 +126,7 @@ class GPDCNamespace(MutableMapping):
                 "binding_obj_key": obj_key,
                 "canonical_obj_key": obj_key,
                 "canonical_raw_key": raw_key,
-                "type": obj_type,
+                "type": meta.type,
                 "meta": meta,
             }
         elif key_type == "string":
@@ -141,11 +141,10 @@ class GPDCNamespace(MutableMapping):
             if canonical_key_type != "hash":
                 return None
             canonical_name = canonical_obj_key[len(obj_prefix) :]
-            canonical_meta = r.hgetall(canonical_obj_key)
-            if not canonical_meta:
+            canonical_meta = ObjectMeta.load(r, canonical_obj_key)
+            if canonical_meta is None:
                 return None
-            obj_type = canonical_meta.get("type", "")
-            raw_key = canonical_meta.get("value", "") if obj_type.startswith("collection:") else ""
+            raw_key = canonical_meta.value if canonical_meta.is_collection() else ""
             return {
                 "binding_name": key,
                 "canonical_name": canonical_name,
@@ -153,7 +152,7 @@ class GPDCNamespace(MutableMapping):
                 "binding_obj_key": obj_key,
                 "canonical_obj_key": canonical_obj_key,
                 "canonical_raw_key": raw_key,
-                "type": obj_type,
+                "type": canonical_meta.type,
                 "meta": canonical_meta,
             }
         return None
@@ -189,11 +188,11 @@ class GPDCNamespace(MutableMapping):
         else:
             r.delete(existing["binding_obj_key"])
 
-    def _teardown_owner_container(self, key: str, meta: dict) -> None:
+    def _teardown_owner_container(self, key: str, meta: ObjectMeta) -> None:
         """Remove an owner container's raw data, anonymous children, and ref sets."""
         r = self._redis()
-        stored_raw_key = meta.get("value", "")
-        obj_type = meta.get("type", "")
+        stored_raw_key = meta.value
+        obj_type = meta.type
         ref_key = make_ref_key(self._domain.name, self._name, key)
 
         if stored_raw_key and obj_type.startswith("collection:"):
@@ -208,22 +207,21 @@ class GPDCNamespace(MutableMapping):
             r.delete(stored_raw_key)
         r.delete(ref_key)
 
-    def _write_scalar_meta(self, obj_key: str, entry, encoded_value: str, policy, now: str, *, is_new: bool) -> None:
-        from .ttl import meta_ttl_value
+    def _write_scalar_meta(
+        self, obj_key: str, entry, encoded_value: str, policy, now: datetime.datetime, *, is_new: bool
+    ) -> None:
         from .meta import apply_lifecycle
 
         r = self._redis()
-        mapping = {
-            "type": entry.gpdc_type,
-            "codec": "native",
-            "value": encoded_value,
-            "cache_mode": policy.cache_mode,
-            "ttl": meta_ttl_value(policy),
-            "updated_at": now,
-        }
-        if is_new:
-            mapping["created_at"] = now
-        r.hset(obj_key, mapping=mapping)
+        meta = ObjectMeta(
+            type=entry.gpdc_type,
+            value=encoded_value,
+            cache_mode=policy.cache_mode,
+            ttl=policy.declared_ttl,
+            created_at=now if is_new else None,
+            updated_at=now,
+        )
+        meta.save(r, obj_key)
         apply_lifecycle(r, obj_key, "", "", False, policy)
 
     def _write_container_meta(
@@ -232,26 +230,22 @@ class GPDCNamespace(MutableMapping):
         entry,
         raw_key: str,
         policy,
-        now: str,
+        now: datetime.datetime,
         *,
         is_new: bool,
         item_count: int = 0,
     ) -> None:
-        from .ttl import meta_ttl_value
-
         r = self._redis()
-        mapping = {
-            "type": entry.gpdc_type,
-            "codec": "native",
-            "value": raw_key,
-            "cache_mode": policy.cache_mode,
-            "ttl": meta_ttl_value(policy),
-            "updated_at": now,
-            "item_count": str(item_count),
-        }
-        if is_new:
-            mapping["created_at"] = now
-        r.hset(obj_key, mapping=mapping)
+        meta = ObjectMeta(
+            type=entry.gpdc_type,
+            value=raw_key,
+            cache_mode=policy.cache_mode,
+            ttl=policy.declared_ttl,
+            created_at=now if is_new else None,
+            updated_at=now,
+            item_count=item_count if item_count else None,
+        )
+        meta.save(r, obj_key)
 
     def _setitem_container_ref(self, key: str, container) -> None:
         from .container import GPDCContainerObject
@@ -296,7 +290,7 @@ class GPDCNamespace(MutableMapping):
             value = value.value
 
         entry = GPDCTypeRegistry.lookup_by_python_type(value)
-        now = datetime.datetime.now(datetime.UTC).isoformat()
+        now = datetime.datetime.now(datetime.UTC)
 
         is_new = True
         policy = None
@@ -445,20 +439,19 @@ class GPDCNamespace(MutableMapping):
     def _cascade_delete_anonymous(self, anon_name: str) -> None:
         r = self._redis()
         obj_key = make_object_key(self._domain.name, self._name, anon_name)
-        meta = r.hgetall(obj_key)
-        if not meta:
+        meta = ObjectMeta.load(r, obj_key)
+        if meta is None:
             return
 
-        obj_type = meta.get("type", "")
-        raw_key = meta.get("value", "")
+        raw_key = meta.value
         ref_key = make_ref_key(self._domain.name, self._name, anon_name)
 
         referrers = r.smembers(ref_key)
         if referrers:
             return
 
-        if raw_key and obj_type.startswith("collection:"):
-            nested_ref_names = self._collect_nested_ref_names(raw_key, obj_type)
+        if raw_key and meta.is_collection():
+            nested_ref_names = self._collect_nested_ref_names(raw_key, meta.type)
             r.delete(raw_key)
 
             for nested in nested_ref_names:
