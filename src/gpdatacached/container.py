@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from .codec import SetCodec
 from .keys import make_object_key, make_raw_key, make_ref_key
 from ._base import GPDCDataObject
+from .meta import ObjectMeta
 from .types import encode_element, decode_element, encode_key, decode_key
 
 
@@ -96,8 +97,10 @@ class GPDCContainerObject(GPDCDataObject, ABC):
     def _binding_owner_name(self) -> str:
         if self._is_reference:
             return self._canonical_name
-        meta = self._redis().hgetall(self._redis_key())
-        raw_key = meta.get("value", "") or self.raw_key
+        meta = ObjectMeta.load(self._redis(), self._redis_key())
+        if meta is None:
+            return self._name
+        raw_key = meta.value or self.raw_key
         prefix = f"gpdc:{self._namespace.domain.name}:{self._namespace.name}:raw:"
         if raw_key.startswith(prefix):
             self.raw_key = raw_key
