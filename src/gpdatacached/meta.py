@@ -66,6 +66,23 @@ class ObjectMeta(BaseModel):
     def declares_expiry(self) -> bool:
         return self.cache_mode in ("ttl", "sliding") and self.ttl > 0
 
+    @classmethod
+    def load(cls, r, obj_key: str) -> ObjectMeta | None:
+        data = r.hgetall(obj_key)
+        return cls.from_redis(data) if data else None
+
+    def save(self, r, obj_key: str) -> None:
+        r.hset(obj_key, mapping=self.to_redis_mapping())
+
+    def with_updates(self, **kwargs) -> ObjectMeta:
+        return self.model_copy(update=kwargs)
+
+    def touch(self, now: datetime, *, item_count: int | None = None) -> ObjectMeta:
+        updates: dict = {"updated_at": now}
+        if item_count is not None:
+            updates["item_count"] = item_count
+        return self.model_copy(update=updates)
+
 
 def apply_lifecycle(r, obj_key: str, raw_key: str, ref_key: str, is_collection: bool, policy) -> None:
     from .ttl import apply_policy

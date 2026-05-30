@@ -136,6 +136,146 @@ class TestObjectMetaHelpers:
         assert meta.declares_expiry() is False
 
 
+class TestObjectMetaLoad:
+    def test_load_existing_key(self):
+        r = MagicMock()
+        r.hgetall.return_value = {
+            "type": "scalar:int",
+            "codec": "native",
+            "value": "int:42",
+            "cache_mode": "permanent",
+            "ttl": "",
+        }
+        meta = ObjectMeta.load(r, "gpdc:d:ns:obj:x")
+        assert meta is not None
+        assert meta.type == "scalar:int"
+        assert meta.value == "int:42"
+        assert meta.cache_mode == "permanent"
+        assert meta.ttl == 0
+        r.hgetall.assert_called_once_with("gpdc:d:ns:obj:x")
+
+    def test_load_missing_key_returns_none(self):
+        r = MagicMock()
+        r.hgetall.return_value = {}
+        meta = ObjectMeta.load(r, "gpdc:d:ns:obj:missing")
+        assert meta is None
+
+    def test_load_full_container(self):
+        r = MagicMock()
+        r.hgetall.return_value = {
+            "type": "collection:list",
+            "codec": "native",
+            "value": "gpdc:d:ns:raw:x",
+            "cache_mode": "ttl",
+            "ttl": "300",
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "updated_at": "2025-01-02T00:00:00+00:00",
+            "item_count": "5",
+        }
+        meta = ObjectMeta.load(r, "gpdc:d:ns:obj:x")
+        assert meta is not None
+        assert meta.type == "collection:list"
+        assert meta.cache_mode == "ttl"
+        assert meta.ttl == 300
+        assert meta.item_count == 5
+        assert meta.is_collection() is True
+
+
+class TestObjectMetaSave:
+    def test_save_writes_mapping_to_redis(self):
+        r = MagicMock()
+        meta = ObjectMeta(
+            type="scalar:int",
+            value="int:42",
+            cache_mode="ttl",
+            ttl=300,
+        )
+        meta.save(r, "gpdc:d:ns:obj:x")
+        r.hset.assert_called_once()
+        call_args = r.hset.call_args
+        assert call_args[0][0] == "gpdc:d:ns:obj:x"
+        mapping = call_args[1]["mapping"]
+        assert mapping["type"] == "scalar:int"
+        assert mapping["cache_mode"] == "ttl"
+        assert mapping["ttl"] == "300"
+        assert mapping["value"] == "int:42"
+
+    def test_save_roundtrip(self):
+        r = MagicMock()
+        original = ObjectMeta(
+            type="collection:dict",
+            value="gpdc:d:ns:raw:mydict",
+            cache_mode="sliding",
+            ttl=60,
+            created_at=datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+            updated_at=datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+            item_count=3,
+        )
+        original.save(r, "gpdc:d:ns:obj:mydict")
+        call_args = r.hset.call_args
+        mapping = call_args[1]["mapping"]
+        restored = ObjectMeta.from_redis(mapping)
+        assert restored.type == original.type
+        assert restored.value == original.value
+        assert restored.cache_mode == original.cache_mode
+        assert restored.ttl == original.ttl
+        assert restored.item_count == original.item_count
+
+
+class TestObjectMetaWithUpdates:
+    def test_with_updates_returns_new_instance(self):
+        original = ObjectMeta(type="scalar:int", value="int:1", cache_mode="permanent", ttl=0)
+        updated = original.with_updates(value="int:2", cache_mode="ttl", ttl=300)
+        assert original.value == "int:1"
+        assert original.cache_mode == "permanent"
+        assert original.ttl == 0
+        assert updated.value == "int:2"
+        assert updated.cache_mode == "ttl"
+        assert updated.ttl == 300
+        assert updated.type == "scalar:int"
+
+    def test_with_updates_preserves_untouched_fields(self):
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        original = ObjectMeta(
+            type="scalar:int",
+            value="int:1",
+            cache_mode="permanent",
+            ttl=0,
+            created_at=now,
+        )
+        updated = original.with_updates(cache_mode="ttl", ttl=60)
+        assert updated.type == "scalar:int"
+        assert updated.value == "int:1"
+        assert updated.created_at == now
+        assert updated.cache_mode == "ttl"
+        assert updated.ttl == 60
+
+
+class TestObjectMetaTouch:
+    def test_touch_updates_updated_at(self):
+        original = ObjectMeta(type="collection:list", value="raw:1", cache_mode="permanent", ttl=0)
+        now = datetime(2025, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+        touched = original.touch(now)
+        assert touched.updated_at == now
+        assert touched.type == "collection:list"
+        assert touched.value == "raw:1"
+        assert original.updated_at is None
+
+    def test_touch_with_item_count(self):
+        original = ObjectMeta(type="collection:list", value="raw:1", cache_mode="permanent", ttl=0)
+        now = datetime(2025, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+        touched = original.touch(now, item_count=5)
+        assert touched.updated_at == now
+        assert touched.item_count == 5
+        assert original.item_count is None
+
+    def test_touch_without_item_count_preserves_existing(self):
+        original = ObjectMeta(type="collection:list", value="raw:1", cache_mode="permanent", ttl=0, item_count=3)
+        now = datetime(2025, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+        touched = original.touch(now)
+        assert touched.item_count == 3
+
+
 class TestApplyLifecycle:
     def test_applies_ttl_to_obj_key(self):
         r = MagicMock()
