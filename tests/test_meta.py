@@ -344,3 +344,57 @@ class TestEffectivePolicy:
         policy = effective_policy(meta, r, "d", "ns", "~anon:child1")
         assert policy.cache_mode == "permanent"
         assert policy.expire_seconds is None
+
+
+class TestObjectMetaExtField:
+    def test_ext_defaults_to_empty_dict(self):
+        meta = ObjectMeta(type="scalar:int")
+        assert meta.ext == {}
+
+    def test_ext_accepts_initial_values(self):
+        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
+        assert meta.ext == {"compression": "zstd"}
+
+    def test_ext_in_to_redis_mapping_uses_dollar_prefix(self):
+        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd", "version": "2"})
+        mapping = meta.to_redis_mapping()
+        assert "$compression" in mapping
+        assert mapping["$compression"] == "zstd"
+        assert "$version" in mapping
+        assert mapping["$version"] == "2"
+
+    def test_ext_empty_dict_not_in_redis_mapping(self):
+        meta = ObjectMeta(type="scalar:int")
+        mapping = meta.to_redis_mapping()
+        assert all(not k.startswith("$") for k in mapping)
+
+    def test_from_redis_parses_dollar_prefix_to_ext(self):
+        data = {
+            "type": "scalar:int",
+            "value": "int:42",
+            "$compression": "zstd",
+            "$version": "2",
+        }
+        meta = ObjectMeta.from_redis(data)
+        assert meta.ext == {"compression": "zstd", "version": "2"}
+
+    def test_from_redis_without_ext_fields_gives_empty_ext(self):
+        data = {"type": "scalar:int", "value": "int:42"}
+        meta = ObjectMeta.from_redis(data)
+        assert meta.ext == {}
+
+    def test_roundtrip_preserves_ext(self):
+        original = ObjectMeta(
+            type="scalar:int",
+            value="int:42",
+            cache_mode="ttl",
+            ttl=300,
+            ext={"compression": "zstd"},
+        )
+        mapping = original.to_redis_mapping()
+        restored = ObjectMeta.from_redis(mapping)
+        assert restored.ext == {"compression": "zstd"}
+        assert restored.type == original.type
+        assert restored.value == original.value
+        assert restored.cache_mode == original.cache_mode
+        assert restored.ttl == original.ttl

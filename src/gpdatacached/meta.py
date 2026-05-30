@@ -14,6 +14,7 @@ class ObjectMeta(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     item_count: int | None = None
+    ext: dict[str, str] = {}
 
     @model_validator(mode="after")
     def _validate_ttl(self) -> ObjectMeta:
@@ -23,20 +24,28 @@ class ObjectMeta(BaseModel):
 
     @classmethod
     def from_redis(cls, data: dict) -> ObjectMeta:
-        cache_mode = data.get("cache_mode") or "permanent"
-        ttl_str = data.get("ttl", "")
+        builtin: dict[str, str] = {}
+        ext: dict[str, str] = {}
+        for k, v in data.items():
+            if k.startswith("$"):
+                ext[k[1:]] = v
+            else:
+                builtin[k] = v
+        cache_mode = builtin.get("cache_mode") or "permanent"
+        ttl_str = builtin.get("ttl", "")
         ttl = int(ttl_str) if ttl_str else 0
-        created_at_str = data.get("created_at")
-        updated_at_str = data.get("updated_at")
-        item_count_str = data.get("item_count")
+        created_at_str = builtin.get("created_at")
+        updated_at_str = builtin.get("updated_at")
+        item_count_str = builtin.get("item_count")
         return cls(
-            type=data.get("type", ""),
-            value=data.get("value", ""),
+            type=builtin.get("type", ""),
+            value=builtin.get("value", ""),
             cache_mode=cache_mode,
             ttl=ttl,
             created_at=datetime.fromisoformat(created_at_str) if created_at_str else None,
             updated_at=datetime.fromisoformat(updated_at_str) if updated_at_str else None,
             item_count=int(item_count_str) if item_count_str is not None else None,
+            ext=ext,
         )
 
     def to_redis_mapping(self) -> dict[str, str]:
@@ -52,6 +61,8 @@ class ObjectMeta(BaseModel):
             mapping["updated_at"] = self.updated_at.isoformat()
         if self.item_count is not None:
             mapping["item_count"] = str(self.item_count)
+        for k, v in self.ext.items():
+            mapping[f"${k}"] = v
         return mapping
 
     def is_collection(self) -> bool:
