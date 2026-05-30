@@ -5,10 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-logger = logging.getLogger(__name__)
-
 if TYPE_CHECKING:
     import redis
+
+from .meta import ObjectMeta
+
+logger = logging.getLogger(__name__)
 
 
 def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
@@ -33,26 +35,24 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
             key_type = r.type(obj_key)
 
             if key_type == "hash":
-                meta = r.hgetall(obj_key)
-                obj_type = meta.get("type", "")
-                raw_key = meta.get("value", "")
-
-                if not raw_key or not obj_type.startswith("collection:"):
+                meta = ObjectMeta.load(r, obj_key)
+                if meta is None:
                     continue
 
+                if not meta.is_collection():
+                    continue
+
+                raw_key = meta.value
                 raw_to_obj[raw_key] = obj_key
 
                 if not r.exists(raw_key):
-                    item_count_str = meta.get("item_count")
-                    if item_count_str is not None:
-                        item_count = int(item_count_str)
-                        if item_count > 0:
-                            logger.warning(
-                                "Corrupted container: %s has item_count=%d but raw key %s missing",
-                                obj_key,
-                                item_count,
-                                raw_key,
-                            )
+                    if meta.item_count is not None and meta.item_count > 0:
+                        logger.warning(
+                            "Corrupted container: %s has item_count=%d but raw key %s missing",
+                            obj_key,
+                            meta.item_count,
+                            raw_key,
+                        )
                     continue
 
             elif key_type == "string":
@@ -121,25 +121,27 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
                     if member_target != obj_key:
                         r.srem(ref_key, member)
                 elif member_type == "hash":
-                    member_meta = r.hgetall(member_obj_key)
-                    member_raw_key = member_meta.get("value", "")
-                    member_obj_type = member_meta.get("type", "")
-                    if not member_raw_key or not member_obj_type.startswith("collection:"):
+                    member_meta = ObjectMeta.load(r, member_obj_key)
+                    if member_meta is None:
+                        r.srem(ref_key, member)
+                        continue
+                    if not member_meta.is_collection():
                         r.srem(ref_key, member)
                         continue
                     expected_ref = f"ref:{obj_key}"
                     still_refs = False
-                    if member_obj_type == "collection:dict":
+                    member_raw_key = member_meta.value
+                    if member_meta.type == "collection:dict":
                         for val in r.hvals(member_raw_key):
                             if val == expected_ref:
                                 still_refs = True
                                 break
-                    elif member_obj_type == "collection:list":
+                    elif member_meta.type == "collection:list":
                         for val in r.lrange(member_raw_key, 0, -1):
                             if val == expected_ref:
                                 still_refs = True
                                 break
-                    elif member_obj_type == "collection:set":
+                    elif member_meta.type == "collection:set":
                         if expected_ref in r.smembers(member_raw_key):
                             still_refs = True
                     if not still_refs:
