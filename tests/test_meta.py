@@ -398,3 +398,59 @@ class TestObjectMetaExtField:
         assert restored.value == original.value
         assert restored.cache_mode == original.cache_mode
         assert restored.ttl == original.ttl
+
+
+class TestObjectMetaExtAccessors:
+    def test_get_ext_returns_value(self):
+        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
+        assert meta.get_ext("compression") == "zstd"
+
+    def test_get_ext_returns_none_for_missing_key(self):
+        meta = ObjectMeta(type="scalar:int", ext={})
+        assert meta.get_ext("missing") is None
+
+    def test_has_ext_true(self):
+        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
+        assert meta.has_ext("compression") is True
+
+    def test_has_ext_false(self):
+        meta = ObjectMeta(type="scalar:int", ext={})
+        assert meta.has_ext("compression") is False
+
+    def test_ext_keys_returns_all_keys(self):
+        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd", "version": "2"})
+        assert sorted(meta.ext_keys()) == ["compression", "version"]
+
+    def test_ext_keys_empty(self):
+        meta = ObjectMeta(type="scalar:int", ext={})
+        assert meta.ext_keys() == []
+
+    def test_set_ext_adds_key(self):
+        meta = ObjectMeta(type="scalar:int")
+        meta.set_ext("compression", "zstd")
+        assert meta.ext["compression"] == "zstd"
+
+    def test_set_ext_overwrites_existing(self):
+        meta = ObjectMeta(type="scalar:int", ext={"compression": "gzip"})
+        meta.set_ext("compression", "zstd")
+        assert meta.ext["compression"] == "zstd"
+
+    def test_del_ext_removes_key(self):
+        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd", "version": "2"})
+        meta.del_ext("compression")
+        assert "compression" not in meta.ext
+        assert meta.ext == {"version": "2"}
+
+    def test_del_ext_silent_on_missing_key(self):
+        meta = ObjectMeta(type="scalar:int", ext={})
+        meta.del_ext("missing")
+
+    def test_update_ext_batch_set(self):
+        meta = ObjectMeta(type="scalar:int")
+        meta.update_ext({"compression": "zstd", "version": "2"})
+        assert meta.ext == {"compression": "zstd", "version": "2"}
+
+    def test_update_ext_merges_with_existing(self):
+        meta = ObjectMeta(type="scalar:int", ext={"compression": "gzip"})
+        meta.update_ext({"compression": "zstd", "version": "2"})
+        assert meta.ext == {"compression": "zstd", "version": "2"}

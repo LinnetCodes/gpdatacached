@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class ObjectMeta(BaseModel):
@@ -14,7 +14,25 @@ class ObjectMeta(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     item_count: int | None = None
-    ext: dict[str, str] = {}
+    ext: dict[str, str] = Field(default_factory=dict)
+
+    def get_ext(self, key: str) -> str | None:
+        return self.ext.get(key)
+
+    def has_ext(self, key: str) -> bool:
+        return key in self.ext
+
+    def ext_keys(self) -> list[str]:
+        return list(self.ext.keys())
+
+    def set_ext(self, key: str, value: str) -> None:
+        self.ext[key] = value
+
+    def del_ext(self, key: str) -> None:
+        self.ext.pop(key, None)
+
+    def update_ext(self, data: dict[str, str]) -> None:
+        self.ext.update(data)
 
     @model_validator(mode="after")
     def _validate_ttl(self) -> ObjectMeta:
