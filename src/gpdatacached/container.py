@@ -30,14 +30,17 @@ class GPDCContainerObject(GPDCDataObject, ABC):
 
     def _touch(self) -> None:
         from .ttl import policy_from_meta, policy_for_sliding_touch
-        from .meta import apply_lifecycle, propagate_lifecycle
+        from .meta import ObjectMeta, apply_lifecycle, propagate_lifecycle
 
         key = self._canonical_redis_key()
-        now = datetime.datetime.now(datetime.UTC).isoformat()
+        now = datetime.datetime.now(datetime.UTC)
         r = self._redis()
         item_count = self._current_item_count()
-        r.hset(key, mapping={"updated_at": now, "item_count": str(item_count)})
-        current = policy_from_meta(r.hgetall(key))
+        meta = ObjectMeta.load(r, key)
+        if meta is None:
+            return
+        meta.touch(now, item_count=item_count).save(r, key)
+        current = policy_from_meta(meta)
         new_policy = policy_for_sliding_touch(current)
         if new_policy is not current:
             apply_lifecycle(r, key, self.raw_key, self.ref_key, True, new_policy)
