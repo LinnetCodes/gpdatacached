@@ -100,7 +100,7 @@ def effective_policy(meta: ObjectMeta, r, domain: str, namespace: str, obj_name:
     from .ttl import TTLPolicy, policy_from_meta
 
     if not meta.is_inherited():
-        return policy_from_meta(meta.to_redis_mapping())
+        return policy_from_meta(meta)
 
     ref_key = make_ref_key(domain, namespace, obj_name)
     obj_prefix = f"gpdc:{domain}:{namespace}:obj:"
@@ -108,11 +108,10 @@ def effective_policy(meta: ObjectMeta, r, domain: str, namespace: str, obj_name:
 
     for ref_name in referrers:
         parent_obj_key = obj_prefix + ref_name
-        parent_data = r.hgetall(parent_obj_key)
-        if not parent_data:
+        parent_meta = ObjectMeta.load(r, parent_obj_key)
+        if parent_meta is None:
             continue
-        parent_cache_mode = parent_data.get("cache_mode", "permanent")
-        if parent_cache_mode == "permanent":
+        if parent_meta.cache_mode == "permanent":
             return TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
 
     best_policy = None
@@ -120,10 +119,10 @@ def effective_policy(meta: ObjectMeta, r, domain: str, namespace: str, obj_name:
 
     for ref_name in referrers:
         parent_obj_key = obj_prefix + ref_name
-        parent_data = r.hgetall(parent_obj_key)
-        if not parent_data:
+        parent_meta = ObjectMeta.load(r, parent_obj_key)
+        if parent_meta is None:
             continue
-        parent_policy = policy_from_meta(parent_data)
+        parent_policy = policy_from_meta(parent_meta)
         if parent_policy.expire_seconds is not None:
             remaining = r.ttl(parent_obj_key)
             if remaining > best_remaining:
@@ -148,10 +147,9 @@ def propagate_lifecycle(r, domain: str, namespace: str, parent_name: str, visite
     visited.add(parent_name)
 
     parent_obj_key = make_object_key(domain, namespace, parent_name)
-    parent_data = r.hgetall(parent_obj_key)
-    if not parent_data:
+    parent_meta = ObjectMeta.load(r, parent_obj_key)
+    if parent_meta is None:
         return
-    parent_meta = ObjectMeta.from_redis(parent_data)
     if not parent_meta.is_collection():
         return
 
@@ -160,10 +158,9 @@ def propagate_lifecycle(r, domain: str, namespace: str, parent_name: str, visite
         if not child_name.startswith("~"):
             continue
         child_obj_key = make_object_key(domain, namespace, child_name)
-        child_data = r.hgetall(child_obj_key)
-        if not child_data:
+        child_meta = ObjectMeta.load(r, child_obj_key)
+        if child_meta is None:
             continue
-        child_meta = ObjectMeta.from_redis(child_data)
         if not child_meta.is_inherited():
             continue
 
