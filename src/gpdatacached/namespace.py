@@ -243,7 +243,7 @@ class GPDCNamespace(MutableMapping):
             ttl=policy.declared_ttl,
             created_at=now if is_new else None,
             updated_at=now,
-            item_count=item_count if item_count else None,
+            item_count=item_count,
         )
         meta.save(r, obj_key)
 
