@@ -472,17 +472,62 @@ class GPDCNamespace(MutableMapping):
 
         Anonymous objects (names starting with ``~``) are excluded.
         Stale aliases whose canonical owner no longer exists are excluded.
+
+        Uses Redis pipeline to batch TYPE / GET commands per SCAN page,
+        reducing round trips from O(N) to ~3 per page.
         """
         pattern = make_object_key(self._domain.name, self._name, "*")
         prefix = make_object_key_prefix(self._domain.name, self._name)
+        obj_prefix = make_object_key_prefix(self._domain.name, self._name)
+        r = self._redis()
         cursor = 0
         while True:
-            cursor, keys = self._redis().scan(cursor=cursor, match=pattern, count=100)
-            for k in keys:
-                name = k[len(prefix) :]
-                if not name.startswith("~"):
-                    if self._resolve_binding(name) is not None:
-                        yield name
+            cursor, keys = r.scan(cursor=cursor, match=pattern, count=100)
+            named = [(k, k[len(prefix):]) for k in keys if not k[len(prefix):].startswith("~")]
+            if not named:
+                if cursor == 0:
+                    break
+                continue
+
+            # Batch TYPE for all candidate keys in this page
+            pipe = r.pipeline(transaction=False)
+            for k, _ in named:
+                pipe.type(k)
+            key_types = pipe.execute()
+
+            # Owner bindings (hash): yield directly — SCAN confirmed existence
+            ref_keys = []
+            for (k, name), kt in zip(named, key_types):
+                if kt == "hash":
+                    yield name
+                elif kt == "string":
+                    ref_keys.append((k, name))
+
+            # Ref aliases (string): batch GET to find canonical key
+            if ref_keys:
+                pipe = r.pipeline(transaction=False)
+                for k, _ in ref_keys:
+                    pipe.get(k)
+                ref_values = pipe.execute()
+
+                canonical_pairs = []
+                for (k, name), v in zip(ref_keys, ref_values):
+                    if v and v.startswith("ref:"):
+                        canonical = v[len("ref:"):]
+                        if canonical.startswith(obj_prefix):
+                            canonical_pairs.append((name, canonical))
+
+                # Batch TYPE for canonical keys
+                if canonical_pairs:
+                    pipe = r.pipeline(transaction=False)
+                    for _, ck in canonical_pairs:
+                        pipe.type(ck)
+                    canonical_types = pipe.execute()
+
+                    for (name, _), ct in zip(canonical_pairs, canonical_types):
+                        if ct == "hash":
+                            yield name
+
             if cursor == 0:
                 break
 
