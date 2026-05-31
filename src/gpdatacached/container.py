@@ -590,15 +590,24 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         return op(self_set, other_set)
 
     def __or__(self, other):
+        """Return the union as a Python ``set`` (not a ``SetObject``).
+
+        Returning a ``SetObject`` would require creating a new Redis key,
+        which is an unexpected side-effect for a binary operator.
+        Use ``obj |= other`` for in-place mutation backed by Redis.
+        """
         return self._binop(other, set.__or__)
 
     def __and__(self, other):
+        """Return the intersection as a Python ``set``.  See ``__or__``."""
         return self._binop(other, set.__and__)
 
     def __sub__(self, other):
+        """Return the difference as a Python ``set``.  See ``__or__``."""
         return self._binop(other, set.__sub__)
 
     def __xor__(self, other):
+        """Return the symmetric difference as a Python ``set``.  See ``__or__``."""
         return self._binop(other, set.__xor__)
 
     def __ior__(self, other):
