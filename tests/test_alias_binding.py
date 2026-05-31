@@ -263,18 +263,18 @@ class TestBindingResolution:
         ns["mylist"] = [1, 2]
         result = ns._resolve_binding("mylist")
         assert result is not None
-        assert result["binding_kind"] == "owner"
-        assert result["canonical_name"] == "mylist"
-        assert result["binding_name"] == "mylist"
+        assert result.binding_kind == "owner"
+        assert result.canonical_name == "mylist"
+        assert result.binding_name == "mylist"
 
     def test_resolve_alias_string(self, ns):
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         result = ns._resolve_binding("alias")
         assert result is not None
-        assert result["binding_kind"] == "reference"
-        assert result["canonical_name"] == "owner"
-        assert result["binding_name"] == "alias"
+        assert result.binding_kind == "reference"
+        assert result.canonical_name == "owner"
+        assert result.binding_name == "alias"
 
     def test_resolve_nonexistent_returns_none(self, ns):
         result = ns._resolve_binding("nosuchkey")
@@ -284,8 +284,8 @@ class TestBindingResolution:
         ns["x"] = 42
         result = ns._resolve_binding("x")
         assert result is not None
-        assert result["binding_kind"] == "owner"
-        assert result["type"] == "scalar:int"
+        assert result.binding_kind == "owner"
+        assert result.type == "scalar:int"
 
     def test_resolve_malformed_ref_returns_none(self, ns):
         r = ns._redis()

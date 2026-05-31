@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import MutableMapping
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, NamedTuple, Iterator
 
 if TYPE_CHECKING:
     from .config import GPDCNamespaceConfig
@@ -23,6 +23,17 @@ from .keys import (
 )
 from .meta import ObjectMeta
 from .types import GPDCTypeRegistry
+
+
+class BindingResolution(NamedTuple):
+    binding_name: str
+    canonical_name: str
+    binding_kind: str
+    binding_obj_key: str
+    canonical_obj_key: str
+    canonical_raw_key: str
+    type: str
+    meta: ObjectMeta
 
 
 class GPDCNamespace(MutableMapping):
@@ -107,7 +118,7 @@ class GPDCNamespace(MutableMapping):
 
     # ── Dict-like interface ──────────────────────────────────────────────────
 
-    def _resolve_binding(self, key: str) -> dict | None:
+    def _resolve_binding(self, key: str) -> BindingResolution | None:
         """Resolve a namespace binding key to its canonical owner."""
         r = self._redis()
         obj_key = make_object_key(self._domain.name, self._name, key)
@@ -118,16 +129,16 @@ class GPDCNamespace(MutableMapping):
             if meta is None:
                 return None
             raw_key = meta.value if meta.is_collection() else ""
-            return {
-                "binding_name": key,
-                "canonical_name": key,
-                "binding_kind": "owner",
-                "binding_obj_key": obj_key,
-                "canonical_obj_key": obj_key,
-                "canonical_raw_key": raw_key,
-                "type": meta.type,
-                "meta": meta,
-            }
+            return BindingResolution(
+                binding_name=key,
+                canonical_name=key,
+                binding_kind="owner",
+                binding_obj_key=obj_key,
+                canonical_obj_key=obj_key,
+                canonical_raw_key=raw_key,
+                type=meta.type,
+                meta=meta,
+            )
         elif key_type == "string":
             ref_value = r.get(obj_key)
             if not ref_value or not ref_value.startswith("ref:"):
@@ -144,36 +155,36 @@ class GPDCNamespace(MutableMapping):
             if canonical_meta is None:
                 return None
             raw_key = canonical_meta.value if canonical_meta.is_collection() else ""
-            return {
-                "binding_name": key,
-                "canonical_name": canonical_name,
-                "binding_kind": "reference",
-                "binding_obj_key": obj_key,
-                "canonical_obj_key": canonical_obj_key,
-                "canonical_raw_key": raw_key,
-                "type": canonical_meta.type,
-                "meta": canonical_meta,
-            }
+            return BindingResolution(
+                binding_name=key,
+                canonical_name=canonical_name,
+                binding_kind="reference",
+                binding_obj_key=obj_key,
+                canonical_obj_key=canonical_obj_key,
+                canonical_raw_key=raw_key,
+                type=canonical_meta.type,
+                meta=canonical_meta,
+            )
         return None
 
-    def _cleanup_alias_binding(self, key: str, existing: dict) -> None:
+    def _cleanup_alias_binding(self, key: str, existing: BindingResolution) -> None:
         """Remove an alias string binding and clean up its ref set entry."""
         r = self._redis()
-        canonical_name = existing["canonical_name"]
+        canonical_name = existing.canonical_name
         ref_key = make_ref_key(self._domain.name, self._name, canonical_name)
         r.srem(ref_key, key)
-        r.delete(existing["binding_obj_key"])
+        r.delete(existing.binding_obj_key)
         if canonical_name.startswith("~") and not r.smembers(ref_key):
             self._cascade_delete_anonymous(canonical_name)
 
-    def _cleanup_existing_for_overwrite(self, key: str, existing: dict) -> None:
+    def _cleanup_existing_for_overwrite(self, key: str, existing: BindingResolution) -> None:
         """Clean up an existing binding before it is overwritten with a container alias."""
         from .exceptions import CanonicalObjectReferencedError
 
         r = self._redis()
-        if existing["binding_kind"] == "reference":
+        if existing.binding_kind == "reference":
             self._cleanup_alias_binding(key, existing)
-        elif existing["binding_kind"] == "owner" and existing["type"].startswith("collection:"):
+        elif existing.binding_kind == "owner" and existing.type.startswith("collection:"):
             ref_key = make_ref_key(self._domain.name, self._name, key)
             referrers = r.smembers(ref_key)
             if referrers:
@@ -182,10 +193,10 @@ class GPDCNamespace(MutableMapping):
                     canonical_uri=make_uri(self._domain.name, self._name, key),
                     referrers=sorted(referrers),
                 )
-            self._teardown_owner_container(key, existing["meta"])
-            r.delete(existing["binding_obj_key"])
+            self._teardown_owner_container(key, existing.meta)
+            r.delete(existing.binding_obj_key)
         else:
-            r.delete(existing["binding_obj_key"])
+            r.delete(existing.binding_obj_key)
 
     def _teardown_owner_container(self, key: str, meta: ObjectMeta) -> None:
         """Remove an owner container's raw data, anonymous children, and ref sets."""
@@ -278,7 +289,7 @@ class GPDCNamespace(MutableMapping):
         if isinstance(value, GPDCContainerObject):
             if value._namespace is not self:
                 raise ValueError("Cross-namespace container reference sharing is not supported")
-            if existing and existing["canonical_name"] == value.canonical_name:
+            if existing and existing.canonical_name == value.canonical_name:
                 return
             if existing:
                 self._cleanup_existing_for_overwrite(key, existing)
@@ -295,7 +306,7 @@ class GPDCNamespace(MutableMapping):
         policy = None
 
         if existing:
-            if existing["binding_kind"] == "owner" and existing["type"].startswith("collection:"):
+            if existing.binding_kind == "owner" and existing.type.startswith("collection:"):
                 ref_key = make_ref_key(self._domain.name, self._name, key)
                 referrers = r.smembers(ref_key)
                 if referrers:
@@ -304,15 +315,15 @@ class GPDCNamespace(MutableMapping):
                         canonical_uri=make_uri(self._domain.name, self._name, key),
                         referrers=sorted(referrers),
                     )
-                self._teardown_owner_container(key, existing["meta"])
+                self._teardown_owner_container(key, existing.meta)
                 r.delete(obj_key)
-            elif existing["binding_kind"] == "reference":
+            elif existing.binding_kind == "reference":
                 self._cleanup_alias_binding(key, existing)
-            elif existing["binding_kind"] == "owner":
+            elif existing.binding_kind == "owner":
                 is_new = False
                 from .ttl import policy_from_meta
 
-                policy = policy_from_meta(existing["meta"])
+                policy = policy_from_meta(existing.meta)
 
         if policy is None:
             from .ttl import policy_from_defaults
@@ -343,16 +354,16 @@ class GPDCNamespace(MutableMapping):
         if not resolution:
             raise KeyError(f"{key!r} not found in namespace {self._name!r}")
 
-        type_str = resolution["type"]
+        type_str = resolution.type
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(type_str)
 
-        canonical_name = resolution["canonical_name"]
-        is_ref = resolution["binding_kind"] == "reference"
+        canonical_name = resolution.canonical_name
+        is_ref = resolution.binding_kind == "reference"
 
         obj = entry.object_class(key, self, canonical_name=canonical_name if is_ref else None)
 
         if isinstance(obj, GPDCContainerObject):
-            stored_raw_key = resolution["canonical_raw_key"]
+            stored_raw_key = resolution.canonical_raw_key
             if stored_raw_key:
                 obj.raw_key = stored_raw_key
 
@@ -361,6 +372,8 @@ class GPDCNamespace(MutableMapping):
     def __getitem__(self, key: str):
         from .container import GPDCContainerObject
 
+        # by design: 标量返回原生值（ns["count"] → 42），容器返回对象本身。
+        # 容器必须返回对象，否则用户无法调用 append/pop 等方法操作 Redis。
         obj = self._get_object(key)
         if isinstance(obj, GPDCContainerObject):
             return obj
@@ -385,10 +398,10 @@ class GPDCNamespace(MutableMapping):
         if not resolution:
             raise KeyError(f"{key!r} not found in namespace {self._name!r}")
 
-        obj_key = resolution["binding_obj_key"]
+        obj_key = resolution.binding_obj_key
 
-        if resolution["binding_kind"] == "reference":
-            canonical_name = resolution["canonical_name"]
+        if resolution.binding_kind == "reference":
+            canonical_name = resolution.canonical_name
             ref_key = make_ref_key(self._domain.name, self._name, canonical_name)
             r.srem(ref_key, key)
             r.delete(obj_key)
@@ -396,7 +409,7 @@ class GPDCNamespace(MutableMapping):
                 self._cascade_delete_anonymous(canonical_name)
             return
 
-        obj_type = resolution["type"]
+        obj_type = resolution.type
 
         if not obj_type.startswith("collection:"):
             r.delete(obj_key)
@@ -411,7 +424,7 @@ class GPDCNamespace(MutableMapping):
                 referrers=sorted(referrers),
             )
 
-        self._teardown_owner_container(key, resolution["meta"])
+        self._teardown_owner_container(key, resolution.meta)
         r.delete(obj_key)
 
     def _collect_nested_ref_names(self, raw_key: str, raw_type: str) -> list[str]:
