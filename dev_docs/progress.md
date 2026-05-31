@@ -39,5 +39,6 @@
 | 3.3 | `_pop_value_from_encoded` 无意义包装 | P3 | ✅ 已修复 | 内联为 `_materialize_decoded_value` 直接调用 |
 | 6.1 | `namespaces` 可变默认值 | P3 | ✅ 已修复 | 改为 `dict[str, GPDCNamespaceConfig] = Field(default_factory=dict)`，简化 `_init_predefined_namespaces` |
 | 6.6 | `decode_element` 多余 isinstance | P3 | ✅ 已修复 | 移除永远为 True 的 `isinstance(encoded, str)` 检查 |
-| 6.7 | DictObject.keys/values/items 返回 list | P3 | 🔲 待讨论 | |
-| 7.5 | 考虑移除 pydantic 依赖 | P3 | 🔲 待讨论 | |
+| 6.7 | DictObject.keys/values/items 返回 list | P3 | ✅ 已关闭 | by design: DictObject 不继承 dict，Redis 远程数据无法支持视图语义，返回 list 快照合理，加 docstring 说明 |
+| 7.5 | 考虑移除 pydantic 依赖 | P3 | ✅ 已关闭 | by design: gpconfig.GPConfig 继承 pydantic.BaseModel，pydantic 为不可避免传递依赖；1.3 已显式声明依赖，无实际收益 |
+| 7.5a | ObjectMeta 用 pydantic 性能是否合适 | P3 | ✅ 已关闭 | 基准测试：pydantic model_copy 1.1us vs dataclass replace 1.6us，热点路径反而更优；相比 Redis 往返 ~100-1000us 开销可忽略 |

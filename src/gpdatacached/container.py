@@ -392,16 +392,19 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         for encoded_key in self._redis().hkeys(self.raw_key):
             yield decode_key(encoded_key)
 
-    def keys(self):
+    def keys(self) -> list:
+        """Return a snapshot list of keys. Not a view — data lives in Redis."""
         return [decode_key(k) for k in self._redis().hkeys(self.raw_key)]
 
-    def values(self):
+    def values(self) -> list:
+        """Return a snapshot list of values. Not a view — data lives in Redis."""
         result = []
         for encoded_val in self._redis().hvals(self.raw_key):
             result.append(decode_element(encoded_val, self._namespace))
         return result
 
-    def items(self):
+    def items(self) -> list[tuple]:
+        """Return a snapshot list of (key, value) pairs. Not a view — data lives in Redis."""
         result = []
         for encoded_key, encoded_val in self._redis().hgetall(self.raw_key).items():
             key = decode_key(encoded_key)
