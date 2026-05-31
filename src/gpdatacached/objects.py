@@ -18,7 +18,15 @@ from .ttl import _LifecycleContext
 
 
 class GPDCDataObject(ABC):
-    """Abstract base class for all GPDC data objects."""
+    """Abstract base class for all GPDC data objects.
+
+    ``__eq__`` uses identity semantics: two objects are equal iff they share
+    the same domain, namespace and canonical name (no Redis reads).  For
+    value-level comparison use ``obj.value == python_value``.
+
+    ``__hash__`` is ``None`` — GPDC objects are mutable and therefore
+    unhashable, following the Python convention.
+    """
 
     def __init__(
         self,
@@ -191,6 +199,17 @@ class GPDCDataObject(ABC):
 
     def remaining_ttl(self) -> int:
         return self._redis().ttl(self._canonical_redis_key())
+
+    __hash__ = None
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, GPDCDataObject):
+            return NotImplemented
+        return (
+            self.domain.name == other.domain.name
+            and self._namespace.name == other._namespace.name
+            and self._canonical_name == other._canonical_name
+        )
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(uri={self.uri!r})"
