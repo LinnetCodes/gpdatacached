@@ -145,6 +145,7 @@ class TestGCCleanupOnDomainClose:
             redis_port=REDIS_PORT,
             redis_db=REDIS_DB,
             redis_password=REDIS_PASSWORD,
+            gc_enabled=True,
         )
         domain = GPDCDomain("gc_close_test", config)
         domain.close()

@@ -27,7 +27,7 @@ class TestGPDCDomainConfig:
         assert cfg.redis_retry_delay == 1.0
         assert cfg.default_cache_mode == "permanent"
         assert cfg.default_ttl_seconds == 0
-        assert cfg.gc_enabled is True
+        assert cfg.gc_enabled is False
         assert cfg.gc_interval_seconds == 300
         assert cfg.namespaces == {}
 

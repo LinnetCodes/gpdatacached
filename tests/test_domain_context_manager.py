@@ -1,6 +1,7 @@
 def test_domain_as_context_manager(clean_redis, domain_config):
     from gpdatacached.domain import GPDCDomain
 
+    domain_config.gc_enabled = True
     with GPDCDomain("testdomain", domain_config) as domain:
         assert domain.name == "testdomain"
         ns = domain.get_namespace("testns")
@@ -12,6 +13,7 @@ def test_domain_as_context_manager(clean_redis, domain_config):
 def test_domain_context_manager_closes_on_exception(clean_redis, domain_config):
     from gpdatacached.domain import GPDCDomain
 
+    domain_config.gc_enabled = True
     domain = None
     try:
         with GPDCDomain("testdomain", domain_config) as d:

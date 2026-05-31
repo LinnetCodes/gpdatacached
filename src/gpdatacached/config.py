@@ -44,7 +44,7 @@ class GPDCDomainConfig(GPConfig):
     default_cache_mode: str = "permanent"
     default_ttl_seconds: int = 0
 
-    gc_enabled: bool = True
+    gc_enabled: bool = False
     gc_interval_seconds: int = 300
 
     namespaces: dict[str, dict] = {}
