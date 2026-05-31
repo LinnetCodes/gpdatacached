@@ -55,7 +55,7 @@
 | 2.2 | `objects.py` 属性重复加载 meta (`objects.py:83-139`) | P2 | ✅ 已修复 | 增加 `meta` 属性（getter 加载 ObjectMeta，setter 保存并应用 lifecycle），4 个独立 getter 改为委托 `self.meta`。用户可通过 `obj.meta` 一次读取或批量修改 meta，避免多次 Redis 往返。 |
 | 7.2 | `__iter__` 逐名调用 `_resolve_binding` 效率低 (`namespace.py:484`) | P2 | ✅ 已修复 | 使用 Redis pipeline 批量 TYPE/GET 命令，每 SCAN 页 O(N) 往返降至 ~3 次 pipeline 往返。hash 类型直接 yield，string 类型（ref 别名）批量解析 canonical key 有效性。语义不变，835 测试全部通过。 |
 | 2.6 | `decode_element` 与 `decode_key` 解析逻辑重复 (`types.py:94-120`) | P3 | ✅ 已修复 | 提取 `_decode_scalar(encoded)` 辅助函数，两个函数各委托给它。 |
-| 3.4 | `_reject_container_slot_overwrite` / `_reject_value_replacement` 是一次性方法 (`container.py:82-88`) | — | 🔲 待讨论 | 经验证各被调用 3 次（非报告所述 1 次），提取为方法有避免重复字符串的合理性。**建议：保持现状，无需修改。** |
+| 3.4 | `_reject_container_slot_overwrite` / `_reject_value_replacement` 是一次性方法 (`container.py:82-88`) | — | ✅ 已关闭 | 经验证各被调用 3 次（非报告所述 1 次），提取为方法有集中错误消息的合理性。已加注释说明设计意图。 |
 | 5.5 | `TupleObject` 注册为 scalar 但行为类似 container (`types.py:292`) | P3 | 🔲 待讨论 | 设计决策问题。tuple 作为 scalar 处理使其不能包含容器引用，但 tuple 本身是不可变的，语义上作为"复合标量"也算合理。改动会影响类型系统，收益不确定。 |
 | 6.2 | `GPDCDomain._namespaces` 类型标注为裸 `dict` (`domain.py:32`) | P3 | 🔲 待讨论 | 简单改为 `dict[str, GPDCNamespace]`，一行改动，无副作用。 |
 | 6.3 | `GPDCDomain._redis` 类型过度宽松 (`domain.py:31`) | P3 | 🔲 待讨论 | 声明为 `redis.Redis | None` 但 `__init__` 中 `_connect()` 后永远非 None。可改为 `redis.Redis` 并用 `assert` 或延迟赋值。涉及初始化流程的小重构。 |

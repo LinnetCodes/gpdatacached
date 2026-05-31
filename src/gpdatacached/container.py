@@ -80,11 +80,13 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         return False
 
     def _reject_container_slot_overwrite(self) -> None:
+        # Extracted as a method to centralize the error message, called from 3 sites.
         raise TypeError(
             "Cannot overwrite an existing container slot; delete it first or mutate the existing container in place"
         )
 
     def _reject_value_replacement(self) -> None:
+        # Extracted as a method to centralize the error message, called from 3 sites.
         raise TypeError("Container value replacement is not supported; use explicit mutating methods instead")
 
     def _is_container_ref(self, encoded: str | None) -> bool:
