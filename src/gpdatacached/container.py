@@ -321,6 +321,30 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
                 result.append(decoded)
         return result
 
+    def __add__(self, other):
+        """Not supported. Use ``list(obj) + other`` to concatenate."""
+        raise NotImplementedError(
+            "ListObject does not support +; use list(obj) + other instead."
+        )
+
+    def __radd__(self, other):
+        """Not supported. Use ``other + list(obj)`` to concatenate."""
+        raise NotImplementedError(
+            "ListObject does not support +; use other + list(obj) instead."
+        )
+
+    def __mul__(self, other):
+        """Not supported. Use ``list(obj) * n`` to repeat."""
+        raise NotImplementedError(
+            "ListObject does not support *; use list(obj) * n instead."
+        )
+
+    def __rmul__(self, other):
+        """Not supported. Use ``n * list(obj)`` to repeat."""
+        raise NotImplementedError(
+            "ListObject does not support *; use n * list(obj) instead."
+        )
+
 
 # ── DictObject ─────────────────────────────────────────────────────────────────
 
