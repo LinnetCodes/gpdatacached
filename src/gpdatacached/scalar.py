@@ -87,6 +87,9 @@ class NoneObject(GPDCScalarObject):
     TYPE = "scalar:none"
 
 
+# by design: tuple 注册为 scalar 而非 container。tuple 是不可变的，语义上作为"复合标量"
+# （类似数据库复合主键）存储为单个 Redis string，不占用独立的 raw key。TupleCodec 显式
+# 拒绝 list/dict/set 元素，避免嵌套引用带来的 GC 复杂性。
 class TupleObject(GPDCScalarObject):
     TYPE = "scalar:tuple"
 

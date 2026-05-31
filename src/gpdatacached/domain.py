@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import TYPE_CHECKING
 
 import redis
 from gpconfig import GPConfigurable
@@ -16,6 +17,9 @@ from .keys import (
     validate_domain_name,
 )
 
+if TYPE_CHECKING:
+    from .namespace import GPDCNamespace
+
 logger = logging.getLogger(__name__)
 
 GPDC_VERSION = "0.1.0"
@@ -28,10 +32,10 @@ class GPDCDomain(GPConfigurable):
         super().__init__(config)
         validate_domain_name(name)
         self._name = name
-        self._redis: redis.Redis | None = None
-        self._namespaces: dict = {}
+        self._namespaces: dict[str, GPDCNamespace] = {}
         self._gc_thread: threading.Thread | None = None
         self._gc_stop_event = threading.Event()
+        self._redis: redis.Redis = None  # type: ignore[assignment]
         self._connect()
         self._start_gc()
 
@@ -165,8 +169,7 @@ class GPDCDomain(GPConfigurable):
         if self._gc_thread and self._gc_thread.is_alive():
             self._gc_thread.join(timeout=5)
         self._gc_thread = None
-        if self._redis:
-            self._redis.close()
+        self._redis.close()
 
     def __enter__(self):
         return self

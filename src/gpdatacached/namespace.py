@@ -537,6 +537,7 @@ class GPDCNamespace(MutableMapping):
         Anonymous objects (names starting with ``~``) are not counted.
         O(n) — iterates via SCAN.
         """
+        # by design: _ discards object names; sum counts via __iter__.
         return sum(1 for _ in self)
 
     def clear(self) -> None:

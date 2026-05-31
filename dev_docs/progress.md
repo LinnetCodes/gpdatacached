@@ -56,9 +56,9 @@
 | 7.2 | `__iter__` 逐名调用 `_resolve_binding` 效率低 (`namespace.py:484`) | P2 | ✅ 已修复 | 使用 Redis pipeline 批量 TYPE/GET 命令，每 SCAN 页 O(N) 往返降至 ~3 次 pipeline 往返。hash 类型直接 yield，string 类型（ref 别名）批量解析 canonical key 有效性。语义不变，835 测试全部通过。 |
 | 2.6 | `decode_element` 与 `decode_key` 解析逻辑重复 (`types.py:94-120`) | P3 | ✅ 已修复 | 提取 `_decode_scalar(encoded)` 辅助函数，两个函数各委托给它。 |
 | 3.4 | `_reject_container_slot_overwrite` / `_reject_value_replacement` 是一次性方法 (`container.py:82-88`) | — | ✅ 已关闭 | 经验证各被调用 3 次（非报告所述 1 次），提取为方法有集中错误消息的合理性。已加注释说明设计意图。 |
-| 5.5 | `TupleObject` 注册为 scalar 但行为类似 container (`types.py:292`) | P3 | 🔲 待讨论 | 设计决策问题。tuple 作为 scalar 处理使其不能包含容器引用，但 tuple 本身是不可变的，语义上作为"复合标量"也算合理。改动会影响类型系统，收益不确定。 |
-| 6.2 | `GPDCDomain._namespaces` 类型标注为裸 `dict` (`domain.py:32`) | P3 | 🔲 待讨论 | 简单改为 `dict[str, GPDCNamespace]`，一行改动，无副作用。 |
-| 6.3 | `GPDCDomain._redis` 类型过度宽松 (`domain.py:31`) | P3 | 🔲 待讨论 | 声明为 `redis.Redis | None` 但 `__init__` 中 `_connect()` 后永远非 None。可改为 `redis.Redis` 并用 `assert` 或延迟赋值。涉及初始化流程的小重构。 |
-| 6.4 | `redis` 属性 getter 返回类型与字段类型不一致 (`domain.py:94-95`) | P3 | 🔲 待讨论 | 与 6.3 相关。`_redis` 是 `Redis | None` 但 property 声明返回 `Redis`。修复 6.3 后此问题自然解决。 |
-| 6.5 | `__len__` 中 `_` 忽略循环变量 (`namespace.py:498`) | — | 🔲 待讨论 | 报告自身也承认"不算错误"。`sum(1 for _ in self)` 是常见 Python 惯用法，无需修改。**建议：不处理。** |
+| 5.5 | `TupleObject` 注册为 scalar 但行为类似 container (`types.py:292`) | P3 | ✅ 已关闭 | by design: tuple 是不可变的，作为"复合标量"存储为单个 Redis string，拒绝容器元素避免 GC 复杂性。加注释说明。 |
+| 6.2 | `GPDCDomain._namespaces` 类型标注为裸 `dict` (`domain.py:32`) | P3 | ✅ 已修复 | 改为 `dict[str, GPDCNamespace]`，通过 `TYPE_CHECKING` 避免循环导入。 |
+| 6.3 | `GPDCDomain._redis` 类型过度宽松 (`domain.py:31`) | P3 | ✅ 已修复 | 类型改为 `redis.Redis`，用 `# type: ignore[assignment]` 处理初始化临时 None，消除所有下游 None 检查。 |
+| 6.4 | `redis` 属性 getter 返回类型与字段类型不一致 (`domain.py:94-95`) | P3 | ✅ 已修复 | 随 6.3 一起修复，`_redis` 不再是 `| None`，property 返回类型自然一致。 |
+| 6.5 | `__len__` 中 `_` 忽略循环变量 (`namespace.py:498`) | — | ✅ 已关闭 | `sum(1 for _ in self)` 是常见 Python 惯用法，`_` 语义为丢弃对象名称。无需修改，加注释说明。 |
 | 5.3 | `_MISSING` 哨兵值位置不当 (`namespace.py:27`) | — | ✅ 已解决 | 随 5.1 修复（拆分 `get_object`/`ensure_object`）已移除，不再存在。 |
