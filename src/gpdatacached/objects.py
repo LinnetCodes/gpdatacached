@@ -20,7 +20,7 @@ from .ttl import _LifecycleContext
 class GPDCDataObject(ABC):
     """Abstract base class for all GPDC data objects.
 
-    ``__eq__`` uses identity semantics: two objects are equal iff they share
+    ``__eq__`` uses identity semantics: two objects are equal if they share
     the same domain, namespace and canonical name (no Redis reads).  For
     value-level comparison use ``obj.value == python_value``.
 

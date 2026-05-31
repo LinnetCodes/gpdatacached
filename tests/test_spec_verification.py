@@ -479,8 +479,8 @@ class TestSpecVerification:
         assert "missing" not in dct
         assert set(dct) == {"name"}
         assert set(dct.keys()) == {"name"}
-        assert dct.values() == ["test"]
-        assert dct.items() == [("name", "test")]
+        assert set(dct.values()) == {"test"}
+        assert dict(dct.items()) == {"name": "test"}
 
         dct["age"] = 30
         assert dct["age"] == 30

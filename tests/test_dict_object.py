@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import time
+import collections.abc
 
 import pytest
 import redis as redis_lib
@@ -184,18 +185,34 @@ def test_iter(setup_dict):
 
 def test_keys(setup_dict):
     obj, *_ = setup_dict
-    assert set(obj.keys()) == {"name", "age"}
+    result = obj.keys()
+    assert isinstance(result, collections.abc.KeysView)
+    assert set(result) == {"name", "age"}
 
 
 def test_values(setup_dict):
     obj, *_ = setup_dict
-    assert set(obj.values()) == {"Alice", 30}
+    result = obj.values()
+    assert isinstance(result, collections.abc.ValuesView)
+    assert set(result) == {"Alice", 30}
 
 
 def test_items(setup_dict):
     obj, *_ = setup_dict
-    result = dict(obj.items())
-    assert result == {"name": "Alice", "age": 30}
+    result = obj.items()
+    assert isinstance(result, collections.abc.ItemsView)
+    assert dict(result) == {"name": "Alice", "age": 30}
+
+
+def test_keys_values_items_are_snapshots(setup_dict):
+    obj, *_ = setup_dict
+    keys = obj.keys()
+    values = obj.values()
+    items = obj.items()
+    obj["newkey"] = "newval"
+    assert "newkey" not in keys
+    assert "newval" not in values
+    assert ("newkey", "newval") not in items
 
 
 def test_get_existing(setup_dict):

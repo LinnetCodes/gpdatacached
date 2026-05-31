@@ -393,24 +393,33 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         for encoded_key in self._redis().hkeys(self.raw_key):
             yield decode_key(encoded_key)
 
-    def keys(self) -> list:
-        """Return a snapshot list of keys. Not a view — data lives in Redis."""
-        return [decode_key(k) for k in self._redis().hkeys(self.raw_key)]
+    def keys(self) -> collections.abc.KeysView:
+        """Return a frozen *KeysView* snapshot.
 
-    def values(self) -> list:
-        """Return a snapshot list of values. Not a view — data lives in Redis."""
-        result = []
-        for encoded_val in self._redis().hvals(self.raw_key):
-            result.append(decode_element(encoded_val, self._namespace))
-        return result
+        Only keys are fetched from Redis (``HKEYS``); values are not decoded.
+        The view is backed by a temporary ``dict`` so mutations to the
+        ``DictObject`` after this call are **not** reflected.
+        """
+        decoded = [decode_key(k) for k in self._redis().hkeys(self.raw_key)]
+        return dict.fromkeys(decoded).keys()
 
-    def items(self) -> list[tuple]:
-        """Return a snapshot list of (key, value) pairs. Not a view — data lives in Redis."""
-        result = []
-        for encoded_key, encoded_val in self._redis().hgetall(self.raw_key).items():
-            key = decode_key(encoded_key)
-            result.append((key, decode_element(encoded_val, self._namespace)))
-        return result
+    def values(self) -> collections.abc.ValuesView:
+        """Return a frozen *ValuesView* snapshot.
+
+        All key-value pairs are fetched from Redis (``HGETALL``) and decoded.
+        The view is backed by a temporary ``dict`` so mutations to the
+        ``DictObject`` after this call are **not** reflected.
+        """
+        return self.value.values()
+
+    def items(self) -> collections.abc.ItemsView:
+        """Return a frozen *ItemsView* snapshot.
+
+        All key-value pairs are fetched from Redis (``HGETALL``) and decoded.
+        The view is backed by a temporary ``dict`` so mutations to the
+        ``DictObject`` after this call are **not** reflected.
+        """
+        return self.value.items()
 
     def get(self, key, default=None):
         try:
