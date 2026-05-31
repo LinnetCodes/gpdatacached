@@ -327,3 +327,27 @@ def test_write_updates_updated_at(setup_list):
 def test_type(setup_list):
     obj, *_ = setup_list
     assert obj.type == "collection:list"
+
+
+def test_sort_reverse(setup_list):
+    obj, r, obj_key, raw_key, ref_key, ns = setup_list
+    ListCodec.delete_raw(ns, raw_key)
+    ListCodec.create_raw(ns, raw_key, [10, 30, 20], OBJ_NAME, "permanent", 0)
+    obj.sort(reverse=True)
+    assert list(obj) == [30, 20, 10]
+
+
+def test_sort_with_key(setup_list):
+    obj, r, obj_key, raw_key, ref_key, ns = setup_list
+    ListCodec.delete_raw(ns, raw_key)
+    ListCodec.create_raw(ns, raw_key, [10, 30, 20], OBJ_NAME, "permanent", 0)
+    obj.sort(key=lambda x: -x)
+    assert list(obj) == [30, 20, 10]
+
+
+def test_sort_with_key_and_reverse(setup_list):
+    obj, r, obj_key, raw_key, ref_key, ns = setup_list
+    ListCodec.delete_raw(ns, raw_key)
+    ListCodec.create_raw(ns, raw_key, [10, 30, 20], OBJ_NAME, "permanent", 0)
+    obj.sort(key=lambda x: -x, reverse=True)
+    assert list(obj) == [10, 20, 30]

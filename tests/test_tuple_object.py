@@ -47,6 +47,19 @@ class TestTupleObjectViaNamespace:
         d = ns.get_object("d")
         assert d[(1, 2)] == "val"
 
+    def test_value_setter_updates_tuple(self, ns):
+        ns["t"] = (1, 2, 3)
+        obj = ns.get_object("t")
+        obj.value = (4, 5, 6)
+        assert obj.value == (4, 5, 6)
+        assert ns["t"] == (4, 5, 6)
+
+    def test_value_setter_rejects_wrong_type(self, ns):
+        ns["t"] = (1, 2)
+        obj = ns.get_object("t")
+        with pytest.raises(TypeError, match="Cannot assign"):
+            obj.value = [1, 2]
+
 
 class TestEmptyTupleAsKey:
     def test_empty_tuple_as_dict_key_rejected(self, ns):

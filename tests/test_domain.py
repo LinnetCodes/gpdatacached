@@ -222,3 +222,70 @@ class TestGPDCDomainPredefinedNamespaces:
         GPDCDomain("testdomain", domain_config_with_namespaces)
         meta = clean_redis.hgetall(meta_key)
         assert meta["default_ttl_seconds"] == "9999"
+
+
+class TestMultiDomainIsolation:
+    def test_same_key_different_values(self, clean_redis, domain_config):
+        d1 = GPDCDomain("domain_a", domain_config)
+        d2 = GPDCDomain("domain_b", domain_config)
+        ns1 = d1.get_namespace("shared_ns")
+        ns2 = d2.get_namespace("shared_ns")
+
+        ns1["x"] = 1
+        ns2["x"] = 999
+
+        assert ns1["x"] == 1
+        assert ns2["x"] == 999
+
+        d1.close()
+        d2.close()
+
+    def test_delete_in_one_domain_does_not_affect_other(self, clean_redis, domain_config):
+        d1 = GPDCDomain("domain_a", domain_config)
+        d2 = GPDCDomain("domain_b", domain_config)
+        ns1 = d1.get_namespace("shared_ns")
+        ns2 = d2.get_namespace("shared_ns")
+
+        ns1["x"] = 1
+        ns2["x"] = 2
+
+        del ns1["x"]
+
+        assert "x" not in ns1
+        assert ns2["x"] == 2
+
+        d1.close()
+        d2.close()
+
+    def test_iter_len_independent(self, clean_redis, domain_config):
+        d1 = GPDCDomain("domain_a", domain_config)
+        d2 = GPDCDomain("domain_b", domain_config)
+        ns1 = d1.get_namespace("ns")
+        ns2 = d2.get_namespace("ns")
+
+        ns1["a"] = 1
+        ns1["b"] = 2
+        ns2["z"] = 99
+
+        assert len(ns1) == 2
+        assert len(ns2) == 1
+        assert sorted(ns1) == ["a", "b"]
+        assert list(ns2) == ["z"]
+
+        d1.close()
+        d2.close()
+
+    def test_namespace_isolation_in_domain_iter(self, clean_redis, domain_config):
+        d1 = GPDCDomain("domain_a", domain_config)
+        d2 = GPDCDomain("domain_b", domain_config)
+
+        d1.get_namespace("only_in_a")
+        d2.get_namespace("only_in_b")
+
+        assert "only_in_a" in d1
+        assert "only_in_a" not in d2
+        assert "only_in_b" in d2
+        assert "only_in_b" not in d1
+
+        d1.close()
+        d2.close()

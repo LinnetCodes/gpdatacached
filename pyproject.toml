@@ -37,6 +37,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: tests that sleep/wait for real TTL expiry",
+]
 
 [tool.ruff]
 src = ["src", "tests"]

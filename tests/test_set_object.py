@@ -289,3 +289,74 @@ def _make_set_obj(r, name, value):
     SetCodec.create_raw(ns, raw_key, value, name, "permanent", 0)
 
     return SetObject(name, ns)
+
+
+class TestSetDiverseElementTypes:
+    def test_float_element_add_contains(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        s.add(3.14)
+        assert 3.14 in s
+
+    def test_float_element_iter(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        s.add(3.14)
+        assert 3.14 in set(s)
+
+    def test_float_element_discard(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        s.add(3.14)
+        s.discard(3.14)
+        assert 3.14 not in s
+
+    def test_bool_element_add_contains(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        s.add(True)
+        s.add(False)
+        assert True in s
+        assert False in s
+
+    def test_none_element_add_contains(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        s.add(None)
+        assert None in s
+
+    def test_none_element_discard(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        s.add(None)
+        s.discard(None)
+        assert None not in s
+
+    def test_datetime_element_add_contains(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        dt = datetime.datetime(2026, 6, 1, 12, 0, tzinfo=datetime.UTC)
+        s.add(dt)
+        assert dt in s
+
+    def test_datetime_element_iter_roundtrip(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        dt = datetime.datetime(2026, 6, 1, 12, 0, tzinfo=datetime.UTC)
+        s.add(dt)
+        elements = set(s)
+        assert dt in elements
+
+    def test_mixed_types_together(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        s.add(3.14)
+        s.add(True)
+        s.add(None)
+        dt = datetime.datetime(2026, 6, 1, 12, 0, tzinfo=datetime.UTC)
+        s.add(dt)
+        assert len(s) == 4
+        assert 3.14 in s
+        assert True in s
+        assert None in s
+        assert dt in s

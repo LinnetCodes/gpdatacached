@@ -107,3 +107,41 @@ class TestTypeRegistryExtension:
             GPDCTypeRegistry._by_gpdc_type = original_gpdc
             GPDCTypeRegistry._by_python_type = original_python
             GPDCTypeRegistry._lock = original_lock
+
+
+class TestNoneObjectViaGetObj:
+    def test_get_object_returns_none_object(self, ns):
+        ns["n"] = None
+        obj = ns.get_object("n")
+        assert obj.type == "scalar:none"
+        assert obj.value is None
+
+    def test_none_object_value_setter_to_none(self, ns):
+        ns["n"] = None
+        obj = ns.get_object("n")
+        obj.value = None
+        assert obj.value is None
+
+    def test_none_object_repr(self, ns):
+        ns["n"] = None
+        obj = ns.get_object("n")
+        assert "NoneObject" in repr(obj)
+
+    def test_none_object_uri(self, ns):
+        ns["n"] = None
+        obj = ns.get_object("n")
+        assert obj.uri == "gpdc://testdomain/testns/n"
+
+
+class TestBoolToIntObject:
+    def test_bool_true_rejected_by_int_object(self, ns):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        with pytest.raises(TypeError, match="IntCodec cannot encode 'bool'"):
+            obj.value = True
+
+    def test_bool_false_rejected_by_int_object(self, ns):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        with pytest.raises(TypeError, match="IntCodec cannot encode 'bool'"):
+            obj.value = False

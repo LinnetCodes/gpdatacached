@@ -36,10 +36,58 @@
 | 10 | `TupleObject` 功能半成品 | ✅ 已完成 | 保持标量定位；空元组值可用/key 禁止；对象级测试补充 |
 | 8 | `GPDCDomain` 资源管理不完整 | ✅ 已完成 | 严格关闭语义 + `__del__` 安全网；不做重连 |
 | 9 | GC 缺乏域级清理 | ✅ 已完成 | `delete_namespace()` / `GPDCNamespace.destroy()` / `GPDCDomain.destroy()` |
-| 13 | 测试覆盖缺口 | ⬜ 待处理 | 伴随各问题逐步补充 |
+| 13 | 测试覆盖缺口 | ✅ 已完成 | P0+P1+P2 全部完成（963 tests） |
 | 7 | DictObject None key 歧义 | ⬜ 待处理 | 报告本身已标注为非缺陷 |
+
+---
+
+## #13 测试覆盖缺口 — 子任务拆解
+
+> 经过逐项验证，报告中的部分缺口已被前面问题（#1~#10）的修复间接覆盖。
+> 以下仅列出**仍需补充**的缺口，已覆盖的已标注。
+
+### 已覆盖（无需额外工作）
+
+| 缺口 | 说明 |
+|------|------|
+| `redis_max_retries`/`redis_retry_delay` 测试 | #3 修复后字段已删除 |
+| `ListObject.__eq__` 测试 | #1 修复后在 `test_eq_hash.py` 中覆盖 |
+| `DictObject.__eq__` 测试 | #1 修复后在 `test_eq_hash.py` 中覆盖 |
+| `remaining_ttl()` 永久对象 | `test_namespace.py` + `test_alias_binding.py` 已覆盖 |
+| `GPDCDomain.close()` 后操作 | #8 修复后在 `test_domain_close.py` 中覆盖 |
+
+### P0 — 核心功能未测（本轮处理）
+
+| 子项 | 缺口 | 状态 | 归属文件 |
+|------|------|------|----------|
+| P0-1 | TupleObject `.value=` setter | ✅ | `test_tuple_object.py` |
+| P0-2 | NoneObject 通过 `get_object` 获取后的对象级操作 | ✅ | `test_types.py` |
+
+### P1 — 边界场景未测（本轮处理）
+
+| 子项 | 缺口 | 状态 | 归属文件 |
+|------|------|------|----------|
+| P1-1 | `expire_at()` 传入过去时间 | ✅ | `test_namespace.py` |
+| P1-4 | `GPDCNamespace` 并发访问 | ✅ | 新建 `test_namespace_threading.py` |
+| P1-5 | `DictObject.update()` 可迭代 pairs | ✅ | `test_dict_object.py` |
+| P1-6 | `ListObject.sort(key=..., reverse=True)` | ✅ | `test_objects_container.py` |
+| P1-7 | `DictObject` datetime/float/bool/None key | ✅ | `test_dict_object.py` |
+| P1-8 | `SetObject` datetime/float/bool/None 元素端到端 | ✅ | `test_set_object.py` |
+| P1-9 | `GPDCDomain.run_gc()` 无命名空间 | ✅ | `test_gc.py` |
+| P1-10 | `bool` 赋值给 `IntObject.value` | ✅ | `test_types.py`（IntCodec 显式拒绝 bool） |
+
+### P2 — 集成/性能
+
+| 子项 | 缺口 | 状态 | 归属文件 |
+|------|------|------|----------|
+| P2-1 | 大量对象 namespace `__len__`/`__iter__` 性能 | ✅ | `test_namespace.py` |
+| P2-2 | 深层嵌套 (>3 层) | ✅ | `test_nested_containers.py` |
+| P2-3 | TTL 实际过期（需 `time.sleep`） | ✅ | 新建 `test_ttl_expiry.py` |
+| P2-4 | `namespace.popitem()` | ✅ | `test_namespace.py` |
+| P2-5 | Redis 连接失败 | ✅ | 新建 `test_redis_connection.py` |
+| P2-6 | 两个域共享同一 Redis 实例 | ✅ | `test_domain.py` |
 
 ## 当前进度
 
-- **当前问题**: 无（#9 已完成）
-- **下一个**: P2 #13 测试覆盖缺口 或 #7 DictObject None key 歧义
+- **当前问题**: #13 测试覆盖缺口 全部完成（963 tests passed）
+- **下一个**: #7 DictObject None key 歧义（报告已标注为非缺陷，可关闭）

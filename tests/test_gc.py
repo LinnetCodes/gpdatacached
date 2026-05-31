@@ -261,3 +261,18 @@ class TestGCStaleRefSetMembers:
 
         run_gc_for_namespace(r, DOMAIN, NS)
         assert "scalar" not in r.smembers(ref_key)
+
+
+class TestGCNoNamespaces:
+    def test_run_gc_empty_domain(self, r):
+        config = GPDCDomainConfig(
+            redis_host=REDIS_HOST,
+            redis_port=REDIS_PORT,
+            redis_db=REDIS_DB,
+            redis_password=REDIS_PASSWORD,
+            gc_enabled=False,
+        )
+        domain = GPDCDomain("gc_empty_test", config)
+        deleted = domain.run_gc()
+        assert deleted == 0
+        domain.close()

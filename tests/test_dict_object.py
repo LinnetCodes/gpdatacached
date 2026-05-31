@@ -367,3 +367,93 @@ def test_update_overwrites_existing(setup_dict):
     obj.update({"name": "Bob", "age": 99})
     assert obj["name"] == "Bob"
     assert obj["age"] == 99
+
+
+def test_update_iterable_pairs(setup_dict):
+    obj, *_ = setup_dict
+    obj.update([("city", "NYC"), ("zip", 10001)])
+    assert obj["city"] == "NYC"
+    assert obj["zip"] == 10001
+
+
+def test_update_iterable_pairs_touches_once(setup_dict):
+    from unittest.mock import patch
+
+    obj, *_ = setup_dict
+    with patch.object(type(obj), "_touch", wraps=obj._touch) as mock_touch:
+        obj.update([("p", 1), ("q", 2)])
+        assert mock_touch.call_count == 1
+    assert obj["p"] == 1
+    assert obj["q"] == 2
+
+
+class TestDictDiverseKeyTypes:
+    def test_float_key_setget(self, ns):
+        ns["d"] = {}
+        d = ns.get_object("d")
+        d[3.14] = "pi"
+        assert d[3.14] == "pi"
+
+    def test_float_key_contains(self, ns):
+        ns["d"] = {}
+        d = ns.get_object("d")
+        d[3.14] = "pi"
+        assert 3.14 in d
+
+    def test_float_key_delete(self, ns):
+        ns["d"] = {}
+        d = ns.get_object("d")
+        d[3.14] = "pi"
+        del d[3.14]
+        assert 3.14 not in d
+
+    def test_bool_key_setget(self, ns):
+        ns["d"] = {}
+        d = ns.get_object("d")
+        d[True] = "yes"
+        d[False] = "no"
+        assert d[True] == "yes"
+        assert d[False] == "no"
+
+    def test_bool_key_contains(self, ns):
+        ns["d"] = {}
+        d = ns.get_object("d")
+        d[True] = "yes"
+        assert True in d
+
+    def test_none_key_setget(self, ns):
+        ns["d"] = {}
+        d = ns.get_object("d")
+        d[None] = "nothing"
+        assert d[None] == "nothing"
+
+    def test_none_key_contains(self, ns):
+        ns["d"] = {}
+        d = ns.get_object("d")
+        d[None] = "nothing"
+        assert None in d
+
+    def test_none_key_delete(self, ns):
+        ns["d"] = {}
+        d = ns.get_object("d")
+        d[None] = "nothing"
+        del d[None]
+        assert None not in d
+
+    def test_datetime_key_setget(self, ns):
+        import datetime
+
+        ns["d"] = {}
+        d = ns.get_object("d")
+        dt = datetime.datetime(2026, 1, 15, 12, 30, tzinfo=datetime.UTC)
+        d[dt] = "event"
+        assert d[dt] == "event"
+
+    def test_datetime_key_contains(self, ns):
+        import datetime
+
+        ns["d"] = {}
+        d = ns.get_object("d")
+        dt = datetime.datetime(2026, 1, 15, 12, 30, tzinfo=datetime.UTC)
+        d[dt] = "event"
+        assert dt in d

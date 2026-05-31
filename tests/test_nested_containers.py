@@ -269,6 +269,34 @@ class TestDeepNesting:
         assert isinstance(inner_list, ListObject)
         assert list(inner_list) == [1, 2, 3]
 
+    def test_4_level_dict_nesting(self, ns):
+        ns["d"] = {"l1": {"l2": {"l3": {"l4": "deep"}}}}
+        d = ns["d"]
+        assert d["l1"]["l2"]["l3"]["l4"] == "deep"
+
+    def test_5_level_dict_nesting(self, ns):
+        ns["d"] = {"a": {"b": {"c": {"d": {"e": 42}}}}}
+        d = ns["d"]
+        assert d["a"]["b"]["c"]["d"]["e"] == 42
+
+    def test_4_level_mixed_nesting(self, ns):
+        ns["d"] = {"a": [{"b": [1, 2, 3]}]}
+        d = ns["d"]
+        inner_list = d["a"][0]["b"]
+        assert list(inner_list) == [1, 2, 3]
+
+    def test_5_level_cascade_delete(self, ns, r):
+        ns["d"] = {"a": {"b": {"c": {"d": [1, 2, 3]}}}}
+        d = ns["d"]
+        inner_list = d["a"]["b"]["c"]["d"]
+        anon_name = inner_list.name
+
+        del ns["d"]
+
+        assert not r.exists(make_object_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_raw_key(DOMAIN, NS, anon_name))
+        assert not r.exists(make_ref_key(DOMAIN, NS, anon_name))
+
 
 class TestCascadeDeletion:
     def test_delete_dict_cascades_to_anon(self, ns, r):

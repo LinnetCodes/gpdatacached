@@ -295,6 +295,18 @@ class TestCacheModeAndTTL:
         remaining = clean_redis.ttl(key)
         assert 95 <= remaining <= 100
 
+    def test_expire_at_past_time_immediate_expiry(self, ns, clean_redis):
+        import datetime
+        import time
+
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=100)
+        obj.expire_at(past)
+        time.sleep(0.1)
+        with pytest.raises(KeyError):
+            _ = ns["x"]
+
     def test_sliding_mode_resets_ttl_on_write(self, ns, clean_redis):
         ns["x"] = 1
         obj = ns.get_object("x")
@@ -582,3 +594,70 @@ class TestNamespaceMutableMapping:
         ns["x"] = 10
         result = ns.setdefault("x", 99)
         assert result == 10
+
+    def test_popitem_empty_raises(self, ns):
+        with pytest.raises(KeyError):
+            ns.popitem()
+
+    def test_popitem_single_item(self, ns):
+        ns["x"] = 42
+        key, value = ns.popitem()
+        assert key == "x"
+        assert value == 42
+        assert len(ns) == 0
+
+    def test_popitem_reduces_len(self, ns):
+        ns["a"] = 1
+        ns["b"] = 2
+        ns["c"] = 3
+        ns.popitem()
+        assert len(ns) == 2
+
+
+class TestNamespaceLargeScale:
+    N = 200
+
+    def test_iter_returns_all_keys_with_timing(self, ns):
+        import time
+
+        for i in range(self.N):
+            ns[f"key_{i:04d}"] = i
+
+        expected = [f"key_{i:04d}" for i in range(self.N)]
+
+        start = time.perf_counter()
+        result = sorted(ns)
+        elapsed = time.perf_counter() - start
+
+        assert result == expected
+        print(f"__iter__ {self.N} objects: {elapsed:.3f}s")
+
+    def test_len_returns_correct_count_with_timing(self, ns):
+        import time
+
+        for i in range(self.N):
+            ns[f"key_{i:04d}"] = i
+
+        start = time.perf_counter()
+        count = len(ns)
+        elapsed = time.perf_counter() - start
+
+        assert count == self.N
+        print(f"__len__ {self.N} objects: {elapsed:.3f}s")
+
+    def test_iter_excludes_anonymous_in_large_set(self, ns, clean_redis):
+        from gpdatacached.keys import make_object_key, make_raw_key
+
+        for i in range(self.N):
+            ns[f"key_{i:04d}"] = i
+
+        clean_redis.hset(
+            make_object_key("testdomain", "testns", "~ghost"),
+            "type",
+            "int",
+        )
+        clean_redis.set(make_raw_key("testdomain", "testns", "~ghost"), "42")
+
+        result = sorted(ns)
+        assert len(result) == self.N
+        assert "~ghost" not in result
