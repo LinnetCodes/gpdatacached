@@ -46,6 +46,11 @@ class GPDCNamespace(MutableMapping):
     Anonymous objects (names starting with ``~``) are stored in the same
     Redis key space but are excluded from all public MutableMapping methods
     (``__iter__``, ``__len__``, ``__contains__``).
+
+    **Design constraint:** Cross-namespace container references are not
+    supported.  All ref bindings point to objects within the same namespace.
+    This allows ``clear()`` to safely delete all keys in bulk without
+    per-object referrer cleanup.
     """
 
     def __init__(
@@ -517,6 +522,11 @@ class GPDCNamespace(MutableMapping):
         of repeated ``popitem()`` calls. The namespace ``__meta__`` key is
         preserved so the namespace remains registered and its configuration
         intact after the operation.
+
+        Because cross-namespace references are not supported (see class
+        docstring), it is safe to delete all keys in bulk without walking
+        the per-object referrer / cascade-delete logic used by
+        ``__delitem__``.
         """
         meta_key = make_namespace_meta_key(self._domain.name, self._name)
         pattern = f"gpdc:{self._domain.name}:{self._name}:*"
