@@ -14,6 +14,7 @@ from .keys import (
     GLOBAL_DOMAINS_KEY,
     make_domain_meta_key,
     make_domain_namespaces_key,
+    make_namespace_meta_key,
     validate_domain_name,
 )
 
@@ -177,6 +178,36 @@ class GPDCDomain(GPConfigurable):
             for ns_name in self:
                 total += run_gc_for_namespace(self._redis, self._name, ns_name)
         return total
+
+    def delete_namespace(self, name: str) -> None:
+        self._check_open()
+        ns_key = make_domain_namespaces_key(self._name)
+        if not self._redis.sismember(ns_key, name):
+            raise KeyError(name)
+        pattern = f"gpdc:{self._name}:{name}:*"
+        cursor = 0
+        while True:
+            cursor, keys = self._redis.scan(cursor=cursor, match=pattern, count=100)
+            if keys:
+                self._redis.delete(*keys)
+            if cursor == 0:
+                break
+        self._redis.delete(make_namespace_meta_key(self._name, name))
+        self._redis.srem(ns_key, name)
+        self._namespaces.pop(name, None)
+        logger.info("Deleted namespace %r from domain %r", name, self._name)
+
+    def destroy(self) -> None:
+        self._check_open()
+        ns_key = make_domain_namespaces_key(self._name)
+        for ns_name in list(self._redis.smembers(ns_key)):
+            self.delete_namespace(ns_name)
+        self._redis.delete(make_domain_meta_key(self._name))
+        self._redis.delete(ns_key)
+        self._redis.srem(GLOBAL_DOMAINS_KEY, self._name)
+        self._namespaces.clear()
+        logger.info("Destroyed domain %r", self._name)
+        self.close()
 
     def close(self) -> None:
         if self._closed:

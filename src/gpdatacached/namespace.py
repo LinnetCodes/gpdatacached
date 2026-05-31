@@ -486,7 +486,7 @@ class GPDCNamespace(MutableMapping):
         cursor = 0
         while True:
             cursor, keys = r.scan(cursor=cursor, match=pattern, count=100)
-            named = [(k, k[len(prefix):]) for k in keys if not k[len(prefix):].startswith("~")]
+            named = [(k, k[len(prefix) :]) for k in keys if not k[len(prefix) :].startswith("~")]
             if not named:
                 if cursor == 0:
                     break
@@ -516,7 +516,7 @@ class GPDCNamespace(MutableMapping):
                 canonical_pairs = []
                 for (k, name), v in zip(ref_keys, ref_values):
                     if v and v.startswith("ref:"):
-                        canonical = v[len("ref:"):]
+                        canonical = v[len("ref:") :]
                         if canonical.startswith(obj_prefix):
                             canonical_pairs.append((name, canonical))
 
@@ -567,3 +567,6 @@ class GPDCNamespace(MutableMapping):
                 r.delete(*to_delete)
             if cursor == 0:
                 break
+
+    def destroy(self) -> None:
+        self._domain.delete_namespace(self._name)
