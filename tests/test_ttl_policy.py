@@ -11,7 +11,6 @@ from gpdatacached.ttl import (
     policy_for_ttl_change,
     policy_for_sliding_touch,
     apply_policy,
-    meta_ttl_value,
 )
 
 
@@ -171,16 +170,6 @@ class TestApplyPolicy:
         apply_policy(r, "testkey", p)
         r.expire.assert_called_once_with("testkey", 300)
         r.persist.assert_not_called()
-
-
-class TestMetaTtlValue:
-    def test_zero_ttl_returns_empty_string(self):
-        p = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
-        assert meta_ttl_value(p) == ""
-
-    def test_positive_ttl_returns_string(self):
-        p = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
-        assert meta_ttl_value(p) == "300"
 
 
 class TestPolicyFromMetaInherited:

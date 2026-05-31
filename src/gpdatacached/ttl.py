@@ -64,6 +64,3 @@ def apply_policy(r: "redis.Redis", obj_key: str, policy: TTLPolicy) -> None:
     else:
         r.expire(obj_key, policy.expire_seconds)
 
-
-def meta_ttl_value(policy: TTLPolicy) -> str:
-    return str(policy.declared_ttl) if policy.declared_ttl else ""
