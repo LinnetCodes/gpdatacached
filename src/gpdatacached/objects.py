@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .domain import GPDCDomain
     from .namespace import GPDCNamespace
 
+from .exceptions import ObjectGoneError
 from .keys import make_object_key, make_uri
 from .meta import ObjectMeta
 from .ttl import _LifecycleContext
@@ -100,14 +101,14 @@ class GPDCDataObject(ABC):
         meta = self.meta
         return meta.cache_mode if meta else ""
 
-    def _load_lifecycle_context(self) -> _LifecycleContext | None:
+    def _load_lifecycle_context(self) -> _LifecycleContext:
         from .keys import make_ref_key
 
         key = self._canonical_redis_key()
         r = self._redis()
         meta = ObjectMeta.load(r, key)
         if meta is None:
-            return None
+            raise ObjectGoneError(self.canonical_uri)
         is_collection = meta.is_collection()
         raw_key = meta.value if is_collection else ""
         ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
@@ -121,8 +122,6 @@ class GPDCDataObject(ABC):
         if mode not in ("permanent", "ttl", "sliding"):
             raise ValueError(f"Invalid cache_mode: {mode!r}")
         ctx = self._load_lifecycle_context()
-        if ctx is None:
-            return
         current = policy_from_meta(ctx.meta)
         ctx.meta.with_updates(cache_mode=mode).save(ctx.r, ctx.key)
         new_policy = policy_for_cache_mode_change(current, mode)
@@ -139,8 +138,6 @@ class GPDCDataObject(ABC):
         from .ttl import apply_lifecycle
 
         ctx = self._load_lifecycle_context()
-        if ctx is None:
-            return
         current = policy_from_meta(ctx.meta)
         ctx.meta.with_updates(ttl=seconds).save(ctx.r, ctx.key)
         new_policy = policy_for_ttl_change(current, seconds)
@@ -161,8 +158,6 @@ class GPDCDataObject(ABC):
         from .ttl import TTLPolicy
 
         ctx = self._load_lifecycle_context()
-        if ctx is None:
-            return
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
         apply_lifecycle(ctx.r, ctx.key, ctx.raw_key, ctx.ref_key, ctx.is_collection, policy)
 
@@ -171,8 +166,6 @@ class GPDCDataObject(ABC):
         from .ttl import TTLPolicy
 
         ctx = self._load_lifecycle_context()
-        if ctx is None:
-            return
         seconds = max(0, int((when - datetime.datetime.now(datetime.UTC)).total_seconds()))
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
         apply_lifecycle(ctx.r, ctx.key, ctx.raw_key, ctx.ref_key, ctx.is_collection, policy)
@@ -182,8 +175,6 @@ class GPDCDataObject(ABC):
         from .ttl import apply_lifecycle
 
         ctx = self._load_lifecycle_context()
-        if ctx is None:
-            return
         current = policy_from_meta(ctx.meta)
         apply_lifecycle(
             ctx.r,

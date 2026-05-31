@@ -3,7 +3,7 @@ __version__ = "0.1.0"
 
 from .codec import GPDCCodec, GPDCScalarCodec
 from .config import GPDCDomainConfig, GPDCNamespaceConfig
-from .exceptions import CanonicalObjectReferencedError
+from .exceptions import CanonicalObjectReferencedError, ObjectGoneError
 from .domain import GPDCDomain
 from .keys import make_uri, uri_to_redis_key, validate_object_name
 from .namespace import GPDCNamespace
@@ -31,6 +31,7 @@ from .container import (
 __all__ = [
     "__version__",
     "CanonicalObjectReferencedError",
+    "ObjectGoneError",
     "GPDCDomain",
     "GPDCNamespace",
     "GPDCDomainConfig",

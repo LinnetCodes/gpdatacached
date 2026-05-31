@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
 from .codec import SetCodec
+from .exceptions import ObjectGoneError
 from .keys import make_object_key, make_raw_key, make_ref_key
 from .objects import GPDCDataObject
 from .meta import ObjectMeta
@@ -39,7 +40,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         item_count = self._current_item_count()
         meta = ObjectMeta.load(r, key)
         if meta is None:
-            return
+            raise ObjectGoneError(self.canonical_uri)
         meta.touch(now, item_count=item_count).save(r, key)
         current = policy_from_meta(meta)
         new_policy = policy_for_sliding_touch(current)

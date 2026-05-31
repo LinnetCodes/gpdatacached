@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 
+class ObjectGoneError(Exception):
+    def __init__(self, object_uri: str) -> None:
+        self.object_uri = object_uri
+        super().__init__(f"Object {object_uri!r} no longer exists in Redis")
+
+
 class CanonicalObjectReferencedError(Exception):
     def __init__(
         self,

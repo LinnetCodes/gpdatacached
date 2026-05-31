@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime
+from .exceptions import ObjectGoneError
 from .objects import GPDCDataObject
 from .meta import ObjectMeta
 
@@ -44,7 +45,7 @@ class GPDCScalarObject(GPDCDataObject):
         r = self._redis()
         meta = ObjectMeta.load(r, key)
         if meta is None:
-            return
+            raise ObjectGoneError(self.canonical_uri)
         meta.with_updates(value=encoded, updated_at=now).save(r, key)
         current = policy_from_meta(meta)
         new_policy = policy_for_sliding_touch(current)
