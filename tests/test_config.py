@@ -23,8 +23,6 @@ class TestGPDCDomainConfig:
         assert cfg.redis_port == 6379
         assert cfg.redis_db == 0
         assert cfg.redis_password == ""
-        assert cfg.redis_max_retries == 3
-        assert cfg.redis_retry_delay == 1.0
         assert cfg.default_cache_mode == "permanent"
         assert cfg.default_ttl_seconds == 0
         assert cfg.gc_enabled is False

@@ -38,8 +38,6 @@ class GPDCDomainConfig(GPConfig):
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: str = ""
-    redis_max_retries: int = 3
-    redis_retry_delay: float = 1.0
 
     default_cache_mode: str = "permanent"
     default_ttl_seconds: int = 0
