@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import ClassVar, Optional
 
 from gpconfig import GPConfig
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 
 class GPDCNamespaceConfig(GPConfig):
@@ -47,7 +47,7 @@ class GPDCDomainConfig(GPConfig):
     gc_enabled: bool = False
     gc_interval_seconds: int = 300
 
-    namespaces: dict[str, dict] = {}
+    namespaces: dict[str, GPDCNamespaceConfig] = Field(default_factory=dict)
 
     @field_validator("default_cache_mode")
     @classmethod

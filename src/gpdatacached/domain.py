@@ -80,15 +80,10 @@ class GPDCDomain(GPConfigurable):
         namespace does not yet exist in Redis the per-namespace config is used;
         if it already exists the Redis metadata is left untouched.
         """
-        from .config import GPDCNamespaceConfig
         from .namespace import GPDCNamespace
 
-        for ns_name, ns_cfg_dict in self._config.namespaces.items():
+        for ns_name, ns_config in self._config.namespaces.items():
             if ns_name not in self._namespaces:
-                ns_config = GPDCNamespaceConfig(
-                    default_cache_mode=ns_cfg_dict.get("default_cache_mode"),
-                    default_ttl_seconds=ns_cfg_dict.get("default_ttl_seconds"),
-                )
                 self._namespaces[ns_name] = GPDCNamespace(ns_name, self, config=ns_config)
 
     @property
