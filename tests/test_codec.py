@@ -177,9 +177,19 @@ class TestTupleEncoding:
         decoded = TupleCodec.decode_value(encoded)
         assert decoded == original
 
-    def test_encode_tuple_rejects_empty(self):
-        with pytest.raises(ValueError, match="empty tuple"):
-            TupleCodec.encode_value(())
+    def test_encode_empty_tuple(self):
+        result = TupleCodec.encode_value(())
+        assert result == "tuple:[]"
+
+    def test_decode_empty_tuple(self):
+        result = TupleCodec.decode_value("tuple:[]")
+        assert result == ()
+
+    def test_roundtrip_empty_tuple(self):
+        original = ()
+        encoded = TupleCodec.encode_value(original)
+        decoded = TupleCodec.decode_value(encoded)
+        assert decoded == original
 
     def test_encode_tuple_rejects_non_scalar(self):
         with pytest.raises(TypeError):

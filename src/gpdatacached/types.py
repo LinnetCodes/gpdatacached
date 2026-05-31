@@ -111,6 +111,8 @@ def encode_key(value: object) -> str:
     entry = GPDCTypeRegistry.lookup_by_python_type(value)
     if entry.is_container:
         raise TypeError(f"Cannot use container type as key: {type(value).__name__!r}")
+    if isinstance(value, tuple) and len(value) == 0:
+        raise TypeError("Cannot use empty tuple as key")
     return entry.codec_class.encode_value(value)
 
 

@@ -31,9 +31,9 @@
 ### P2 - 中期改进（设计决策）
 | # | 问题 | 状态 | 备注 |
 |---|------|------|------|
-| 4 | `get_object` setdefault 行为不一致 | ⬜ 待处理 | 命名/语义设计决策 |
-| 5 | 容器协议兼容性 (keys/values/items 返回 list) | ⬜ 待处理 | Liskov 替换 vs 性能权衡 |
-| 10 | `TupleObject` 功能半成品 | ⬜ 待处理 | 升级为容器 or 文档化限制 |
+| 4 | `get_object` setdefault 行为不一致 | ✅ 已完成 | `get_object` 改为只读(raise KeyError)；setdefault 语义分离到新方法 `ensure_object` |
+| 5 | 容器协议兼容性 (keys/values/items 返回 list) | ✅ 已完成 | 改为返回 KeysView/ValuesView/ItemsView 快照视图，LSP 类型兼容 |
+| 10 | `TupleObject` 功能半成品 | ✅ 已完成 | 保持标量定位；空元组值可用/key 禁止；对象级测试补充 |
 | 8 | `GPDCDomain` 资源管理不完整 | ⬜ 待处理 | close() 语义需明确 |
 | 9 | GC 缺乏域级清理 | ⬜ 待处理 | 需新增 API |
 | 13 | 测试覆盖缺口 | ⬜ 待处理 | 伴随各问题逐步补充 |
@@ -41,5 +41,5 @@
 
 ## 当前进度
 
-- **当前问题**: 无（#1 已完成）
-- **下一个**: P2 #4 `get_object` setdefault 行为不一致
+- **当前问题**: 无（#10 已确认完成）
+- **下一个**: P2 #8 GPDCDomain 资源管理不完整

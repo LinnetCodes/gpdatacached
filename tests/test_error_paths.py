@@ -50,11 +50,11 @@ class TestCodecErrorPaths:
         with pytest.raises(TypeError):
             IntCodec.encode_value(complex(1, 2))
 
-    def test_encode_empty_tuple(self):
+    def test_encode_empty_tuple_succeeds(self):
         from gpdatacached.codec import TupleCodec
 
-        with pytest.raises(ValueError, match="Cannot encode empty tuple"):
-            TupleCodec.encode_value(())
+        result = TupleCodec.encode_value(())
+        assert result == "tuple:[]"
 
     def test_encode_tuple_with_list_element(self):
         from gpdatacached.codec import TupleCodec

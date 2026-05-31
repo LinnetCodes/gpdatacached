@@ -174,8 +174,6 @@ class TupleCodec(GPDCScalarCodec):
     def encode_value(cls, value: object) -> str:
         if not isinstance(value, tuple):
             raise TypeError(f"TupleCodec cannot encode {type(value).__name__!r}")
-        if not value:
-            raise ValueError("Cannot encode empty tuple")
         from .types import GPDCTypeRegistry
 
         encoded_elems = []
@@ -224,7 +222,6 @@ class GPDCContainerCodec(ABC):
     @abstractmethod
     def delete_raw(cls, namespace, raw_key: str) -> None:
         """Delete raw data storage from Redis."""
-
 
 
 class ListCodec(GPDCContainerCodec):
