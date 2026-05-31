@@ -166,13 +166,17 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def _current_item_count(self) -> int:
         return self._redis().llen(self.raw_key)
 
-    def __getitem__(self, index: int) -> object:
-        r = self._redis()
-        length = r.llen(self.raw_key)
+    def _normalize_index(self, index: int, message: str = "list index out of range") -> int:
+        length = self._redis().llen(self.raw_key)
         if index < 0:
             index = length + index
         if index < 0 or index >= length:
-            raise IndexError("list index out of range")
+            raise IndexError(message)
+        return index
+
+    def __getitem__(self, index: int) -> object:
+        r = self._redis()
+        index = self._normalize_index(index)
         encoded = r.lindex(self.raw_key, index)
         if encoded is None:
             raise IndexError("list index out of range")
@@ -180,11 +184,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
 
     def __setitem__(self, index: int, value: object) -> None:
         r = self._redis()
-        length = r.llen(self.raw_key)
-        if index < 0:
-            index = length + index
-        if index < 0 or index >= length:
-            raise IndexError("list assignment index out of range")
+        index = self._normalize_index(index, "list assignment index out of range")
         old_encoded = r.lindex(self.raw_key, index)
         if self._is_container_ref(old_encoded):
             self._reject_container_slot_overwrite()
@@ -194,11 +194,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
 
     def _delete_index(self, index: int) -> str:
         r = self._redis()
-        length = r.llen(self.raw_key)
-        if index < 0:
-            index = length + index
-        if index < 0 or index >= length:
-            raise IndexError("list assignment index out of range")
+        index = self._normalize_index(index, "list assignment index out of range")
         old_encoded = r.lindex(self.raw_key, index)
         if old_encoded is None:
             raise IndexError("list assignment index out of range")
@@ -255,13 +251,8 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
             value = self._pop_value_from_encoded(encoded)
             self._delete_index(-1)
             return value
-        r = self._redis()
-        length = r.llen(self.raw_key)
-        if index < 0:
-            index = length + index
-        if index < 0 or index >= length:
-            raise IndexError("pop index out of range")
-        encoded = r.lindex(self.raw_key, index)
+        index = self._normalize_index(index, "pop index out of range")
+        encoded = self._redis().lindex(self.raw_key, index)
         if encoded is None:
             raise IndexError("pop index out of range")
         value = self._pop_value_from_encoded(encoded)
