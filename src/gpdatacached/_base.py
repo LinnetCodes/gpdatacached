@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from .domain import GPDCDomain
@@ -17,6 +17,15 @@ if TYPE_CHECKING:
 
 from .keys import make_object_key, make_uri
 from .meta import ObjectMeta
+
+
+class _LifecycleContext(NamedTuple):
+    r: object
+    key: str
+    meta: ObjectMeta
+    raw_key: str
+    ref_key: str
+    is_collection: bool
 
 
 class GPDCDataObject(ABC):
@@ -86,26 +95,33 @@ class GPDCDataObject(ABC):
         meta = ObjectMeta.load(self._redis(), self._canonical_redis_key())
         return meta.cache_mode if meta else ""
 
-    @cache_mode.setter
-    def cache_mode(self, mode: str) -> None:
-        from .ttl import policy_from_meta, policy_for_cache_mode_change
-        from .meta import apply_lifecycle
+    def _load_lifecycle_context(self) -> _LifecycleContext | None:
         from .keys import make_ref_key
 
-        if mode not in ("permanent", "ttl", "sliding"):
-            raise ValueError(f"Invalid cache_mode: {mode!r}")
         key = self._canonical_redis_key()
         r = self._redis()
         meta = ObjectMeta.load(r, key)
         if meta is None:
-            return
-        current = policy_from_meta(meta)
-        meta.with_updates(cache_mode=mode).save(r, key)
-        new_policy = policy_for_cache_mode_change(current, mode)
+            return None
         is_collection = meta.is_collection()
         raw_key = meta.value if is_collection else ""
         ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
-        apply_lifecycle(r, key, raw_key, ref_key, is_collection, new_policy)
+        return _LifecycleContext(r=r, key=key, meta=meta, raw_key=raw_key, ref_key=ref_key, is_collection=is_collection)
+
+    @cache_mode.setter
+    def cache_mode(self, mode: str) -> None:
+        from .ttl import policy_from_meta, policy_for_cache_mode_change
+        from .meta import apply_lifecycle
+
+        if mode not in ("permanent", "ttl", "sliding"):
+            raise ValueError(f"Invalid cache_mode: {mode!r}")
+        ctx = self._load_lifecycle_context()
+        if ctx is None:
+            return
+        current = policy_from_meta(ctx.meta)
+        ctx.meta.with_updates(cache_mode=mode).save(ctx.r, ctx.key)
+        new_policy = policy_for_cache_mode_change(current, mode)
+        apply_lifecycle(ctx.r, ctx.key, ctx.raw_key, ctx.ref_key, ctx.is_collection, new_policy)
 
     @property
     def ttl(self) -> int:
@@ -116,20 +132,14 @@ class GPDCDataObject(ABC):
     def ttl(self, seconds: int) -> None:
         from .ttl import policy_from_meta, policy_for_ttl_change
         from .meta import apply_lifecycle
-        from .keys import make_ref_key
 
-        key = self._canonical_redis_key()
-        r = self._redis()
-        meta = ObjectMeta.load(r, key)
-        if meta is None:
+        ctx = self._load_lifecycle_context()
+        if ctx is None:
             return
-        current = policy_from_meta(meta)
-        meta.with_updates(ttl=seconds).save(r, key)
+        current = policy_from_meta(ctx.meta)
+        ctx.meta.with_updates(ttl=seconds).save(ctx.r, ctx.key)
         new_policy = policy_for_ttl_change(current, seconds)
-        is_collection = meta.is_collection()
-        raw_key = meta.value if is_collection else ""
-        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
-        apply_lifecycle(r, key, raw_key, ref_key, is_collection, new_policy)
+        apply_lifecycle(ctx.r, ctx.key, ctx.raw_key, ctx.ref_key, ctx.is_collection, new_policy)
 
     @property
     def created_at(self) -> datetime.datetime | None:
@@ -144,56 +154,38 @@ class GPDCDataObject(ABC):
     def expire_in(self, seconds: int) -> None:
         from .meta import apply_lifecycle
         from .ttl import TTLPolicy
-        from .keys import make_ref_key
 
-        key = self._canonical_redis_key()
-        r = self._redis()
-        meta = ObjectMeta.load(r, key)
-        if meta is None:
+        ctx = self._load_lifecycle_context()
+        if ctx is None:
             return
-        is_collection = meta.is_collection()
-        raw_key = meta.value if is_collection else ""
-        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
-        apply_lifecycle(r, key, raw_key, ref_key, is_collection, policy)
+        apply_lifecycle(ctx.r, ctx.key, ctx.raw_key, ctx.ref_key, ctx.is_collection, policy)
 
     def expire_at(self, when: datetime.datetime) -> None:
         from .meta import apply_lifecycle
         from .ttl import TTLPolicy
-        from .keys import make_ref_key
 
-        key = self._canonical_redis_key()
-        r = self._redis()
-        meta = ObjectMeta.load(r, key)
-        if meta is None:
+        ctx = self._load_lifecycle_context()
+        if ctx is None:
             return
         seconds = max(0, int((when - datetime.datetime.now(datetime.UTC)).total_seconds()))
-        is_collection = meta.is_collection()
-        raw_key = meta.value if is_collection else ""
-        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
-        apply_lifecycle(r, key, raw_key, ref_key, is_collection, policy)
+        apply_lifecycle(ctx.r, ctx.key, ctx.raw_key, ctx.ref_key, ctx.is_collection, policy)
 
     def persist(self) -> None:
         from .ttl import policy_from_meta, TTLPolicy
         from .meta import apply_lifecycle
-        from .keys import make_ref_key
 
-        key = self._canonical_redis_key()
-        r = self._redis()
-        meta = ObjectMeta.load(r, key)
-        if meta is None:
+        ctx = self._load_lifecycle_context()
+        if ctx is None:
             return
-        current = policy_from_meta(meta)
-        is_collection = meta.is_collection()
-        raw_key = meta.value if is_collection else ""
-        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
+        current = policy_from_meta(ctx.meta)
         apply_lifecycle(
-            r,
-            key,
-            raw_key,
-            ref_key,
-            is_collection,
+            ctx.r,
+            ctx.key,
+            ctx.raw_key,
+            ctx.ref_key,
+            ctx.is_collection,
             TTLPolicy(
                 cache_mode=current.cache_mode,
                 declared_ttl=current.declared_ttl,

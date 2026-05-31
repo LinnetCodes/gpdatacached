@@ -24,15 +24,14 @@ from .keys import (
 from .meta import ObjectMeta
 from .types import GPDCTypeRegistry
 
-_MISSING = object()
-
 
 class GPDCNamespace(MutableMapping):
     """Logical isolation space within a GPDCDomain.
 
     Implements the full ``MutableMapping`` interface backed by Redis.
     Keys are named object names; ``__getitem__`` returns Python native values.
-    Use ``get_object()`` to retrieve ``GPDCScalarObject`` instances.
+    Use ``get_object()`` to retrieve ``GPDCDataObject`` instances (read-only).
+    Use ``ensure_object(key, default)`` to get an object or create it with a default value.
     Anonymous objects (names starting with ``~``) are stored in the same
     Redis key space but are excluded from all public MutableMapping methods
     (``__iter__``, ``__len__``, ``__contains__``).
@@ -367,12 +366,13 @@ class GPDCNamespace(MutableMapping):
             return obj
         return obj.value
 
-    def get_object(self, key: str, default=_MISSING):
+    def get_object(self, key: str):
+        return self._get_object(key)
+
+    def ensure_object(self, key: str, default):
         try:
             return self._get_object(key)
         except KeyError:
-            if default is _MISSING:
-                raise
             self[key] = default
             return self._get_object(key)
 

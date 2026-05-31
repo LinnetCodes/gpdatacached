@@ -80,7 +80,7 @@ class TestSpecVerification:
 
         test_ns.setdefault("test_setdefault", "hello, default")
         assert test_ns["test_setdefault"] == "hello, default"
-        obj = test_ns.get_object("test_get", 100)
+        obj = test_ns.ensure_object("test_get", 100)
         assert obj.value == 100
         assert test_ns["test_get"] == 100
 

@@ -149,21 +149,11 @@ class TestGetObject:
         with pytest.raises(KeyError):
             ns.get_object("nonexistent")
 
-    def test_get_object_with_native_default_creates_and_returns(self, ns):
-        obj = ns.get_object("new_key", 99)
-        assert obj.value == 99
-        assert "new_key" in ns
-
-    def test_get_object_with_gpdc_object_default_unwraps(self, ns):
-        ns["src"] = 10
-        obj = ns.get_object("copy", ns.get_object("src"))
-        assert obj.value == 10
-        assert "copy" in ns
-
-    def test_get_object_existing_ignores_default(self, ns):
-        ns["x"] = 42
-        obj = ns.get_object("x", 999)
-        assert obj.value == 42
+    def test_get_object_is_read_only(self, ns):
+        assert "z" not in ns
+        with pytest.raises(KeyError):
+            ns.get_object("z")
+        assert "z" not in ns
 
     def test_get_object_returns_correct_uri(self, ns):
         ns["counter"] = 1
@@ -174,6 +164,28 @@ class TestGetObject:
         ns["counter"] = 1
         obj = ns.get_object("counter")
         assert obj.name == "counter"
+
+
+class TestEnsureObject:
+    def test_ensure_object_creates_when_missing(self, ns):
+        obj = ns.ensure_object("new_key", 99)
+        assert obj.value == 99
+        assert "new_key" in ns
+
+    def test_ensure_object_returns_existing(self, ns):
+        ns["x"] = 42
+        obj = ns.ensure_object("x", 999)
+        assert obj.value == 42
+
+    def test_ensure_object_with_gpdc_object_default(self, ns):
+        ns["src"] = 10
+        obj = ns.ensure_object("copy", ns.get_object("src"))
+        assert obj.value == 10
+        assert "copy" in ns
+
+    def test_ensure_object_missing_no_default_raises(self, ns):
+        with pytest.raises(TypeError):
+            ns.ensure_object("nonexistent")
 
 
 class TestNamespaceDelItem:
