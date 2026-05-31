@@ -205,9 +205,6 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         self._touch()
         return old_encoded
 
-    def _pop_value_from_encoded(self, encoded: str) -> object:
-        return self._materialize_decoded_value(encoded)
-
     def __delitem__(self, index: int) -> None:
         self._delete_index(index)
 
@@ -248,14 +245,14 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
             encoded = r.lindex(self.raw_key, -1)
             if encoded is None:
                 raise IndexError("pop from empty list")
-            value = self._pop_value_from_encoded(encoded)
+            value = self._materialize_decoded_value(encoded)
             self._delete_index(-1)
             return value
         index = self._normalize_index(index, "pop index out of range")
         encoded = self._redis().lindex(self.raw_key, index)
         if encoded is None:
             raise IndexError("pop index out of range")
-        value = self._pop_value_from_encoded(encoded)
+        value = self._materialize_decoded_value(encoded)
         self._delete_index(index)
         return value
 
