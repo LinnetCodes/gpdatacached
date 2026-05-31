@@ -46,6 +46,16 @@ def make_object_key_prefix(domain: str, namespace: str) -> str:
     return f"gpdc:{domain}:{namespace}:obj:"
 
 
+def make_raw_key_prefix(domain: str, namespace: str) -> str:
+    """Return the prefix for all raw data keys in a namespace."""
+    return f"gpdc:{domain}:{namespace}:raw:"
+
+
+def make_ref_key_prefix(domain: str, namespace: str) -> str:
+    """Return the prefix for all reference tracking keys in a namespace."""
+    return f"gpdc:{domain}:{namespace}:ref:"
+
+
 def make_uri(domain: str, namespace: str, name: str) -> str:
     """Construct a GPDC URI: gpdc://domain/namespace/name"""
     return f"gpdc://{domain}/{namespace}/{name}"

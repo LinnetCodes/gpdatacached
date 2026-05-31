@@ -8,6 +8,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import redis
 
+from .keys import (
+    make_object_key,
+    make_object_key_prefix,
+    make_raw_key,
+    make_raw_key_prefix,
+    make_ref_key,
+    make_ref_key_prefix,
+)
 from .meta import ObjectMeta
 
 logger = logging.getLogger(__name__)
@@ -18,10 +26,9 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
 
     Returns the number of keys deleted.
     """
-    prefix = f"gpdc:{domain}:{namespace}:"
-    obj_prefix = f"{prefix}obj:"
-    raw_prefix = f"{prefix}raw:"
-    ref_prefix = f"{prefix}ref:"
+    obj_prefix = make_object_key_prefix(domain, namespace)
+    raw_prefix = make_raw_key_prefix(domain, namespace)
+    ref_prefix = make_ref_key_prefix(domain, namespace)
 
     deleted = 0
     raw_to_obj: dict[str, str] = {}
@@ -77,7 +84,7 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
             if raw_key in raw_to_obj:
                 continue
             name = raw_key[len(raw_prefix) :]
-            ref_key = ref_prefix + name
+            ref_key = make_ref_key(domain, namespace, name)
             referrers = r.smembers(ref_key)
             if not referrers:
                 r.delete(raw_key, ref_key)
@@ -85,7 +92,7 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
             else:
                 has_valid_referrer = False
                 for ref_name in referrers:
-                    check_obj_key = obj_prefix + ref_name
+                    check_obj_key = make_object_key(domain, namespace, ref_name)
                     if r.exists(check_obj_key):
                         has_valid_referrer = True
                         break
@@ -102,15 +109,15 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
         cursor, keys = r.scan(cursor=cursor, match=ref_pattern, count=100)
         for ref_key in keys:
             name = ref_key[len(ref_prefix) :]
-            raw_key = raw_prefix + name
-            obj_key = obj_prefix + name
+            raw_key = make_raw_key(domain, namespace, name)
+            obj_key = make_object_key(domain, namespace, name)
             if not r.exists(raw_key) and not r.exists(obj_key):
                 r.delete(ref_key)
                 deleted += 1
                 continue
             members = r.smembers(ref_key)
             for member in members:
-                member_obj_key = obj_prefix + member
+                member_obj_key = make_object_key(domain, namespace, member)
                 member_type = r.type(member_obj_key)
                 if member_type == "string":
                     member_ref = r.get(member_obj_key)
