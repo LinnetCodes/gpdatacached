@@ -346,29 +346,51 @@ class TestEffectivePolicy:
         assert policy.expire_seconds is None
 
 
-class TestObjectMetaExtField:
-    def test_ext_defaults_to_empty_dict(self):
+class TestObjectMetaExtraField:
+    def test_extra_defaults_to_empty_dict(self):
         meta = ObjectMeta(type="scalar:int")
-        assert meta.ext == {}
+        assert meta.extra == {}
 
-    def test_ext_accepts_initial_values(self):
-        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
-        assert meta.ext == {"compression": "zstd"}
+    def test_extra_accepts_string_values(self):
+        meta = ObjectMeta(type="scalar:int", extra={"compression": "zstd"})
+        assert meta.extra == {"compression": "zstd"}
 
-    def test_ext_in_to_redis_mapping_uses_dollar_prefix(self):
-        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd", "version": "2"})
+    def test_extra_accepts_native_types(self):
+        meta = ObjectMeta(
+            type="scalar:int",
+            extra={"count": 42, "ratio": 3.14, "active": True, "tag": "demo"},
+        )
+        assert meta.extra == {"count": 42, "ratio": 3.14, "active": True, "tag": "demo"}
+
+    def test_to_redis_mapping_encodes_scalar_values(self):
+        meta = ObjectMeta(type="scalar:int", extra={"count": 42, "flag": True, "tag": "demo"})
         mapping = meta.to_redis_mapping()
-        assert "$compression" in mapping
-        assert mapping["$compression"] == "zstd"
-        assert "$version" in mapping
-        assert mapping["$version"] == "2"
+        assert mapping["$count"] == "int:42"
+        assert mapping["$flag"] == "bool:True"
+        assert mapping["$tag"] == "str:demo"
 
-    def test_ext_empty_dict_not_in_redis_mapping(self):
+    def test_to_redis_mapping_encodes_string_values(self):
+        meta = ObjectMeta(type="scalar:int", extra={"compression": "zstd"})
+        mapping = meta.to_redis_mapping()
+        assert mapping["$compression"] == "str:zstd"
+
+    def test_extra_empty_dict_not_in_redis_mapping(self):
         meta = ObjectMeta(type="scalar:int")
         mapping = meta.to_redis_mapping()
         assert all(not k.startswith("$") for k in mapping)
 
-    def test_from_redis_parses_dollar_prefix_to_ext(self):
+    def test_from_redis_decodes_scalar_values(self):
+        data = {
+            "type": "scalar:int",
+            "value": "int:42",
+            "$count": "int:42",
+            "$flag": "bool:True",
+            "$tag": "str:demo",
+        }
+        meta = ObjectMeta.from_redis(data)
+        assert meta.extra == {"count": 42, "flag": True, "tag": "demo"}
+
+    def test_from_redis_backward_compat_plain_strings(self):
         data = {
             "type": "scalar:int",
             "value": "int:42",
@@ -376,120 +398,82 @@ class TestObjectMetaExtField:
             "$version": "2",
         }
         meta = ObjectMeta.from_redis(data)
-        assert meta.ext == {"compression": "zstd", "version": "2"}
+        assert meta.extra == {"compression": "zstd", "version": "2"}
 
-    def test_from_redis_without_ext_fields_gives_empty_ext(self):
+    def test_from_redis_without_extra_fields_gives_empty_extra(self):
         data = {"type": "scalar:int", "value": "int:42"}
         meta = ObjectMeta.from_redis(data)
-        assert meta.ext == {}
+        assert meta.extra == {}
 
-    def test_roundtrip_preserves_ext(self):
+    def test_roundtrip_preserves_native_types(self):
         original = ObjectMeta(
             type="scalar:int",
             value="int:42",
             cache_mode="ttl",
             ttl=300,
-            ext={"compression": "zstd"},
+            extra={"count": 42, "flag": True, "tag": "demo"},
         )
         mapping = original.to_redis_mapping()
         restored = ObjectMeta.from_redis(mapping)
-        assert restored.ext == {"compression": "zstd"}
-        assert restored.type == original.type
-        assert restored.value == original.value
-        assert restored.cache_mode == original.cache_mode
-        assert restored.ttl == original.ttl
+        assert restored.extra == {"count": 42, "flag": True, "tag": "demo"}
+
+    def test_roundtrip_preserves_string_values(self):
+        original = ObjectMeta(
+            type="scalar:int",
+            extra={"compression": "zstd"},
+        )
+        mapping = original.to_redis_mapping()
+        restored = ObjectMeta.from_redis(mapping)
+        assert restored.extra == {"compression": "zstd"}
+
+    def test_rejects_container_type_list(self):
+        with pytest.raises(TypeError, match="Container type"):
+            ObjectMeta(type="scalar:int", extra={"items": [1, 2, 3]})
+
+    def test_rejects_container_type_dict(self):
+        with pytest.raises(TypeError, match="Container type"):
+            ObjectMeta(type="scalar:int", extra={"items": {"a": 1}})
+
+    def test_rejects_container_type_set(self):
+        with pytest.raises(TypeError, match="Container type"):
+            ObjectMeta(type="scalar:int", extra={"items": {1, 2}})
 
 
-class TestObjectMetaExtAccessors:
-    def test_get_ext_returns_value(self):
-        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
-        assert meta.get_ext("compression") == "zstd"
-
-    def test_get_ext_returns_none_for_missing_key(self):
-        meta = ObjectMeta(type="scalar:int", ext={})
-        assert meta.get_ext("missing") is None
-
-    def test_has_ext_true(self):
-        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
-        assert meta.has_ext("compression") is True
-
-    def test_has_ext_false(self):
-        meta = ObjectMeta(type="scalar:int", ext={})
-        assert meta.has_ext("compression") is False
-
-    def test_ext_keys_returns_all_keys(self):
-        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd", "version": "2"})
-        assert sorted(meta.ext_keys()) == ["compression", "version"]
-
-    def test_ext_keys_empty(self):
-        meta = ObjectMeta(type="scalar:int", ext={})
-        assert meta.ext_keys() == []
-
-    def test_set_ext_adds_key(self):
-        meta = ObjectMeta(type="scalar:int")
-        meta.set_ext("compression", "zstd")
-        assert meta.ext["compression"] == "zstd"
-
-    def test_set_ext_overwrites_existing(self):
-        meta = ObjectMeta(type="scalar:int", ext={"compression": "gzip"})
-        meta.set_ext("compression", "zstd")
-        assert meta.ext["compression"] == "zstd"
-
-    def test_del_ext_removes_key(self):
-        meta = ObjectMeta(type="scalar:int", ext={"compression": "zstd", "version": "2"})
-        meta.del_ext("compression")
-        assert "compression" not in meta.ext
-        assert meta.ext == {"version": "2"}
-
-    def test_del_ext_silent_on_missing_key(self):
-        meta = ObjectMeta(type="scalar:int", ext={})
-        meta.del_ext("missing")
-
-    def test_update_ext_batch_set(self):
-        meta = ObjectMeta(type="scalar:int")
-        meta.update_ext({"compression": "zstd", "version": "2"})
-        assert meta.ext == {"compression": "zstd", "version": "2"}
-
-    def test_update_ext_merges_with_existing(self):
-        meta = ObjectMeta(type="scalar:int", ext={"compression": "gzip"})
-        meta.update_ext({"compression": "zstd", "version": "2"})
-        assert meta.ext == {"compression": "zstd", "version": "2"}
-
-
-class TestObjectMetaExtWithExistingMethods:
-    def test_with_updates_preserves_ext(self):
-        original = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
+class TestObjectMetaExtraWithExistingMethods:
+    def test_with_updates_preserves_extra(self):
+        original = ObjectMeta(type="scalar:int", extra={"count": 42})
         updated = original.with_updates(cache_mode="ttl", ttl=300)
-        assert updated.ext == {"compression": "zstd"}
+        assert updated.extra == {"count": 42}
         assert updated.cache_mode == "ttl"
         assert updated.ttl == 300
 
-    def test_with_updates_can_replace_ext(self):
-        original = ObjectMeta(type="scalar:int", ext={"compression": "zstd"})
-        updated = original.with_updates(ext={"version": "2"})
-        assert updated.ext == {"version": "2"}
+    def test_with_updates_can_replace_extra(self):
+        original = ObjectMeta(type="scalar:int", extra={"count": 42})
+        updated = original.with_updates(extra={"version": 2})
+        assert updated.extra == {"version": 2}
 
-    def test_touch_preserves_ext(self):
+    def test_touch_preserves_extra(self):
         now = datetime(2025, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
-        original = ObjectMeta(type="collection:list", value="raw:1", ext={"compression": "zstd"})
+        original = ObjectMeta(type="collection:list", value="raw:1", extra={"count": 42})
         touched = original.touch(now, item_count=5)
-        assert touched.ext == {"compression": "zstd"}
+        assert touched.extra == {"count": 42}
         assert touched.updated_at == now
         assert touched.item_count == 5
 
-    def test_save_and_load_roundtrip_with_ext(self):
+    def test_save_and_load_roundtrip_with_extra(self):
         r = MagicMock()
         meta = ObjectMeta(
             type="scalar:int",
             value="int:42",
             cache_mode="ttl",
             ttl=300,
-            ext={"compression": "zstd", "version": "2"},
+            extra={"count": 42, "flag": True, "tag": "demo"},
         )
         meta.save(r, "gpdc:d:ns:obj:x")
         call_args = r.hset.call_args
         mapping = call_args[1]["mapping"]
-        assert mapping["$compression"] == "zstd"
-        assert mapping["$version"] == "2"
+        assert mapping["$count"] == "int:42"
+        assert mapping["$flag"] == "bool:True"
+        assert mapping["$tag"] == "str:demo"
         restored = ObjectMeta.from_redis(mapping)
-        assert restored.ext == {"compression": "zstd", "version": "2"}
+        assert restored.extra == {"count": 42, "flag": True, "tag": "demo"}

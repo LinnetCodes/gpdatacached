@@ -1,9 +1,38 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+
+def _encode_extra_value(value: Any) -> str:
+    from .types import GPDCTypeRegistry
+
+    entry = GPDCTypeRegistry.lookup_by_python_type(value)
+    if entry.is_container:
+        raise TypeError(
+            f"Container type {type(value).__name__!r} is not supported in extra metadata"
+        )
+    return entry.codec_class.encode_value(value)
+
+
+def _decode_extra_value(encoded: str) -> Any:
+    if not encoded or ":" not in encoded:
+        return encoded
+    from .types import GPDCTypeRegistry
+
+    colon_idx = encoded.index(":")
+    type_name = encoded[:colon_idx]
+    gpdc_type = f"scalar:{type_name}"
+    try:
+        entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
+    except ValueError:
+        return encoded
+    try:
+        return entry.codec_class.decode_value(encoded)
+    except ValueError:
+        return encoded
 
 
 class ObjectMeta(BaseModel):
@@ -14,41 +43,26 @@ class ObjectMeta(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     item_count: int | None = None
-    ext: dict[str, str] = Field(default_factory=dict)
-
-    def get_ext(self, key: str) -> str | None:
-        return self.ext.get(key)
-
-    def has_ext(self, key: str) -> bool:
-        return key in self.ext
-
-    def ext_keys(self) -> list[str]:
-        return list(self.ext.keys())
-
-    def set_ext(self, key: str, value: str) -> None:
-        self.ext[key] = value
-
-    def del_ext(self, key: str) -> None:
-        self.ext.pop(key, None)
-
-    def update_ext(self, data: dict[str, str]) -> None:
-        self.ext.update(data)
+    extra: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _validate_ttl(self) -> ObjectMeta:
+    def _validate(self) -> ObjectMeta:
         if self.ttl < 0:
             raise ValueError("ttl must be >= 0")
+        for v in self.extra.values():
+            _encode_extra_value(v)
         return self
 
     @classmethod
     def from_redis(cls, data: dict) -> ObjectMeta:
         builtin: dict[str, str] = {}
-        ext: dict[str, str] = {}
+        extra_raw: dict[str, str] = {}
         for k, v in data.items():
             if k.startswith("$"):
-                ext[k[1:]] = v
+                extra_raw[k[1:]] = v
             else:
                 builtin[k] = v
+        extra = {k: _decode_extra_value(v) for k, v in extra_raw.items()}
         cache_mode = builtin.get("cache_mode") or "permanent"
         ttl_str = builtin.get("ttl", "")
         ttl = int(ttl_str) if ttl_str else 0
@@ -63,7 +77,7 @@ class ObjectMeta(BaseModel):
             created_at=datetime.fromisoformat(created_at_str) if created_at_str else None,
             updated_at=datetime.fromisoformat(updated_at_str) if updated_at_str else None,
             item_count=int(item_count_str) if item_count_str is not None else None,
-            ext=ext,
+            extra=extra,
         )
 
     def to_redis_mapping(self) -> dict[str, str]:
@@ -79,8 +93,8 @@ class ObjectMeta(BaseModel):
             mapping["updated_at"] = self.updated_at.isoformat()
         if self.item_count is not None:
             mapping["item_count"] = str(self.item_count)
-        for k, v in self.ext.items():
-            mapping[f"${k}"] = v
+        for k, v in self.extra.items():
+            mapping[f"${k}"] = _encode_extra_value(v)
         return mapping
 
     def is_collection(self) -> bool:
