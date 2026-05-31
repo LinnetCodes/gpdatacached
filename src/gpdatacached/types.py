@@ -92,7 +92,7 @@ def encode_element(
 
 
 def decode_element(encoded: str, namespace: GPDCNamespace) -> object:
-    if isinstance(encoded, str) and encoded.startswith("ref:"):
+    if encoded.startswith("ref:"):
         return _load_ref_object(namespace, encoded)
     if not encoded or ":" not in encoded:
         raise ValueError(f"Invalid scalar encoding: {encoded!r}")
