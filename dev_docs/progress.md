@@ -52,7 +52,7 @@
 | # | 问题 | 建议优先级 | 状态 | 评估 |
 |---|------|------------|------|------|
 | 4.2 | `ListObject.remove` 从自己所在模块导入 (`container.py:260`) | P1 | ✅ 已修复 | 删除自引用 lazy import，直接使用模块级已定义的 `GPDCContainerObject`。 |
-| 2.2 | `objects.py` 属性重复加载 meta (`objects.py:83-139`) | P2 | 🔲 待讨论 | `cache_mode`/`ttl`/`created_at`/`updated_at` 各自独立 `ObjectMeta.load()`，连续读取会多次 Redis 往返。可引入对象级 meta 缓存或 `_load_meta()` 共享方法，但需考虑缓存失效策略。 |
+| 2.2 | `objects.py` 属性重复加载 meta (`objects.py:83-139`) | P2 | ✅ 已修复 | 增加 `meta` 属性（getter 加载 ObjectMeta，setter 保存并应用 lifecycle），4 个独立 getter 改为委托 `self.meta`。用户可通过 `obj.meta` 一次读取或批量修改 meta，避免多次 Redis 往返。 |
 | 7.2 | `__iter__` 逐名调用 `_resolve_binding` 效率低 (`namespace.py:484`) | P2 | 🔲 待讨论 | 每个对象名触发一次 Redis `TYPE` + 可能的 `HGETALL`，1000 对象 = 1000+ 往返。`__len__` 亦通过 `__iter__` 间接触发。可考虑批量加载 meta 或简化过滤。但需评估实际使用场景——如果命名空间通常只有几十个对象，影响可忽略。 |
 | 2.6 | `decode_element` 与 `decode_key` 解析逻辑重复 (`types.py:94-120`) | P3 | 🔲 待讨论 | 两个函数共享 `index(":")` → type_name → lookup → decode 的 4 行模式。可提取 `_decode_scalar(encoded)` 辅助函数。重复量小，但逻辑集中有利维护。 |
 | 3.4 | `_reject_container_slot_overwrite` / `_reject_value_replacement` 是一次性方法 (`container.py:82-88`) | — | 🔲 待讨论 | 经验证各被调用 3 次（非报告所述 1 次），提取为方法有避免重复字符串的合理性。**建议：保持现状，无需修改。** |

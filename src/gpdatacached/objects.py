@@ -79,8 +79,25 @@ class GPDCDataObject(ABC):
         return self.domain.redis
 
     @property
+    def meta(self) -> ObjectMeta | None:
+        return ObjectMeta.load(self._redis(), self._canonical_redis_key())
+
+    @meta.setter
+    def meta(self, new_meta: ObjectMeta) -> None:
+        from .keys import make_ref_key
+        from .ttl import apply_lifecycle, policy_from_meta
+
+        key = self._canonical_redis_key()
+        r = self._redis()
+        new_meta.save(r, key)
+        is_collection = new_meta.is_collection()
+        raw_key = new_meta.value if is_collection else ""
+        ref_key = make_ref_key(self.domain.name, self.namespace.name, self._canonical_name) if is_collection else ""
+        apply_lifecycle(r, key, raw_key, ref_key, is_collection, policy_from_meta(new_meta))
+
+    @property
     def cache_mode(self) -> str:
-        meta = ObjectMeta.load(self._redis(), self._canonical_redis_key())
+        meta = self.meta
         return meta.cache_mode if meta else ""
 
     def _load_lifecycle_context(self) -> _LifecycleContext | None:
@@ -113,7 +130,7 @@ class GPDCDataObject(ABC):
 
     @property
     def ttl(self) -> int:
-        meta = ObjectMeta.load(self._redis(), self._canonical_redis_key())
+        meta = self.meta
         return meta.ttl if meta else 0
 
     @ttl.setter
@@ -131,12 +148,12 @@ class GPDCDataObject(ABC):
 
     @property
     def created_at(self) -> datetime.datetime | None:
-        meta = ObjectMeta.load(self._redis(), self._canonical_redis_key())
+        meta = self.meta
         return meta.created_at if meta else None
 
     @property
     def updated_at(self) -> datetime.datetime | None:
-        meta = ObjectMeta.load(self._redis(), self._canonical_redis_key())
+        meta = self.meta
         return meta.updated_at if meta else None
 
     def expire_in(self, seconds: int) -> None:
