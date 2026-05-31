@@ -257,8 +257,6 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         return value
 
     def remove(self, value: object) -> None:
-        from .container import GPDCContainerObject
-
         target_ref = None
         if isinstance(value, GPDCContainerObject):
             if value._namespace is not self._namespace:

@@ -42,3 +42,23 @@
 | 6.7 | DictObject.keys/values/items 返回 list | P3 | ✅ 已关闭 | by design: DictObject 不继承 dict，Redis 远程数据无法支持视图语义，返回 list 快照合理，加 docstring 说明 |
 | 7.5 | 考虑移除 pydantic 依赖 | P3 | ✅ 已关闭 | by design: gpconfig.GPConfig 继承 pydantic.BaseModel，pydantic 为不可避免传递依赖；1.3 已显式声明依赖，无实际收益 |
 | 7.5a | ObjectMeta 用 pydantic 性能是否合适 | P3 | ✅ 已关闭 | 基准测试：pydantic model_copy 1.1us vs dataclass replace 1.6us，热点路径反而更优；相比 Redis 往返 ~100-1000us 开销可忽略 |
+
+---
+
+## 未列入修改列表的问题
+
+以下问题在评审报告 §1-§7 中提及，但未被收录到 §8 按优先级排序的修改建议中。经逐一验证当前代码状态和影响评估，补充如下：
+
+| # | 问题 | 建议优先级 | 状态 | 评估 |
+|---|------|------------|------|------|
+| 4.2 | `ListObject.remove` 从自己所在模块导入 (`container.py:260`) | P1 | ✅ 已修复 | 删除自引用 lazy import，直接使用模块级已定义的 `GPDCContainerObject`。 |
+| 2.2 | `objects.py` 属性重复加载 meta (`objects.py:83-139`) | P2 | 🔲 待讨论 | `cache_mode`/`ttl`/`created_at`/`updated_at` 各自独立 `ObjectMeta.load()`，连续读取会多次 Redis 往返。可引入对象级 meta 缓存或 `_load_meta()` 共享方法，但需考虑缓存失效策略。 |
+| 7.2 | `__iter__` 逐名调用 `_resolve_binding` 效率低 (`namespace.py:484`) | P2 | 🔲 待讨论 | 每个对象名触发一次 Redis `TYPE` + 可能的 `HGETALL`，1000 对象 = 1000+ 往返。`__len__` 亦通过 `__iter__` 间接触发。可考虑批量加载 meta 或简化过滤。但需评估实际使用场景——如果命名空间通常只有几十个对象，影响可忽略。 |
+| 2.6 | `decode_element` 与 `decode_key` 解析逻辑重复 (`types.py:94-120`) | P3 | 🔲 待讨论 | 两个函数共享 `index(":")` → type_name → lookup → decode 的 4 行模式。可提取 `_decode_scalar(encoded)` 辅助函数。重复量小，但逻辑集中有利维护。 |
+| 3.4 | `_reject_container_slot_overwrite` / `_reject_value_replacement` 是一次性方法 (`container.py:82-88`) | — | 🔲 待讨论 | 经验证各被调用 3 次（非报告所述 1 次），提取为方法有避免重复字符串的合理性。**建议：保持现状，无需修改。** |
+| 5.5 | `TupleObject` 注册为 scalar 但行为类似 container (`types.py:292`) | P3 | 🔲 待讨论 | 设计决策问题。tuple 作为 scalar 处理使其不能包含容器引用，但 tuple 本身是不可变的，语义上作为"复合标量"也算合理。改动会影响类型系统，收益不确定。 |
+| 6.2 | `GPDCDomain._namespaces` 类型标注为裸 `dict` (`domain.py:32`) | P3 | 🔲 待讨论 | 简单改为 `dict[str, GPDCNamespace]`，一行改动，无副作用。 |
+| 6.3 | `GPDCDomain._redis` 类型过度宽松 (`domain.py:31`) | P3 | 🔲 待讨论 | 声明为 `redis.Redis | None` 但 `__init__` 中 `_connect()` 后永远非 None。可改为 `redis.Redis` 并用 `assert` 或延迟赋值。涉及初始化流程的小重构。 |
+| 6.4 | `redis` 属性 getter 返回类型与字段类型不一致 (`domain.py:94-95`) | P3 | 🔲 待讨论 | 与 6.3 相关。`_redis` 是 `Redis | None` 但 property 声明返回 `Redis`。修复 6.3 后此问题自然解决。 |
+| 6.5 | `__len__` 中 `_` 忽略循环变量 (`namespace.py:498`) | — | 🔲 待讨论 | 报告自身也承认"不算错误"。`sum(1 for _ in self)` 是常见 Python 惯用法，无需修改。**建议：不处理。** |
+| 5.3 | `_MISSING` 哨兵值位置不当 (`namespace.py:27`) | — | ✅ 已解决 | 随 5.1 修复（拆分 `get_object`/`ensure_object`）已移除，不再存在。 |
