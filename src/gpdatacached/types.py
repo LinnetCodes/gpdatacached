@@ -91,16 +91,20 @@ def encode_element(
     return entry.codec_class.encode_value(value)
 
 
-def decode_element(encoded: str, namespace: GPDCNamespace) -> object:
-    if encoded.startswith("ref:"):
-        return _load_ref_object(namespace, encoded)
+def _decode_scalar(encoded: str) -> object:
     if not encoded or ":" not in encoded:
-        raise ValueError(f"Invalid scalar encoding: {encoded!r}")
+        raise ValueError(f"Invalid encoding: {encoded!r}")
     colon_idx = encoded.index(":")
     type_name = encoded[:colon_idx]
     gpdc_type = f"scalar:{type_name}"
     entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
     return entry.codec_class.decode_value(encoded)
+
+
+def decode_element(encoded: str, namespace: GPDCNamespace) -> object:
+    if encoded.startswith("ref:"):
+        return _load_ref_object(namespace, encoded)
+    return _decode_scalar(encoded)
 
 
 def encode_key(value: object) -> str:
@@ -111,13 +115,7 @@ def encode_key(value: object) -> str:
 
 
 def decode_key(encoded: str) -> object:
-    if not encoded or ":" not in encoded:
-        raise ValueError(f"Invalid key encoding: {encoded!r}")
-    colon_idx = encoded.index(":")
-    type_name = encoded[:colon_idx]
-    gpdc_type = f"scalar:{type_name}"
-    entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
-    return entry.codec_class.decode_value(encoded)
+    return _decode_scalar(encoded)
 
 
 def _ref_existing_container(
