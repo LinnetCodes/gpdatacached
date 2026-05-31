@@ -31,7 +31,7 @@
 | 2.5 | ref name 收集逻辑重复 | P2 | ✅ 已修复 | 统一到 `keys.py` 的 `collect_ref_names_from_raw` + `_extract_ref_name` | |
 | 4.1 | `objects.py` 无意义的重导出 | P2 | ✅ 已修复 | 重构：`_base.py` 内容移入 `objects.py`（基类），`__init__.py` 负责汇聚导出，删除旧重导出模块 |
 | 4.3 | gc.py 绕过 keys.py 手动拼接 | P2 | ✅ 已修复 | 在 keys.py 补充 make_raw_key_prefix/make_ref_key_prefix，gc.py 改用 keys.py 函数构建所有 key |
-| 7.4 | gc.py 154 行单函数 | P2 | 🔲 待讨论 | |
+| 7.4 | gc.py 154 行单函数 | P2 | ✅ 已修复 | 拆分为 `_gc_scan_obj_keys`、`_gc_scan_raw_keys`、`_gc_scan_ref_keys` 三个子函数 |
 | 7.1 | GC 线程自动启动 | P2 | 🔲 待讨论 | |
 | **P3** | | | | |
 | 3.1 | `ObjectMeta.ext` 包装方法过度设计 | P3 | 🔲 待讨论 | |

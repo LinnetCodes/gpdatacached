@@ -21,19 +21,12 @@ from .meta import ObjectMeta
 logger = logging.getLogger(__name__)
 
 
-def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
-    """Scan one namespace and remove orphaned obj/raw/ref keys.
-
-    Returns the number of keys deleted.
-    """
-    obj_prefix = make_object_key_prefix(domain, namespace)
-    raw_prefix = make_raw_key_prefix(domain, namespace)
-    ref_prefix = make_ref_key_prefix(domain, namespace)
-
+def _gc_scan_obj_keys(
+    r: "redis.Redis",
+    obj_prefix: str,
+    raw_to_obj: dict[str, str],
+) -> int:
     deleted = 0
-    raw_to_obj: dict[str, str] = {}
-
-    # Phase 1: Scan obj:* keys
     obj_pattern = f"{obj_prefix}*"
     cursor = 0
     while True:
@@ -74,8 +67,17 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
                     deleted += 1
         if cursor == 0:
             break
+    return deleted
 
-    # Phase 2: Scan raw:* keys — find orphaned raw data
+
+def _gc_scan_raw_keys(
+    r: "redis.Redis",
+    domain: str,
+    namespace: str,
+    raw_prefix: str,
+    raw_to_obj: dict[str, str],
+) -> int:
+    deleted = 0
     raw_pattern = f"{raw_prefix}*"
     cursor = 0
     while True:
@@ -101,8 +103,16 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
                     deleted += 2
         if cursor == 0:
             break
+    return deleted
 
-    # Phase 3: Scan ref:* keys — clean stale members and orphaned ref sets
+
+def _gc_scan_ref_keys(
+    r: "redis.Redis",
+    domain: str,
+    namespace: str,
+    ref_prefix: str,
+) -> int:
+    deleted = 0
     ref_pattern = f"{ref_prefix}*"
     cursor = 0
     while True:
@@ -157,5 +167,22 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
                     r.srem(ref_key, member)
         if cursor == 0:
             break
+    return deleted
+
+
+def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
+    """Scan one namespace and remove orphaned obj/raw/ref keys.
+
+    Returns the number of keys deleted.
+    """
+    obj_prefix = make_object_key_prefix(domain, namespace)
+    raw_prefix = make_raw_key_prefix(domain, namespace)
+    ref_prefix = make_ref_key_prefix(domain, namespace)
+
+    raw_to_obj: dict[str, str] = {}
+
+    deleted = _gc_scan_obj_keys(r, obj_prefix, raw_to_obj)
+    deleted += _gc_scan_raw_keys(r, domain, namespace, raw_prefix, raw_to_obj)
+    deleted += _gc_scan_ref_keys(r, domain, namespace, ref_prefix)
 
     return deleted
