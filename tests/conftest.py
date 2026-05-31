@@ -43,7 +43,9 @@ def domain_config():
 def domain(clean_redis, domain_config):
     from gpdatacached.domain import GPDCDomain
 
-    return GPDCDomain("testdomain", domain_config)
+    d = GPDCDomain("testdomain", domain_config)
+    yield d
+    d.close()
 
 
 @pytest.fixture
@@ -69,4 +71,6 @@ def domain_config_with_namespaces():
 def domain_with_namespaces(clean_redis, domain_config_with_namespaces):
     from gpdatacached.domain import GPDCDomain
 
-    return GPDCDomain("testdomain", domain_config_with_namespaces)
+    d = GPDCDomain("testdomain", domain_config_with_namespaces)
+    yield d
+    d.close()

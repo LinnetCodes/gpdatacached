@@ -75,6 +75,8 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             return encoded in r.lrange(self.raw_key, 0, -1)
         if self.type == "collection:dict":
             return encoded in r.hvals(self.raw_key)
+        # SetObject is intentionally not supported here: encode_key rejects container
+        # types, so a set can never contain ref-encoded strings. See design doc.
         return False
 
     def _reject_container_slot_overwrite(self) -> None:
