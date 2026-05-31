@@ -138,7 +138,7 @@ class TestNamespaceGetItem:
 
 class TestGetObject:
     def test_get_object_existing_returns_scalar_object(self, ns):
-        from gpdatacached.objects import IntObject
+        from gpdatacached import IntObject
 
         ns["x"] = 42
         obj = ns.get_object("x")

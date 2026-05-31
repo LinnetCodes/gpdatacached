@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from .codec import SetCodec
 from .keys import make_object_key, make_raw_key, make_ref_key
-from ._base import GPDCDataObject
+from .objects import GPDCDataObject
 from .meta import ObjectMeta
 from .types import encode_element, decode_element, encode_key, decode_key
 

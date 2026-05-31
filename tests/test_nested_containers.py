@@ -9,7 +9,7 @@ from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
 from gpdatacached.exceptions import CanonicalObjectReferencedError
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
-from gpdatacached.objects import DictObject, ListObject, SetObject
+from gpdatacached import DictObject, ListObject, SetObject
 
 DOMAIN = "testdomain_nest"
 NS = "testns_nest"

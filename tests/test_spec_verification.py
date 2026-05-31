@@ -112,7 +112,7 @@ class TestSpecVerification:
 
     def test_list_type_identity(self, domain, clean_redis):
         # ── §2.1 类型标识 ───────────────────────────────────────────
-        from gpdatacached.objects import ListObject
+        from gpdatacached import ListObject
 
         ns = domain.get_namespace("spec_verification")
 
@@ -456,7 +456,7 @@ class TestSpecVerification:
 
     def test_dict_type_identity(self, domain, clean_redis):
         # ── §2.1 类型标识 ────────────────────────────────────────────
-        from gpdatacached.objects import DictObject
+        from gpdatacached import DictObject
 
         ns = domain.get_namespace("spec_verification")
 
@@ -546,7 +546,7 @@ class TestSpecVerification:
 
     def test_dict_element_encoding(self, domain, clean_redis):
         # ── §3 容器元素编码规则 ────────────────────────────────────────
-        from gpdatacached.objects import ListObject
+        from gpdatacached import ListObject
 
         ns = domain.get_namespace("spec_verification")
         d = "testdomain"
@@ -620,7 +620,7 @@ class TestSpecVerification:
 
     def test_dict_nesting_full_flow(self, domain, clean_redis):
         # ── §6 容器嵌套完整流程 ──────────────────────────────────────
-        from gpdatacached.objects import DictObject, ListObject
+        from gpdatacached import DictObject, ListObject
 
         ns = domain.get_namespace("spec_verification")
         d = "testdomain"
@@ -674,7 +674,7 @@ class TestSpecVerification:
 
     def test_dict_runtime_nesting(self, domain, clean_redis):
         # ── §9.3 value 编解码（运行时嵌套） ───────────────────────────
-        from gpdatacached.objects import DictObject, ListObject
+        from gpdatacached import DictObject, ListObject
 
         ns = domain.get_namespace("spec_verification")
 
@@ -774,7 +774,7 @@ class TestSpecVerification:
 
     def test_dict_full_data_flow(self, domain, clean_redis):
         # ── §11 完整数据流示例 ───────────────────────────────────────
-        from gpdatacached.objects import ListObject
+        from gpdatacached import ListObject
 
         ns = domain.get_namespace("spec_verification")
 
@@ -823,7 +823,7 @@ class TestSpecVerification:
 
     def test_set_object_hierarchy(self, domain, clean_redis):
         # ── §1.1 对象体系 — SetObject 是 GPDCContainerObject ──────────
-        from gpdatacached.objects import SetObject
+        from gpdatacached import SetObject
 
         ns = domain.get_namespace("spec_verification")
 
@@ -1061,7 +1061,7 @@ class TestSpecVerification:
 
     def test_set_as_dict_value(self, domain, clean_redis):
         # ── §7.1 三种容器类型可以任意嵌套 — Set 作为 Dict 的值 ────
-        from gpdatacached.objects import SetObject, ListObject, DictObject
+        from gpdatacached import SetObject, ListObject, DictObject
 
         ns = domain.get_namespace("spec_verification")
         d = "testdomain"
@@ -1093,7 +1093,7 @@ class TestSpecVerification:
 
     def test_set_as_list_element(self, domain, clean_redis):
         # ── §7.1 Set 作为 List 的元素 ────────────────────────────────
-        from gpdatacached.objects import SetObject
+        from gpdatacached import SetObject
 
         ns = domain.get_namespace("spec_verification")
         d = "testdomain"
@@ -1214,7 +1214,7 @@ class TestSpecVerification:
         ref_d = ns["ref"]
         assert isinstance(ref_d["list"], ListObject)
         assert list(ref_d["list"]) == [1, 2]
-        from gpdatacached.objects import SetObject
+        from gpdatacached import SetObject
 
         assert isinstance(ref_d["nums"], SetObject)
         assert set(ref_d["nums"]) == {1, 2, 3}

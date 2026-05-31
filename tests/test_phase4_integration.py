@@ -8,7 +8,7 @@ import redis as redis_lib
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
 from gpdatacached.keys import make_raw_key, make_ref_key
-from gpdatacached.objects import SetObject, ListObject, DictObject
+from gpdatacached import SetObject, ListObject, DictObject
 
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379

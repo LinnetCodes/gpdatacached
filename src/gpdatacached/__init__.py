@@ -8,21 +8,24 @@ from .domain import GPDCDomain
 from .keys import make_uri, uri_to_redis_key, validate_object_name
 from .namespace import GPDCNamespace
 from .types import GPDCTypeRegistry
-from .objects import (
-    BoolObject,
-    DateObject,
-    DateTimeObject,
-    DictObject,
-    FloatObject,
-    GPDCDataObject,
+from .objects import GPDCDataObject
+from .scalar import (
     GPDCScalarObject,
     IntObject,
-    ListObject,
-    NoneObject,
-    SetObject,
+    FloatObject,
     StrObject,
+    BoolObject,
+    DateTimeObject,
+    DateObject,
     TimeObject,
+    NoneObject,
     TupleObject,
+)
+from .container import (
+    GPDCContainerObject,
+    ListObject,
+    DictObject,
+    SetObject,
 )
 
 __all__ = [
@@ -46,6 +49,7 @@ __all__ = [
     "DictObject",
     "SetObject",
     "TupleObject",
+    "GPDCContainerObject",
     "GPDCCodec",
     "GPDCScalarCodec",
     "GPDCTypeRegistry",

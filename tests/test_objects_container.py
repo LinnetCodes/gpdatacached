@@ -10,7 +10,7 @@ import redis as redis_lib
 
 from gpdatacached.codec import ListCodec
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
-from gpdatacached.objects import ListObject
+from gpdatacached import ListObject
 
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379

@@ -1,7 +1,7 @@
 # tests/test_base.py
-"""Tests for _base.py module and objects.py re-exports (Phase 1 circular import resolution)."""
+"""Tests for objects.py (GPDCDataObject base class) and __init__.py re-exports."""
 
-from gpdatacached._base import GPDCDataObject
+from gpdatacached.objects import GPDCDataObject
 
 
 def test_base_module_exports_gpdcdataobject():
@@ -14,23 +14,23 @@ def test_base_module_exports_gpdcdataobject():
     assert hasattr(GPDCDataObject, "value")
 
 
-def test_objects_module_reexports():
-    import gpdatacached.objects as obj_mod
+def test_package_reexports():
+    import gpdatacached as pkg
 
-    assert obj_mod.GPDCDataObject is GPDCDataObject
-    assert issubclass(obj_mod.IntObject, GPDCDataObject)
-    assert issubclass(obj_mod.ListObject, GPDCDataObject)
-    assert issubclass(obj_mod.GPDCScalarObject, GPDCDataObject)
-    assert issubclass(obj_mod.GPDCContainerObject, GPDCDataObject)
-    assert issubclass(obj_mod.FloatObject, GPDCDataObject)
-    assert issubclass(obj_mod.StrObject, GPDCDataObject)
-    assert issubclass(obj_mod.BoolObject, GPDCDataObject)
-    assert issubclass(obj_mod.DateTimeObject, GPDCDataObject)
-    assert issubclass(obj_mod.DateObject, GPDCDataObject)
-    assert issubclass(obj_mod.TimeObject, GPDCDataObject)
-    assert issubclass(obj_mod.NoneObject, GPDCDataObject)
-    assert issubclass(obj_mod.DictObject, GPDCDataObject)
-    assert issubclass(obj_mod.SetObject, GPDCDataObject)
+    assert pkg.GPDCDataObject is GPDCDataObject
+    assert issubclass(pkg.IntObject, GPDCDataObject)
+    assert issubclass(pkg.ListObject, GPDCDataObject)
+    assert issubclass(pkg.GPDCScalarObject, GPDCDataObject)
+    assert issubclass(pkg.GPDCContainerObject, GPDCDataObject)
+    assert issubclass(pkg.FloatObject, GPDCDataObject)
+    assert issubclass(pkg.StrObject, GPDCDataObject)
+    assert issubclass(pkg.BoolObject, GPDCDataObject)
+    assert issubclass(pkg.DateTimeObject, GPDCDataObject)
+    assert issubclass(pkg.DateObject, GPDCDataObject)
+    assert issubclass(pkg.TimeObject, GPDCDataObject)
+    assert issubclass(pkg.NoneObject, GPDCDataObject)
+    assert issubclass(pkg.DictObject, GPDCDataObject)
+    assert issubclass(pkg.SetObject, GPDCDataObject)
 
 
 class TestDualIdentity:

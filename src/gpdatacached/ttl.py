@@ -4,11 +4,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from typing import NamedTuple
+
 from .keys import collect_ref_names_from_raw, make_object_key, make_ref_key
 from .meta import ObjectMeta
 
 if TYPE_CHECKING:
     import redis
+
+
+class _LifecycleContext(NamedTuple):
+    r: object
+    key: str
+    meta: ObjectMeta
+    raw_key: str
+    ref_key: str
+    is_collection: bool
 
 
 @dataclass(frozen=True)

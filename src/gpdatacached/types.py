@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
 from .keys import make_object_key, make_raw_key, make_ref_key
-from ._base import GPDCDataObject
+from .objects import GPDCDataObject
 
 
 @dataclass

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import datetime
-from ._base import GPDCDataObject
+from .objects import GPDCDataObject
 from .meta import ObjectMeta
 
 
