@@ -550,37 +550,22 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
             return self._redis().smembers(other.raw_key)
         return {encode_key(e) for e in other}
 
-    def __or__(self, other):
+    def _binop(self, other, op):
         self_set = self.value
-        if isinstance(other, SetObject):
-            other_set = other.value
-        else:
-            other_set = set(other)
-        return self_set | other_set
+        other_set = other.value if isinstance(other, SetObject) else set(other)
+        return op(self_set, other_set)
+
+    def __or__(self, other):
+        return self._binop(other, set.__or__)
 
     def __and__(self, other):
-        self_set = self.value
-        if isinstance(other, SetObject):
-            other_set = other.value
-        else:
-            other_set = set(other)
-        return self_set & other_set
+        return self._binop(other, set.__and__)
 
     def __sub__(self, other):
-        self_set = self.value
-        if isinstance(other, SetObject):
-            other_set = other.value
-        else:
-            other_set = set(other)
-        return self_set - other_set
+        return self._binop(other, set.__sub__)
 
     def __xor__(self, other):
-        self_set = self.value
-        if isinstance(other, SetObject):
-            other_set = other.value
-        else:
-            other_set = set(other)
-        return self_set ^ other_set
+        return self._binop(other, set.__xor__)
 
     def __ior__(self, other):
         other_encoded = self._to_encoded_set(other)
