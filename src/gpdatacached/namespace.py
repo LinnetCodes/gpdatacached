@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .domain import GPDCDomain
 
 from .keys import (
+    collect_ref_names_from_raw,
     make_domain_namespaces_key,
     make_namespace_meta_key,
     make_object_key,
@@ -211,7 +212,7 @@ class GPDCNamespace(MutableMapping):
         ref_key = make_ref_key(self._domain.name, self._name, key)
 
         if stored_raw_key and obj_type.startswith("collection:"):
-            nested_ref_names = self._collect_nested_ref_names(stored_raw_key, obj_type)
+            nested_ref_names = collect_ref_names_from_raw(r, stored_raw_key, obj_type)
             for nested_name in nested_ref_names:
                 nested_ref_key = make_ref_key(self._domain.name, self._name, nested_name)
                 r.srem(nested_ref_key, key)
@@ -225,7 +226,7 @@ class GPDCNamespace(MutableMapping):
     def _write_scalar_meta(
         self, obj_key: str, entry, encoded_value: str, policy, now: datetime.datetime, *, is_new: bool
     ) -> None:
-        from .meta import apply_lifecycle
+        from .ttl import apply_lifecycle
 
         r = self._redis()
         meta = ObjectMeta(
@@ -342,7 +343,7 @@ class GPDCNamespace(MutableMapping):
                 if not is_new:
                     entry.codec_class.delete_raw(self, raw_key)
                 entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
-            from .meta import apply_lifecycle
+            from .ttl import apply_lifecycle
 
             ref_key = make_ref_key(self._domain.name, self._name, key)
             apply_lifecycle(r, obj_key, raw_key, ref_key, True, policy)
@@ -432,28 +433,6 @@ class GPDCNamespace(MutableMapping):
         self._teardown_owner_container(key, resolution.meta)
         r.delete(obj_key)
 
-    def _collect_nested_ref_names(self, raw_key: str, raw_type: str) -> list[str]:
-        r = self._redis()
-        ref_names = []
-
-        def add_ref_name(encoded_ref: str) -> None:
-            ref_obj_key = encoded_ref[len("ref:") :]
-            ref_names.append(ref_obj_key.split(":obj:")[1])
-
-        if raw_type == "collection:dict":
-            for field, val in r.hgetall(raw_key).items():
-                if isinstance(val, str) and val.startswith("ref:"):
-                    add_ref_name(val)
-        elif raw_type == "collection:list":
-            for val in r.lrange(raw_key, 0, -1):
-                if isinstance(val, str) and val.startswith("ref:"):
-                    add_ref_name(val)
-        elif raw_type == "collection:set":
-            for val in r.smembers(raw_key):
-                if isinstance(val, str) and val.startswith("ref:"):
-                    add_ref_name(val)
-        return ref_names
-
     def _cascade_delete_anonymous(self, anon_name: str) -> None:
         r = self._redis()
         obj_key = make_object_key(self._domain.name, self._name, anon_name)
@@ -469,7 +448,7 @@ class GPDCNamespace(MutableMapping):
             return
 
         if raw_key and meta.is_collection():
-            nested_ref_names = self._collect_nested_ref_names(raw_key, meta.type)
+            nested_ref_names = collect_ref_names_from_raw(r, raw_key, meta.type)
             r.delete(raw_key)
 
             for nested in nested_ref_names:

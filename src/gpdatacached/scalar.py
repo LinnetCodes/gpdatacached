@@ -31,8 +31,8 @@ class GPDCScalarObject(GPDCDataObject):
     @value.setter
     def value(self, new_value: object) -> None:
         from .types import GPDCTypeRegistry
-        from .ttl import policy_from_meta, policy_for_sliding_touch
-        from .meta import ObjectMeta, apply_lifecycle
+        from .ttl import apply_lifecycle, policy_from_meta, policy_for_sliding_touch
+        from .meta import ObjectMeta
 
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(self.TYPE)
         expected_python_type = entry.python_type

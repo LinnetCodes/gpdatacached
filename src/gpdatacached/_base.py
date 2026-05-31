@@ -111,7 +111,7 @@ class GPDCDataObject(ABC):
     @cache_mode.setter
     def cache_mode(self, mode: str) -> None:
         from .ttl import policy_from_meta, policy_for_cache_mode_change
-        from .meta import apply_lifecycle
+        from .ttl import apply_lifecycle
 
         if mode not in ("permanent", "ttl", "sliding"):
             raise ValueError(f"Invalid cache_mode: {mode!r}")
@@ -131,7 +131,7 @@ class GPDCDataObject(ABC):
     @ttl.setter
     def ttl(self, seconds: int) -> None:
         from .ttl import policy_from_meta, policy_for_ttl_change
-        from .meta import apply_lifecycle
+        from .ttl import apply_lifecycle
 
         ctx = self._load_lifecycle_context()
         if ctx is None:
@@ -152,7 +152,7 @@ class GPDCDataObject(ABC):
         return meta.updated_at if meta else None
 
     def expire_in(self, seconds: int) -> None:
-        from .meta import apply_lifecycle
+        from .ttl import apply_lifecycle
         from .ttl import TTLPolicy
 
         ctx = self._load_lifecycle_context()
@@ -162,7 +162,7 @@ class GPDCDataObject(ABC):
         apply_lifecycle(ctx.r, ctx.key, ctx.raw_key, ctx.ref_key, ctx.is_collection, policy)
 
     def expire_at(self, when: datetime.datetime) -> None:
-        from .meta import apply_lifecycle
+        from .ttl import apply_lifecycle
         from .ttl import TTLPolicy
 
         ctx = self._load_lifecycle_context()
@@ -174,7 +174,7 @@ class GPDCDataObject(ABC):
 
     def persist(self) -> None:
         from .ttl import policy_from_meta, TTLPolicy
-        from .meta import apply_lifecycle
+        from .ttl import apply_lifecycle
 
         ctx = self._load_lifecycle_context()
         if ctx is None:

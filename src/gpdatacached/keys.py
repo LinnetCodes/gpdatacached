@@ -90,3 +90,29 @@ def validate_domain_name(name: str) -> None:
 def validate_namespace_name(name: str) -> None:
     """Validate a namespace name; raise ValueError if invalid or reserved."""
     _validate_name(name, "namespace name")
+
+
+def collect_ref_names_from_raw(r, raw_key: str, raw_type: str) -> list[str]:
+    """Scan a container's raw Redis data and return the names of all referenced objects."""
+    if not raw_key:
+        return []
+    names: list[str] = []
+    if raw_type == "collection:dict":
+        for val in r.hvals(raw_key):
+            _extract_ref_name(val, names)
+    elif raw_type == "collection:list":
+        for val in r.lrange(raw_key, 0, -1):
+            _extract_ref_name(val, names)
+    elif raw_type == "collection:set":
+        for val in r.smembers(raw_key):
+            _extract_ref_name(val, names)
+    return names
+
+
+def _extract_ref_name(encoded: str, names: list[str]) -> None:
+    """If *encoded* is a ref-encoded value, extract the object name and append to *names*."""
+    if isinstance(encoded, str) and encoded.startswith("ref:"):
+        obj_key = encoded[len("ref:") :]
+        parts = obj_key.split(":obj:")
+        if len(parts) == 2:
+            names.append(parts[1])

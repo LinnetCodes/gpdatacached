@@ -30,8 +30,8 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         self.ref_key: str = make_ref_key(domain_name, ns_name, name)
 
     def _touch(self) -> None:
-        from .ttl import policy_from_meta, policy_for_sliding_touch
-        from .meta import ObjectMeta, apply_lifecycle, propagate_lifecycle
+        from .ttl import apply_lifecycle, propagate_lifecycle, policy_from_meta, policy_for_sliding_touch
+        from .meta import ObjectMeta
 
         key = self._canonical_redis_key()
         now = datetime.datetime.now(datetime.UTC)

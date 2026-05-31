@@ -28,7 +28,7 @@
 | **P2** | | | | |
 | 2.3 | ListObject 负索引标准化重复 | P2 | ✅ 已修复 | 提取 `_normalize_index()` 辅助方法，消除 4 处重复 |
 | 2.4 | SetObject 四个集合运算方法重复 | P2 | ✅ 已修复 | 提取 `_binop(self, other, op)` 辅助方法，四个方法各变为一行委托 |
-| 2.5 | ref name 收集逻辑重复 | P2 | 🔲 待讨论 | |
+| 2.5 | ref name 收集逻辑重复 | P2 | ✅ 已修复 | 统一到 `keys.py` 的 `collect_ref_names_from_raw` + `_extract_ref_name` | |
 | 4.1 | `objects.py` 无意义的重导出 | P2 | 🔲 待讨论 | |
 | 4.3 | gc.py 绕过 keys.py 手动拼接 | P2 | 🔲 待讨论 | |
 | 7.4 | gc.py 154 行单函数 | P2 | 🔲 待讨论 | |

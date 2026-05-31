@@ -165,8 +165,8 @@ def _create_anonymous_object(
     cache_mode: str,
     ttl: int,
 ) -> tuple[str, str]:
-    from .ttl import policy_from_defaults
-    from .meta import ObjectMeta, apply_lifecycle
+    from .ttl import apply_lifecycle, policy_from_defaults
+    from .meta import ObjectMeta
 
     entry = GPDCTypeRegistry.lookup_by_python_type(python_value)
     now = datetime.datetime.now(datetime.UTC)

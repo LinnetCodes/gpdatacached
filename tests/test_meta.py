@@ -7,8 +7,8 @@ from pydantic import ValidationError
 
 from unittest.mock import MagicMock, call
 
-from gpdatacached.ttl import TTLPolicy
-from gpdatacached.meta import ObjectMeta, apply_lifecycle, effective_policy
+from gpdatacached.ttl import TTLPolicy, apply_lifecycle, effective_policy
+from gpdatacached.meta import ObjectMeta
 
 
 class TestObjectMetaFromRedis:
