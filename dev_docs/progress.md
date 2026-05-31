@@ -35,7 +35,7 @@
 | 7.1 | GC 线程自动启动 | P2 | ✅ 已关闭 | by design: `gc_enabled` 默认 `False`，已有 `run_gc()`/`close()`/context manager 控制 |
 | **P3** | | | | |
 | 3.1 | `ObjectMeta.ext` 包装方法过度设计 | P3 | ✅ 已修复 | 删除六个包装方法，`ext` 直接暴露为 `dict[str, str]`，删除对应测试 |
-| 3.2 | `populate_raw` 未使用 | P3 | 🔲 待讨论 | |
+| 3.2 | `populate_raw` 未使用 | P3 | ✅ 已修复 | 诞生即死代码，安全删除 |
 | 3.3 | `_pop_value_from_encoded` 无意义包装 | P3 | 🔲 待讨论 | |
 | 6.1 | `namespaces` 可变默认值 | P3 | 🔲 待讨论 | |
 | 6.6 | `decode_element` 多余 isinstance | P3 | 🔲 待讨论 | |
