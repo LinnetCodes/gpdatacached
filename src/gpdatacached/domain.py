@@ -35,6 +35,7 @@ class GPDCDomain(GPConfigurable):
         self._namespaces: dict[str, GPDCNamespace] = {}
         self._gc_thread: threading.Thread | None = None
         self._gc_stop_event = threading.Event()
+        self._closed = False
         self._redis: redis.Redis = None  # type: ignore[assignment]
         self._connect()
         self._start_gc()
@@ -97,11 +98,17 @@ class GPDCDomain(GPConfigurable):
     def __repr__(self) -> str:
         return f"GPDCDomain({self._name!r})"
 
+    def _check_open(self) -> None:
+        if self._closed:
+            raise RuntimeError(f"GPDCDomain {self._name!r} is closed")
+
     @property
     def redis(self) -> redis.Redis:
+        self._check_open()
         return self._redis
 
     def get_namespace(self, name: str):
+        self._check_open()
         from .namespace import GPDCNamespace
 
         if name not in self._namespaces:
@@ -109,17 +116,21 @@ class GPDCDomain(GPConfigurable):
         return self._namespaces[name]
 
     def __contains__(self, name: object) -> bool:
+        self._check_open()
         if not isinstance(name, str):
             return False
         return self._redis.sismember(make_domain_namespaces_key(self._name), name)
 
     def __iter__(self):
+        self._check_open()
         return iter(self._redis.smembers(make_domain_namespaces_key(self._name)))
 
     def __len__(self) -> int:
+        self._check_open()
         return self._redis.scard(make_domain_namespaces_key(self._name))
 
     def __getitem__(self, name: str):
+        self._check_open()
         if not self._redis.sismember(make_domain_namespaces_key(self._name), name):
             raise KeyError(name)
         if name not in self._namespaces:
@@ -156,6 +167,7 @@ class GPDCDomain(GPConfigurable):
 
     def run_gc(self, namespace: str | None = None) -> int:
         """Run GC manually. If namespace is None, run for all namespaces."""
+        self._check_open()
         from .gc import run_gc_for_namespace
 
         total = 0
@@ -167,12 +179,16 @@ class GPDCDomain(GPConfigurable):
         return total
 
     def close(self) -> None:
-        """Stop GC thread and release resources."""
+        if self._closed:
+            return
+        self._closed = True
         self._gc_stop_event.set()
         if self._gc_thread and self._gc_thread.is_alive():
             self._gc_thread.join(timeout=5)
         self._gc_thread = None
-        self._redis.close()
+        if self._redis is not None:
+            self._redis.close()
+            self._redis = None
 
     def __enter__(self):
         return self
@@ -180,3 +196,8 @@ class GPDCDomain(GPConfigurable):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
         return False
+
+    def __del__(self):
+        if not getattr(self, "_closed", True):
+            logger.warning("GPDCDomain %r was not explicitly closed; auto-closing in __del__", self._name)
+            self.close()
