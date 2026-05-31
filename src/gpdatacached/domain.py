@@ -94,6 +94,9 @@ class GPDCDomain(GPConfigurable):
     def name(self) -> str:
         return self._name
 
+    def __repr__(self) -> str:
+        return f"GPDCDomain({self._name!r})"
+
     @property
     def redis(self) -> redis.Redis:
         return self._redis

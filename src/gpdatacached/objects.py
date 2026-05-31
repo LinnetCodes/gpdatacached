@@ -200,3 +200,6 @@ class GPDCDataObject(ABC):
 
     def remaining_ttl(self) -> int:
         return self._redis().ttl(self._canonical_redis_key())
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(uri={self.uri!r})"

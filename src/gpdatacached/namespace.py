@@ -112,6 +112,9 @@ class GPDCNamespace(MutableMapping):
     def _redis(self):
         return self._domain.redis
 
+    def __repr__(self) -> str:
+        return f"GPDCNamespace({self._name!r}, domain={self._domain.name!r})"
+
     def _get_default_cache_mode(self) -> str:
         meta_key = make_namespace_meta_key(self._domain.name, self._name)
         val = self._redis().hget(meta_key, "default_cache_mode")
