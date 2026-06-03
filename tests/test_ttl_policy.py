@@ -200,3 +200,83 @@ class TestPolicyForCacheModeChangeRejectsInherited:
         current = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
         with pytest.raises(ValueError, match="Invalid cache_mode"):
             policy_for_cache_mode_change(current, "inherited")
+
+
+def test_effective_policy_removed():
+    import gpdatacached.ttl as ttl_mod
+
+    assert not hasattr(ttl_mod, "effective_policy")
+
+
+def test_validate_policy_rejects_invalid():
+    from gpdatacached.ttl import _validate_policy, TTLPolicy
+
+    with pytest.raises(ValueError):
+        _validate_policy(TTLPolicy(cache_mode="invalid", declared_ttl=0, expire_seconds=None))
+
+
+def test_validate_policy_rejects_negative_ttl():
+    from gpdatacached.ttl import _validate_policy, TTLPolicy
+
+    with pytest.raises(ValueError):
+        _validate_policy(TTLPolicy(cache_mode="ttl", declared_ttl=-1, expire_seconds=1))
+
+
+def test_propagate_lifecycle_uses_owner_check(clean_redis):
+    from gpdatacached.meta import ObjectMeta
+    from gpdatacached.keys import make_object_key, make_raw_key
+    from gpdatacached.ttl import propagate_lifecycle, TTLPolicy
+
+    r = clean_redis
+    parent_name = "parent"
+    child_owned = "~anon:owned"
+    child_not_owned = "~anon:free"
+
+    parent_key = make_object_key("d", "ns", parent_name)
+    parent_raw = make_raw_key("d", "ns", parent_name)
+    parent_meta = ObjectMeta(
+        type="collection:list",
+        value=parent_raw,
+        cache_mode="ttl",
+        ttl=60,
+        owner="parent",
+    )
+    parent_meta.save(r, parent_key)
+    r.rpush(
+        parent_raw,
+        f"ref:{make_object_key('d', 'ns', child_owned)}",
+        f"ref:{make_object_key('d', 'ns', child_not_owned)}",
+    )
+
+    owned_key = make_object_key("d", "ns", child_owned)
+    owned_raw = make_raw_key("d", "ns", child_owned)
+    owned_meta = ObjectMeta(
+        type="collection:dict",
+        value=owned_raw,
+        cache_mode="ttl",
+        ttl=30,
+        owner="parent",
+    )
+    owned_meta.save(r, owned_key)
+
+    not_owned_key = make_object_key("d", "ns", child_not_owned)
+    not_owned_raw = make_raw_key("d", "ns", child_not_owned)
+    not_owned_meta = ObjectMeta(
+        type="collection:dict",
+        value=not_owned_raw,
+        cache_mode="ttl",
+        ttl=30,
+        owner="other_obj",
+    )
+    not_owned_meta.save(r, not_owned_key)
+
+    policy = TTLPolicy(cache_mode="ttl", declared_ttl=120, expire_seconds=120)
+    propagate_lifecycle(r, "d", "ns", parent_name, policy, set())
+
+    updated_owned = ObjectMeta.load(r, owned_key)
+    assert updated_owned.ttl == 120
+    assert updated_owned.owner == "parent"
+
+    updated_not_owned = ObjectMeta.load(r, not_owned_key)
+    assert updated_not_owned.ttl == 30
+    assert updated_not_owned.owner == "other_obj"
