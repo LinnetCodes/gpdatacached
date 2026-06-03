@@ -85,7 +85,10 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         r = self._redis()
         r.srem(target_ref_key, self._binding_name())
         if target_name.startswith("~") and not r.smembers(target_ref_key):
-            self._namespace._cascade_delete_anonymous(target_name)
+            target_obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, target_name)
+            target_meta = ObjectMeta.load(r, target_obj_key)
+            if target_meta is None or target_meta.owner == self._binding_name():
+                self._namespace._cascade_delete_anonymous(target_name)
 
     def _owner_still_refs_encoded(self, encoded: str) -> bool:
         if not self.raw_key:
