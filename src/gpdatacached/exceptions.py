@@ -5,13 +5,13 @@ class GPDCError(Exception):
     """Base exception for all gpdatacached errors."""
 
 
-class ObjectGoneError(Exception):
+class ObjectGoneError(GPDCError):
     def __init__(self, object_uri: str) -> None:
         self.object_uri = object_uri
         super().__init__(f"Object {object_uri!r} no longer exists in Redis")
 
 
-class CanonicalObjectReferencedError(Exception):
+class CanonicalObjectReferencedError(GPDCError):
     def __init__(
         self,
         canonical_name: str,
