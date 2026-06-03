@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
 from .codec import SetCodec
-from .exceptions import ObjectGoneError
 from .keys import make_object_key, make_raw_key, make_ref_key
 from .objects import GPDCDataObject
 from .meta import ObjectMeta
