@@ -477,14 +477,16 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         except KeyError:
             return default
 
-    def pop(self, key, *args):
+    _SENTINEL = object()
+
+    def pop(self, key, default=_SENTINEL):
         encoded_key = encode_key(key)
         r = self._redis()
         encoded_val = r.hget(self.raw_key, encoded_key)
         if encoded_val is None:
-            if args:
-                return args[0]
-            raise KeyError(key)
+            if default is DictObject._SENTINEL:
+                raise KeyError(key)
+            return default
         value = self._materialize_decoded_value(encoded_val)
         del self[key]
         return value
@@ -493,11 +495,11 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         if key in self:
             return self[key]
         self[key] = default
-        return default
+        return self[key]
 
     def update(self, other=None, **kwargs):
         pairs = []
-        if other:
+        if other is not None:
             if hasattr(other, "items"):
                 pairs = list(other.items())
             else:
@@ -586,8 +588,9 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
 
     def discard(self, value: object) -> None:
         encoded = encode_key(value)
-        self._redis().srem(self.raw_key, encoded)
-        self._touch()
+        removed = self._redis().srem(self.raw_key, encoded)
+        if removed:
+            self._touch()
 
     def remove(self, value: object) -> None:
         encoded = encode_key(value)

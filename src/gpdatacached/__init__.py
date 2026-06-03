@@ -1,7 +1,7 @@
 # src/gpdatacached/__init__.py
 __version__ = "0.1.0"
 
-from .codec import GPDCCodec, GPDCScalarCodec
+from .codec import GPDCCodec, GPDCContainerCodec, GPDCScalarCodec
 from .config import GPDCDomainConfig, GPDCNamespaceConfig
 from .exceptions import CanonicalObjectReferencedError, ObjectGoneError
 from .domain import GPDCDomain
@@ -52,6 +52,7 @@ __all__ = [
     "TupleObject",
     "GPDCContainerObject",
     "GPDCCodec",
+    "GPDCContainerCodec",
     "GPDCScalarCodec",
     "GPDCTypeRegistry",
     "validate_object_name",
