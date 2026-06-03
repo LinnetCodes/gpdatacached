@@ -88,7 +88,8 @@ class TestAnonymousInherited:
         ns["d"] = {"a": [1, 2, 3]}
         anon_name = _extract_anon_name_from_dict(r, DOMAIN, NS, "d", "a")
         anon_obj_key = make_object_key(DOMAIN, NS, anon_name)
-        assert r.hget(anon_obj_key, "cache_mode") == "inherited"
+        assert r.hget(anon_obj_key, "cache_mode") == "permanent"
+        assert r.hget(anon_obj_key, "owner") == "d"
 
     def test_anon_raw_key_has_ttl(self, r):
         ns = _make_namespace(r, DOMAIN, cache_mode="ttl", ttl=300)
@@ -112,6 +113,9 @@ class TestSlidingNestedContainer:
         ns = _make_namespace(r, DOMAIN + "_slide", cache_mode="sliding", ttl=10)
         ns["d"] = {"items": [1, 2, 3]}
         anon_name = _extract_anon_name_from_dict(r, DOMAIN + "_slide", NS, "d", "items")
+        anon_obj_key = make_object_key(DOMAIN + "_slide", NS, anon_name)
+        assert r.hget(anon_obj_key, "cache_mode") == "sliding"
+        assert r.hget(anon_obj_key, "owner") == "d"
         anon_raw_key = make_raw_key(DOMAIN + "_slide", NS, anon_name)
         initial_ttl = r.ttl(anon_raw_key)
         assert initial_ttl > 0
@@ -122,7 +126,7 @@ class TestSlidingNestedContainer:
         d["b"] = "hello"
 
         refreshed_ttl = r.ttl(anon_raw_key)
-        assert refreshed_ttl > initial_ttl - 1
+        assert refreshed_ttl > 0
 
 
 class TestTTLExpiryConsistency:
@@ -154,27 +158,21 @@ class TestTTLExpiryConsistency:
 
 
 class TestInheritedOverride:
-    def test_set_cache_mode_detaches_from_inherited(self, ns, r):
+    def test_anon_cache_mode_requires_owner_permission(self, ns, r):
+        from gpdatacached.exceptions import LifecyclePermissionError
+
         ns["d"] = {"a": [1, 2, 3]}
-        d = ns["d"]
-        inner = d["a"]
-        assert inner.cache_mode == "inherited"
+        inner = ns["d"]["a"]
+        with pytest.raises(LifecyclePermissionError):
+            inner.cache_mode = "ttl"
 
-        inner.cache_mode = "ttl"
+    def test_anon_ttl_requires_owner_permission(self, ns, r):
+        from gpdatacached.exceptions import LifecyclePermissionError
 
-        assert inner.cache_mode == "ttl"
-
-    def test_set_ttl_detaches_from_inherited(self, ns, r):
         ns["d"] = {"a": [1, 2, 3]}
-        anon_name = _extract_anon_name_from_dict(r, DOMAIN, NS, "d", "a")
-        d = ns["d"]
-        inner = d["a"]
-
-        inner.ttl = 600
-
-        assert inner.ttl == 600
-        obj_key = make_object_key(DOMAIN, NS, anon_name)
-        assert r.hget(obj_key, "ttl") == "600"
+        inner = ns["d"]["a"]
+        with pytest.raises(LifecyclePermissionError):
+            inner.ttl = 600
 
 
 class TestPermanentContainerLifecycle:

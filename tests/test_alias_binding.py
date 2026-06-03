@@ -143,6 +143,7 @@ class TestAliasLifecycleResolvesToCanonical:
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
         alias_obj.expire_in(600)
         assert ns.get_object("owner").remaining_ttl() > 0
 
@@ -150,6 +151,7 @@ class TestAliasLifecycleResolvesToCanonical:
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
         future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=600)
         alias_obj.expire_at(future)
         assert ns.get_object("owner").remaining_ttl() > 0

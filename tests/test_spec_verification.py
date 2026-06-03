@@ -594,8 +594,9 @@ class TestSpecVerification:
         # §5.3 匿名对象的元数据
         anon_obj_key = f"gpdc:{d}:{n}:obj:{anon_name}"
         assert clean_redis.hget(anon_obj_key, "type") == "collection:list"
-        assert clean_redis.hget(anon_obj_key, "cache_mode") == "inherited"
+        assert clean_redis.hget(anon_obj_key, "cache_mode") == "permanent"
         assert clean_redis.hget(anon_obj_key, "ttl") == ""
+        assert clean_redis.hget(anon_obj_key, "owner") == "nest_dict"
         assert clean_redis.hget(anon_obj_key, "created_at") is not None
         assert clean_redis.hget(anon_obj_key, "updated_at") is not None
 
@@ -607,8 +608,8 @@ class TestSpecVerification:
         anon_ref_key = f"gpdc:{d}:{n}:ref:{anon_name}"
         assert "nest_dict" in clean_redis.smembers(anon_ref_key)
 
-        # §5.4 匿名对象 cache_mode 继承
-        assert clean_redis.hget(anon_obj_key, "cache_mode") == "inherited"
+        # §5.4 匿名对象 cache_mode 为 effective 值（非 "inherited"）
+        assert clean_redis.hget(anon_obj_key, "cache_mode") == "permanent"
 
         # §5.5 匿名对象不出现在 namespace 迭代中
         for name in ns:

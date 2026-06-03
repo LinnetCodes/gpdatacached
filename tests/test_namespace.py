@@ -279,8 +279,8 @@ class TestCacheModeAndTTL:
         assert clean_redis.hget(key, "ttl") == "60"
         obj.persist()
         assert clean_redis.ttl(key) == -1
-        assert clean_redis.hget(key, "ttl") == "60"
-        assert clean_redis.hget(key, "cache_mode") == "ttl"
+        assert clean_redis.hget(key, "cache_mode") == "permanent"
+        assert clean_redis.hget(key, "ttl") == ""
 
     def test_remaining_ttl_permanent(self, ns):
         ns["x"] = 1
@@ -290,6 +290,7 @@ class TestCacheModeAndTTL:
     def test_expire_in(self, ns, clean_redis):
         ns["x"] = 1
         obj = ns.get_object("x")
+        obj.cache_mode = "ttl"
         obj.expire_in(100)
         key = make_object_key("testdomain", "testns", "x")
         remaining = clean_redis.ttl(key)
@@ -301,6 +302,7 @@ class TestCacheModeAndTTL:
 
         ns["x"] = 42
         obj = ns.get_object("x")
+        obj.cache_mode = "ttl"
         past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=100)
         obj.expire_at(past)
         time.sleep(0.1)

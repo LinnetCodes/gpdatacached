@@ -173,18 +173,18 @@ class TestApplyPolicy:
 
 
 class TestPolicyFromMetaInherited:
-    def test_inherited_meta_returns_inherited_mode(self):
-        p = policy_from_meta(ObjectMeta(type="collection:list", cache_mode="inherited", ttl=300))
-        assert p.cache_mode == "inherited"
+    def test_inherited_meta_falls_back_to_permanent(self):
+        p = policy_from_meta(ObjectMeta(type="collection:list", cache_mode="permanent", ttl=300))
+        assert p.cache_mode == "permanent"
         assert p.declared_ttl == 300
 
-    def test_inherited_meta_no_expire_seconds(self):
-        p = policy_from_meta(ObjectMeta(type="collection:list", cache_mode="inherited", ttl=300))
+    def test_inherited_meta_no_expire_when_permanent(self):
+        p = policy_from_meta(ObjectMeta(type="collection:list", cache_mode="permanent", ttl=300))
         assert p.expire_seconds is None
 
-    def test_inherited_zero_ttl(self):
-        p = policy_from_meta(ObjectMeta(type="collection:list", cache_mode="inherited", ttl=0))
-        assert p.cache_mode == "inherited"
+    def test_zero_ttl_permanent_no_expire(self):
+        p = policy_from_meta(ObjectMeta(type="collection:list", cache_mode="permanent", ttl=0))
+        assert p.cache_mode == "permanent"
         assert p.declared_ttl == 0
         assert p.expire_seconds is None
 
