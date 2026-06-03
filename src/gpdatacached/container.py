@@ -32,8 +32,10 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         self.ref_key: str = make_ref_key(domain_name, ns_name, name)
 
     def _touch(self) -> None:
-        from .ttl import apply_lifecycle, propagate_lifecycle, policy_from_meta, policy_for_sliding_touch
+        from .ttl import policy_from_meta, policy_for_sliding_touch
         from .meta import ObjectMeta
+        from .keys import make_object_key
+        from .exceptions import ObjectGoneError
 
         key = self._canonical_redis_key()
         now = datetime.datetime.now(datetime.UTC)
@@ -43,11 +45,27 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         if meta is None:
             raise ObjectGoneError(self.canonical_uri)
         meta.touch(now, item_count=item_count).save(r, key)
-        current = policy_from_meta(meta)
-        new_policy = policy_for_sliding_touch(current)
-        if new_policy is not current:
-            apply_lifecycle(r, key, self.raw_key, self.ref_key, True, new_policy)
-            propagate_lifecycle(r, self.domain.name, self.namespace.name, self._binding_name(), set())
+
+        if meta.owner == self.canonical_name:
+            current = policy_from_meta(meta)
+            new_policy = policy_for_sliding_touch(current)
+            if new_policy is not current:
+                self.set_lifecycle(new_policy)
+        else:
+            owner_name = meta.owner
+            while owner_name:
+                owner_obj_key = make_object_key(self.domain.name, self.namespace.name, owner_name)
+                owner_meta = ObjectMeta.load(r, owner_obj_key)
+                if owner_meta is None:
+                    break
+                if owner_meta.owner == owner_name:
+                    current = policy_from_meta(owner_meta)
+                    new_policy = policy_for_sliding_touch(current)
+                    if new_policy is not current:
+                        owner_obj = self.namespace.get_object(owner_name)
+                        owner_obj.set_lifecycle(new_policy)
+                    break
+                owner_name = owner_meta.owner
 
     @abstractmethod
     def _current_item_count(self) -> int:
