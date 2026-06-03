@@ -77,8 +77,7 @@ def encode_element(
     value: object,
     namespace: GPDCNamespace,
     owner_name: str,
-    cache_mode: str,
-    ttl: int,
+    policy,
 ) -> str:
     from .container import GPDCContainerObject
 
@@ -86,7 +85,7 @@ def encode_element(
         return _ref_existing_container(namespace, value, owner_name)
     entry = GPDCTypeRegistry.lookup_by_python_type(value)
     if entry.is_container:
-        _, ref_val = _create_anonymous_object(namespace, value, owner_name, cache_mode, ttl)
+        _, ref_val = _create_anonymous_object(namespace, value, owner_name, policy)
         return ref_val
     return entry.codec_class.encode_value(value)
 
@@ -130,7 +129,7 @@ def _ref_existing_container(
     assert isinstance(container, GPDCContainerObject)
     if container._namespace is not namespace:
         raise ValueError("Cross-namespace container reference sharing is not supported")
-    owner_name = container._binding_owner_name()
+    owner_name = container._binding_name()
     obj_key = make_object_key(namespace.domain.name, namespace.name, owner_name)
     ref_key = make_ref_key(namespace.domain.name, namespace.name, owner_name)
     namespace._redis().sadd(ref_key, parent_name)
@@ -162,15 +161,13 @@ def _create_anonymous_object(
     namespace: GPDCNamespace,
     python_value: object,
     parent_name: str,
-    cache_mode: str,
-    ttl: int,
+    policy,
 ) -> tuple[str, str]:
-    from .ttl import apply_lifecycle, policy_from_defaults
+    from .ttl import apply_lifecycle
     from .meta import ObjectMeta
 
     entry = GPDCTypeRegistry.lookup_by_python_type(python_value)
     now = datetime.datetime.now(datetime.UTC)
-    policy = policy_from_defaults(cache_mode, ttl)
 
     anon_name = f"~anon:{uuid.uuid4()}"
     obj_key = make_object_key(namespace.domain.name, namespace.name, anon_name)
@@ -181,8 +178,9 @@ def _create_anonymous_object(
     meta = ObjectMeta(
         type=entry.gpdc_type,
         value=raw_key,
-        cache_mode="inherited",
-        ttl=0,
+        cache_mode=policy.cache_mode,
+        ttl=policy.declared_ttl,
+        owner=parent_name,
         created_at=now,
         updated_at=now,
         item_count=len(python_value) if entry.is_container else None,

@@ -17,6 +17,7 @@ from .exceptions import ObjectGoneError
 from .keys import make_object_key, make_raw_key, make_ref_key
 from .objects import GPDCDataObject
 from .meta import ObjectMeta
+from .ttl import policy_from_meta
 from .types import encode_element, decode_element, encode_key, decode_key
 
 
@@ -46,7 +47,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         new_policy = policy_for_sliding_touch(current)
         if new_policy is not current:
             apply_lifecycle(r, key, self.raw_key, self.ref_key, True, new_policy)
-            propagate_lifecycle(r, self.domain.name, self.namespace.name, self._binding_owner_name(), set())
+            propagate_lifecycle(r, self.domain.name, self.namespace.name, self._binding_name(), set())
 
     @abstractmethod
     def _current_item_count(self) -> int:
@@ -64,7 +65,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         target_name = parts[1]
         target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
         r = self._redis()
-        r.srem(target_ref_key, self._binding_owner_name())
+        r.srem(target_ref_key, self._binding_name())
         if target_name.startswith("~") and not r.smembers(target_ref_key):
             self._namespace._cascade_delete_anonymous(target_name)
 
@@ -99,7 +100,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             return value.deepcopy()
         return value
 
-    def _binding_owner_name(self) -> str:
+    def _binding_name(self) -> str:
         if self._is_reference:
             return self._canonical_name
         meta = ObjectMeta.load(self._redis(), self._redis_key())
@@ -113,14 +114,14 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         return self._name
 
     def _reference_obj_key(self) -> str:
-        return make_object_key(self._namespace.domain.name, self._namespace.name, self._binding_owner_name())
+        return make_object_key(self._namespace.domain.name, self._namespace.name, self._binding_name())
 
     def _reference_ref_value(self) -> str:
         return f"ref:{self._reference_obj_key()}"
 
     def referrers(self) -> set[str]:
         """Return set of object names referencing this object's raw data."""
-        owner_name = self._binding_owner_name()
+        owner_name = self._binding_name()
         ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, owner_name)
         return self._redis().smembers(ref_key)
 
@@ -191,7 +192,9 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         old_encoded = r.lindex(self.raw_key, index)
         if self._is_container_ref(old_encoded):
             self._reject_container_slot_overwrite()
-        encoded = encode_element(value, self._namespace, self._binding_owner_name(), self.cache_mode, self.ttl)
+        meta = ObjectMeta.load(r, self._canonical_redis_key())
+        policy = policy_from_meta(meta) if meta else None
+        encoded = encode_element(value, self._namespace, self._binding_name(), policy)
         r.lset(self.raw_key, index, encoded)
         self._touch()
 
@@ -214,7 +217,9 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def insert(self, index: int, value: object) -> None:
         r = self._redis()
         items = r.lrange(self.raw_key, 0, -1)
-        encoded = encode_element(value, self._namespace, self._binding_owner_name(), self.cache_mode, self.ttl)
+        meta = ObjectMeta.load(r, self._canonical_redis_key())
+        policy = policy_from_meta(meta) if meta else None
+        encoded = encode_element(value, self._namespace, self._binding_name(), policy)
         items.insert(index, encoded)
         pipe = r.pipeline()
         pipe.delete(self.raw_key)
@@ -224,13 +229,17 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         self._touch()
 
     def append(self, value: object) -> None:
-        encoded = encode_element(value, self._namespace, self._binding_owner_name(), self.cache_mode, self.ttl)
+        meta = self.meta
+        policy = policy_from_meta(meta) if meta else None
+        encoded = encode_element(value, self._namespace, self._binding_name(), policy)
         self._redis().rpush(self.raw_key, encoded)
         self._touch()
 
     def extend(self, values) -> None:
-        binding_owner = self._binding_owner_name()
-        encoded = [encode_element(v, self._namespace, binding_owner, self.cache_mode, self.ttl) for v in values]
+        binding_owner = self._binding_name()
+        meta = self.meta
+        policy = policy_from_meta(meta) if meta else None
+        encoded = [encode_element(v, self._namespace, binding_owner, policy) for v in values]
         if encoded:
             self._redis().rpush(self.raw_key, *encoded)
         self._touch()
@@ -292,8 +301,10 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         raw_items = r.lrange(self.raw_key, 0, -1)
         decoded = [decode_element(enc, self._namespace) for enc in raw_items]
         decoded.sort(key=key, reverse=reverse)
-        binding_owner = self._binding_owner_name()
-        encoded = [encode_element(v, self._namespace, binding_owner, self.cache_mode, self.ttl) for v in decoded]
+        binding_owner = self._binding_name()
+        meta = ObjectMeta.load(r, self._canonical_redis_key())
+        policy = policy_from_meta(meta) if meta else None
+        encoded = [encode_element(v, self._namespace, binding_owner, policy) for v in decoded]
         pipe = r.pipeline()
         pipe.delete(self.raw_key)
         if encoded:
@@ -323,27 +334,19 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
 
     def __add__(self, other):
         """Not supported. Use ``list(obj) + other`` to concatenate."""
-        raise NotImplementedError(
-            "ListObject does not support +; use list(obj) + other instead."
-        )
+        raise NotImplementedError("ListObject does not support +; use list(obj) + other instead.")
 
     def __radd__(self, other):
         """Not supported. Use ``other + list(obj)`` to concatenate."""
-        raise NotImplementedError(
-            "ListObject does not support +; use other + list(obj) instead."
-        )
+        raise NotImplementedError("ListObject does not support +; use other + list(obj) instead.")
 
     def __mul__(self, other):
         """Not supported. Use ``list(obj) * n`` to repeat."""
-        raise NotImplementedError(
-            "ListObject does not support *; use list(obj) * n instead."
-        )
+        raise NotImplementedError("ListObject does not support *; use list(obj) * n instead.")
 
     def __rmul__(self, other):
         """Not supported. Use ``n * list(obj)`` to repeat."""
-        raise NotImplementedError(
-            "ListObject does not support *; use n * list(obj) instead."
-        )
+        raise NotImplementedError("ListObject does not support *; use n * list(obj) instead.")
 
 
 # ── DictObject ─────────────────────────────────────────────────────────────────
@@ -395,7 +398,9 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
             self._reject_container_slot_overwrite()
         if old_encoded is not None:
             self._unbind_old_ref(old_encoded)
-        encoded_val = encode_element(value, self._namespace, self._binding_owner_name(), self.cache_mode, self.ttl)
+        meta = ObjectMeta.load(r, self._canonical_redis_key())
+        policy = policy_from_meta(meta) if meta else None
+        encoded_val = encode_element(value, self._namespace, self._binding_name(), policy)
         r.hset(self.raw_key, encoded_key, encoded_val)
         self._touch()
 
@@ -480,7 +485,9 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         if not pairs:
             return
         r = self._redis()
-        binding_owner = self._binding_owner_name()
+        binding_owner = self._binding_name()
+        meta = ObjectMeta.load(r, self._canonical_redis_key())
+        policy = policy_from_meta(meta) if meta else None
         dirty = False
         try:
             for k, v in pairs:
@@ -490,7 +497,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
                     self._reject_container_slot_overwrite()
                 if old_encoded is not None:
                     self._unbind_old_ref(old_encoded)
-                encoded_val = encode_element(v, self._namespace, binding_owner, self.cache_mode, self.ttl)
+                encoded_val = encode_element(v, self._namespace, binding_owner, policy)
                 r.hset(self.raw_key, encoded_key, encoded_val)
                 dirty = True
         finally:

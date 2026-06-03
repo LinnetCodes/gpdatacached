@@ -229,11 +229,13 @@ class ListCodec(GPDCContainerCodec):
 
     @classmethod
     def create_raw(cls, namespace, raw_key: str, value: list, owner_name: str, cache_mode: str, ttl: int) -> None:
+        from .ttl import policy_from_defaults
         from .types import encode_element
 
         if not value:
             return
-        encoded = [encode_element(v, namespace, owner_name, cache_mode, ttl) for v in value]
+        policy = policy_from_defaults(cache_mode, ttl)
+        encoded = [encode_element(v, namespace, owner_name, policy) for v in value]
         namespace._redis().rpush(raw_key, *encoded)
 
     @classmethod
@@ -253,14 +255,16 @@ class DictCodec(GPDCContainerCodec):
 
     @classmethod
     def create_raw(cls, namespace, raw_key: str, value: dict, owner_name: str, cache_mode: str, ttl: int) -> None:
+        from .ttl import policy_from_defaults
         from .types import encode_element, encode_key
 
         if not value:
             return
+        policy = policy_from_defaults(cache_mode, ttl)
         mapping = {}
         for k, v in value.items():
             encoded_key = encode_key(k)
-            mapping[encoded_key] = encode_element(v, namespace, owner_name, cache_mode, ttl)
+            mapping[encoded_key] = encode_element(v, namespace, owner_name, policy)
         namespace._redis().hset(raw_key, mapping=mapping)
 
     @classmethod

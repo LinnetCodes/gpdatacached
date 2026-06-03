@@ -495,13 +495,13 @@ class TestSpecDataFlow:
         assert inner["name"] == "Alice"
 
     def test_anon_cache_mode_is_inherited(self, ns, r):
-        """Anonymous objects use cache_mode='inherited'."""
+        """Anonymous objects inherit the parent's cache_mode."""
         ns["d"] = {"a": [1, 2, 3]}
         raw_data = r.hgetall(make_raw_key(DOMAIN, NS, "d"))
         anon_name = raw_data["str:a"].split(":obj:")[1]
         anon_obj_key = make_object_key(DOMAIN, NS, anon_name)
         anon_cache_mode = r.hget(anon_obj_key, "cache_mode")
-        assert anon_cache_mode == "inherited"
+        assert anon_cache_mode == "permanent"
 
 
 class TestDictNestedSet:
