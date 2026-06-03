@@ -1,6 +1,7 @@
 """Tests for custom exceptions."""
 
 from gpdatacached.exceptions import CanonicalObjectReferencedError
+from gpdatacached.exceptions import GPDCError, LifecyclePermissionError
 
 
 class TestCanonicalObjectReferencedError:
@@ -38,3 +39,15 @@ class TestCanonicalObjectReferencedError:
         from gpdatacached import CanonicalObjectReferencedError as Imported
 
         assert Imported is CanonicalObjectReferencedError
+
+
+class TestLifecyclePermissionError:
+    def test_is_gpdc_error(self):
+        assert issubclass(LifecyclePermissionError, GPDCError)
+
+    def test_message(self):
+        err = LifecyclePermissionError(canonical_name="~anon:123", owner_name="myobj")
+        assert "~anon:123" in str(err)
+        assert "myobj" in str(err)
+        assert err.canonical_name == "~anon:123"
+        assert err.owner_name == "myobj"
