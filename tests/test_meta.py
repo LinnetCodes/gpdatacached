@@ -110,24 +110,12 @@ class TestObjectMetaHelpers:
         meta = ObjectMeta(type="scalar:int")
         assert meta.is_collection() is False
 
-    def test_is_inherited_true(self):
-        meta = ObjectMeta(type="collection:list", cache_mode="inherited")
-        assert meta.is_inherited() is True
-
-    def test_is_inherited_false(self):
-        meta = ObjectMeta(type="collection:list", cache_mode="ttl")
-        assert meta.is_inherited() is False
-
     def test_declares_expiry_true(self):
         meta = ObjectMeta(type="scalar:int", cache_mode="ttl", ttl=300)
         assert meta.declares_expiry() is True
 
     def test_declares_expiry_false_permanent(self):
         meta = ObjectMeta(type="scalar:int", cache_mode="permanent", ttl=300)
-        assert meta.declares_expiry() is False
-
-    def test_declares_expiry_false_inherited(self):
-        meta = ObjectMeta(type="collection:list", cache_mode="inherited", ttl=60)
         assert meta.declares_expiry() is False
 
 
@@ -477,3 +465,46 @@ class TestObjectMetaExtraWithExistingMethods:
         assert mapping["$tag"] == "str:demo"
         restored = ObjectMeta.from_redis(mapping)
         assert restored.extra == {"count": 42, "flag": True, "tag": "demo"}
+
+
+class TestOwnerField:
+    def test_meta_has_owner_field(self):
+        meta = ObjectMeta(type="scalar:int", value="int:42", owner="myobj")
+        assert meta.owner == "myobj"
+
+    def test_meta_owner_defaults_empty(self):
+        meta = ObjectMeta(type="scalar:int", value="int:42")
+        assert meta.owner == ""
+
+    def test_meta_cache_mode_rejects_inherited(self):
+        with pytest.raises(ValidationError, match="cache_mode"):
+            ObjectMeta(type="scalar:int", value="int:42", cache_mode="inherited")
+
+    def test_meta_from_redis_backward_compat_inherited(self):
+        data = {"type": "collection:dict", "value": "gpdc:d:ns:raw:~anon:abc", "cache_mode": "inherited", "ttl": "0"}
+        meta = ObjectMeta.from_redis(data)
+        assert meta.cache_mode == "permanent"
+        assert meta.ttl == 0
+        assert meta.owner == ""
+
+    def test_meta_from_redis_reads_owner(self):
+        data = {"type": "scalar:int", "value": "int:42", "cache_mode": "ttl", "ttl": "60", "owner": "myobj"}
+        meta = ObjectMeta.from_redis(data)
+        assert meta.owner == "myobj"
+        assert meta.cache_mode == "ttl"
+        assert meta.ttl == 60
+
+    def test_meta_to_redis_mapping_includes_owner(self):
+        meta = ObjectMeta(type="scalar:int", value="int:42", cache_mode="permanent", owner="myobj")
+        mapping = meta.to_redis_mapping()
+        assert mapping["owner"] == "myobj"
+
+    def test_meta_to_redis_mapping_omits_empty_owner(self):
+        meta = ObjectMeta(type="scalar:int", value="int:42", cache_mode="permanent")
+        mapping = meta.to_redis_mapping()
+        assert mapping.get("owner", "") == ""
+
+    def test_meta_with_updates_validates(self):
+        meta = ObjectMeta(type="scalar:int", value="int:42", owner="myobj")
+        with pytest.raises(ValidationError, match="ttl must be >= 0"):
+            meta.with_updates(ttl=-5)

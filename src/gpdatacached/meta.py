@@ -11,9 +11,7 @@ def _encode_extra_value(value: Any) -> str:
 
     entry = GPDCTypeRegistry.lookup_by_python_type(value)
     if entry.is_container:
-        raise TypeError(
-            f"Container type {type(value).__name__!r} is not supported in extra metadata"
-        )
+        raise TypeError(f"Container type {type(value).__name__!r} is not supported in extra metadata")
     return entry.codec_class.encode_value(value)
 
 
@@ -38,8 +36,9 @@ def _decode_extra_value(encoded: str) -> Any:
 class ObjectMeta(BaseModel):
     type: str
     value: str = ""
-    cache_mode: Literal["permanent", "ttl", "sliding", "inherited"] = "permanent"
+    cache_mode: Literal["permanent", "ttl", "sliding"] = "permanent"
     ttl: int = 0
+    owner: str = ""
     created_at: datetime | None = None
     updated_at: datetime | None = None
     item_count: int | None = None
@@ -66,6 +65,9 @@ class ObjectMeta(BaseModel):
         cache_mode = builtin.get("cache_mode") or "permanent"
         ttl_str = builtin.get("ttl", "")
         ttl = int(ttl_str) if ttl_str else 0
+        if cache_mode == "inherited":
+            cache_mode = "permanent"
+            ttl = 0
         created_at_str = builtin.get("created_at")
         updated_at_str = builtin.get("updated_at")
         item_count_str = builtin.get("item_count")
@@ -74,6 +76,7 @@ class ObjectMeta(BaseModel):
             value=builtin.get("value", ""),
             cache_mode=cache_mode,
             ttl=ttl,
+            owner=builtin.get("owner", ""),
             created_at=datetime.fromisoformat(created_at_str) if created_at_str else None,
             updated_at=datetime.fromisoformat(updated_at_str) if updated_at_str else None,
             item_count=int(item_count_str) if item_count_str is not None else None,
@@ -87,6 +90,8 @@ class ObjectMeta(BaseModel):
             "cache_mode": self.cache_mode,
             "ttl": str(self.ttl) if self.ttl else "",
         }
+        if self.owner:
+            mapping["owner"] = self.owner
         if self.created_at is not None:
             mapping["created_at"] = self.created_at.isoformat()
         if self.updated_at is not None:
@@ -100,9 +105,6 @@ class ObjectMeta(BaseModel):
     def is_collection(self) -> bool:
         return self.type.startswith("collection:")
 
-    def is_inherited(self) -> bool:
-        return self.cache_mode == "inherited"
-
     def declares_expiry(self) -> bool:
         return self.cache_mode in ("ttl", "sliding") and self.ttl > 0
 
@@ -115,7 +117,7 @@ class ObjectMeta(BaseModel):
         r.hset(obj_key, mapping=self.to_redis_mapping())
 
     def with_updates(self, **kwargs) -> ObjectMeta:
-        return self.model_copy(update=kwargs)
+        return self.model_validate(self.model_copy(update=kwargs))
 
     def touch(self, now: datetime, *, item_count: int | None = None) -> ObjectMeta:
         updates: dict = {"updated_at": now}
