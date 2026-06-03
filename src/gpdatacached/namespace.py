@@ -227,7 +227,7 @@ class GPDCNamespace(MutableMapping):
         r.delete(ref_key)
 
     def _write_scalar_meta(
-        self, obj_key: str, entry, encoded_value: str, policy, now: datetime.datetime, *, is_new: bool
+        self, obj_key: str, entry, encoded_value: str, policy, now: datetime.datetime, *, is_new: bool, obj_name: str = ""
     ) -> None:
         from .ttl import apply_lifecycle
 
@@ -237,6 +237,7 @@ class GPDCNamespace(MutableMapping):
             value=encoded_value,
             cache_mode=policy.cache_mode,
             ttl=policy.declared_ttl,
+            owner=obj_name,
             created_at=now if is_new else None,
             updated_at=now,
         )
@@ -253,6 +254,7 @@ class GPDCNamespace(MutableMapping):
         *,
         is_new: bool,
         item_count: int = 0,
+        obj_name: str = "",
     ) -> None:
         r = self._redis()
         meta = ObjectMeta(
@@ -260,6 +262,7 @@ class GPDCNamespace(MutableMapping):
             value=raw_key,
             cache_mode=policy.cache_mode,
             ttl=policy.declared_ttl,
+            owner=obj_name,
             created_at=now if is_new else None,
             updated_at=now,
             item_count=item_count,
@@ -341,7 +344,7 @@ class GPDCNamespace(MutableMapping):
 
         if entry.is_container:
             raw_key = make_raw_key(self._domain.name, self._name, key)
-            self._write_container_meta(obj_key, entry, raw_key, policy, now, is_new=is_new, item_count=len(value))
+            self._write_container_meta(obj_key, entry, raw_key, policy, now, is_new=is_new, item_count=len(value), obj_name=key)
             if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
                 if not is_new:
                     entry.codec_class.delete_raw(self, raw_key)
@@ -353,7 +356,7 @@ class GPDCNamespace(MutableMapping):
         else:
             codec = entry.codec_class
             encoded = codec.encode_value(value)
-            self._write_scalar_meta(obj_key, entry, encoded, policy, now, is_new=is_new)
+            self._write_scalar_meta(obj_key, entry, encoded, policy, now, is_new=is_new, obj_name=key)
 
     def _get_object(self, key: str):
         validate_object_name(key)
@@ -375,6 +378,9 @@ class GPDCNamespace(MutableMapping):
             stored_raw_key = resolution.canonical_raw_key
             if stored_raw_key:
                 obj.raw_key = stored_raw_key
+            if resolution.binding_kind == "reference":
+                canonical_ref_key = make_ref_key(self._domain.name, self._name, resolution.canonical_name)
+                obj.ref_key = canonical_ref_key
 
         return obj
 
