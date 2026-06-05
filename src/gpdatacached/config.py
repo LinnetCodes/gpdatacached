@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import ClassVar, Optional
 
 from gpconfig import GPConfig
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 
 class GPDCNamespaceConfig(GPConfig):
@@ -27,6 +27,19 @@ class GPDCNamespaceConfig(GPConfig):
         if v is not None and v < 0:
             raise ValueError(f"Invalid default_ttl_seconds: {v!r}")
         return v
+
+    @model_validator(mode="after")
+    def _validate_ttl_mode_consistency(self) -> GPDCNamespaceConfig:
+        if (
+            self.default_cache_mode in ("ttl", "sliding")
+            and self.default_ttl_seconds is not None
+            and self.default_ttl_seconds <= 0
+        ):
+            raise ValueError(
+                f"default_cache_mode='{self.default_cache_mode}' requires "
+                f"default_ttl_seconds > 0, got {self.default_ttl_seconds}"
+            )
+        return self
 
 
 class GPDCDomainConfig(GPConfig):
@@ -60,3 +73,12 @@ class GPDCDomainConfig(GPConfig):
         if v < 0:
             raise ValueError(f"Invalid default_ttl_seconds: {v!r}")
         return v
+
+    @model_validator(mode="after")
+    def _validate_ttl_mode_consistency(self) -> GPDCDomainConfig:
+        if self.default_cache_mode in ("ttl", "sliding") and self.default_ttl_seconds <= 0:
+            raise ValueError(
+                f"default_cache_mode='{self.default_cache_mode}' requires "
+                f"default_ttl_seconds > 0, got {self.default_ttl_seconds}"
+            )
+        return self
