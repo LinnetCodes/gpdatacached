@@ -101,11 +101,20 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         # types, so a set can never contain ref-encoded strings. See design doc.
         return False
 
-    def _reject_container_slot_overwrite(self) -> None:
-        # Extracted as a method to centralize the error message, called from 3 sites.
-        raise TypeError(
-            "Cannot overwrite an existing container slot; delete it first or mutate the existing container in place"
-        )
+    def _handle_container_slot_overwrite(self, old_encoded: str) -> None:
+        if not self._is_container_ref(old_encoded):
+            return
+        obj_key = old_encoded[len("ref:") :]
+        parts = obj_key.split(":obj:")
+        if len(parts) != 2:
+            return
+        target_name = parts[1]
+        target_obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, target_name)
+        r = self._redis()
+        old_meta = ObjectMeta.load(r, target_obj_key)
+        if old_meta is not None and old_meta.owner != self._binding_name():
+            return
+        self._unbind_old_ref(old_encoded)
 
     def _reject_value_replacement(self) -> None:
         # Extracted as a method to centralize the error message, called from 3 sites.
@@ -210,12 +219,12 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         r = self._redis()
         index = self._normalize_index(index, "list assignment index out of range")
         old_encoded = r.lindex(self.raw_key, index)
-        if self._is_container_ref(old_encoded):
-            self._reject_container_slot_overwrite()
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else None
         encoded = encode_element(value, self._namespace, self._binding_name(), policy)
         r.lset(self.raw_key, index, encoded)
+        if self._is_container_ref(old_encoded):
+            self._handle_container_slot_overwrite(old_encoded)
         self._touch()
 
     def _delete_index(self, index: int) -> str:
@@ -414,14 +423,14 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         encoded_key = encode_key(key)
         r = self._redis()
         old_encoded = r.hget(self.raw_key, encoded_key)
-        if self._is_container_ref(old_encoded):
-            self._reject_container_slot_overwrite()
-        if old_encoded is not None:
-            self._unbind_old_ref(old_encoded)
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else None
         encoded_val = encode_element(value, self._namespace, self._binding_name(), policy)
         r.hset(self.raw_key, encoded_key, encoded_val)
+        if self._is_container_ref(old_encoded):
+            self._handle_container_slot_overwrite(old_encoded)
+        if old_encoded is not None:
+            self._unbind_old_ref(old_encoded)
         self._touch()
 
     def __delitem__(self, key: object) -> None:
@@ -515,12 +524,12 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
             for k, v in pairs:
                 encoded_key = encode_key(k)
                 old_encoded = r.hget(self.raw_key, encoded_key)
-                if self._is_container_ref(old_encoded):
-                    self._reject_container_slot_overwrite()
-                if old_encoded is not None:
-                    self._unbind_old_ref(old_encoded)
                 encoded_val = encode_element(v, self._namespace, binding_owner, policy)
                 r.hset(self.raw_key, encoded_key, encoded_val)
+                if self._is_container_ref(old_encoded):
+                    self._handle_container_slot_overwrite(old_encoded)
+                if old_encoded is not None:
+                    self._unbind_old_ref(old_encoded)
                 dirty = True
         finally:
             if dirty:

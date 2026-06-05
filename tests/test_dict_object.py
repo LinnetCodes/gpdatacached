@@ -128,20 +128,22 @@ def test_setitem_new_key(setup_dict):
     assert len(obj) == 3
 
 
-def test_setitem_existing_container_slot_rejects_scalar(setup_dict):
+def test_setitem_existing_container_slot_overwrite_scalar(setup_dict):
     obj, *_ = setup_dict
     obj["nested"] = [1, 2, 3]
 
-    with pytest.raises(TypeError, match="Cannot overwrite an existing container slot"):
-        obj["nested"] = 1
+    obj["nested"] = 1
+
+    assert obj["nested"] == 1
 
 
-def test_setitem_existing_container_slot_rejects_container(setup_dict):
+def test_setitem_existing_container_slot_overwrite_container(setup_dict):
     obj, *_ = setup_dict
     obj["nested"] = [1, 2, 3]
 
-    with pytest.raises(TypeError, match="Cannot overwrite an existing container slot"):
-        obj["nested"] = {"x": 1}
+    obj["nested"] = {"x": 1}
+
+    assert obj["nested"]["x"] == 1
 
 
 def test_delete_then_recreate_container_slot_is_allowed(setup_dict):

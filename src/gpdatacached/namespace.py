@@ -227,7 +227,15 @@ class GPDCNamespace(MutableMapping):
         r.delete(ref_key)
 
     def _write_scalar_meta(
-        self, obj_key: str, entry, encoded_value: str, policy, now: datetime.datetime, *, is_new: bool, obj_name: str = ""
+        self,
+        obj_key: str,
+        entry,
+        encoded_value: str,
+        policy,
+        now: datetime.datetime,
+        *,
+        is_new: bool,
+        obj_name: str = "",
     ) -> None:
         from .ttl import apply_lifecycle
 
@@ -344,7 +352,9 @@ class GPDCNamespace(MutableMapping):
 
         if entry.is_container:
             raw_key = make_raw_key(self._domain.name, self._name, key)
-            self._write_container_meta(obj_key, entry, raw_key, policy, now, is_new=is_new, item_count=len(value), obj_name=key)
+            self._write_container_meta(
+                obj_key, entry, raw_key, policy, now, is_new=is_new, item_count=len(value), obj_name=key
+            )
             if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
                 if not is_new:
                     entry.codec_class.delete_raw(self, raw_key)

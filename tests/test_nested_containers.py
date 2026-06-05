@@ -110,19 +110,29 @@ class TestListNestedDict:
         assert isinstance(lst[1], DictObject)
         assert lst[1]["name"] == "Bob"
 
-    def test_list_existing_container_slot_rejects_scalar(self, ns):
+    def test_list_existing_container_slot_overwrite_with_scalar(self, ns, r):
         ns["items"] = [0, {"a": 1}]
         lst = ns["items"]
+        old_anon = lst[1].name
 
-        with pytest.raises(TypeError, match="Cannot overwrite an existing container slot"):
-            lst[1] = 42
+        lst[1] = 42
 
-    def test_list_existing_container_slot_rejects_container(self, ns):
+        assert lst[1] == 42
+        assert not r.exists(make_ref_key(DOMAIN, NS, old_anon))
+        assert not r.exists(make_object_key(DOMAIN, NS, old_anon))
+        assert not r.exists(make_raw_key(DOMAIN, NS, old_anon))
+
+    def test_list_existing_container_slot_overwrite_with_container(self, ns, r):
         ns["items"] = [0, {"a": 1}]
         lst = ns["items"]
+        old_anon = lst[1].name
 
-        with pytest.raises(TypeError, match="Cannot overwrite an existing container slot"):
-            lst[1] = [4, 5]
+        lst[1] = [4, 5]
+
+        assert list(lst[1]) == [4, 5]
+        assert not r.exists(make_ref_key(DOMAIN, NS, old_anon))
+        assert not r.exists(make_object_key(DOMAIN, NS, old_anon))
+        assert not r.exists(make_raw_key(DOMAIN, NS, old_anon))
 
     def test_list_scalar_slot_can_upgrade_to_container_once(self, ns):
         ns["items"] = [1, 2, 3]
@@ -252,6 +262,40 @@ class TestListNestedDict:
         assert not r.exists(make_ref_key(DOMAIN, NS, removed_anon))
         assert not r.exists(make_object_key(DOMAIN, NS, removed_anon))
         assert not r.exists(make_raw_key(DOMAIN, NS, removed_anon))
+
+    def test_overwrite_container_slot_after_take_ownership_preserves_old_anon(self, ns, r):
+        ns["parent"] = {"child": [10, 20]}
+        parent = ns["parent"]
+        child_anon = parent["child"]
+        child_anon_name = child_anon.name
+
+        ns["ref"] = parent["child"]
+        ref = ns.get_object("ref")
+        ref.take_ownership()
+
+        parent["child"] = [99, 88]
+
+        assert list(parent["child"]) == [99, 88]
+        assert r.exists(make_object_key(DOMAIN, NS, child_anon_name))
+        assert r.exists(make_raw_key(DOMAIN, NS, child_anon_name))
+        assert list(ns["ref"]) == [10, 20]
+
+    def test_overwrite_container_slot_cleans_up_old_anon_keys(self, ns, r):
+        ns["items"] = [0, {"a": 1}]
+        lst = ns["items"]
+        old_anon = lst[1].name
+
+        lst[1] = {"b": 2}
+
+        assert lst[1]["b"] == 2
+        assert not r.exists(make_ref_key(DOMAIN, NS, old_anon))
+        assert not r.exists(make_object_key(DOMAIN, NS, old_anon))
+        assert not r.exists(make_raw_key(DOMAIN, NS, old_anon))
+
+        new_anon = lst[1].name
+        assert r.exists(make_object_key(DOMAIN, NS, new_anon))
+        assert r.exists(make_raw_key(DOMAIN, NS, new_anon))
+        assert r.exists(make_ref_key(DOMAIN, NS, new_anon))
 
 
 class TestDeepNesting:
