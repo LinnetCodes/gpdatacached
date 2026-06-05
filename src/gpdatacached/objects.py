@@ -84,6 +84,8 @@ class GPDCDataObject(ABC):
     def meta(self, new_meta: ObjectMeta) -> None:
         from .ttl import policy_from_meta
 
+        ctx = self._load_lifecycle_context()
+        self._check_owner_permission(ctx.meta)
         policy = policy_from_meta(new_meta)
         self.set_lifecycle(policy)
 

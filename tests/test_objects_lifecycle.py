@@ -117,3 +117,21 @@ def test_persist_checks_owner(domain, ns, clean_redis):
 
     with pytest.raises(LifecyclePermissionError):
         child_obj.persist()
+
+
+def test_meta_setter_checks_owner(domain, ns, clean_redis):
+    r = clean_redis
+    d = domain.name
+    n = ns.name
+
+    parent_name, child_name = _setup_parent_and_child(r, d, n)
+
+    parent_obj = ns.get_object(parent_name)
+    child_obj = parent_obj[0]
+
+    from gpdatacached.meta import ObjectMeta
+
+    new_meta = child_obj.meta.model_copy(update={"cache_mode": "ttl", "ttl": 300})
+
+    with pytest.raises(LifecyclePermissionError):
+        child_obj.meta = new_meta
