@@ -23,6 +23,7 @@ class TestCanonicalObjectReferencedError:
         )
         msg = str(err)
         assert "mylist" in msg
+        assert "gpdc://dom/ns/mylist" in msg
         assert "alias1" in msg
         assert "parent" in msg
         assert "still referenced by" in msg

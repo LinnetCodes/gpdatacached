@@ -23,7 +23,8 @@ class CanonicalObjectReferencedError(GPDCError):
         self.referrers = referrers
         names = ", ".join(repr(r) for r in referrers)
         super().__init__(
-            f"Cannot delete canonical object {canonical_name!r} because it is still referenced by: [{names}]"
+            f"Cannot delete canonical object {canonical_name!r} ({canonical_uri}) "
+            f"because it is still referenced by: [{names}]"
         )
 
 
