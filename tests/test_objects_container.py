@@ -100,6 +100,12 @@ def test_getitem_negative(setup_list):
     assert obj[-2] == 20
 
 
+def test_getitem_slice_raises_typeerror(setup_list):
+    obj, *_ = setup_list
+    with pytest.raises(TypeError, match="slice indexing"):
+        obj[1:3]
+
+
 # ── __setitem__ ───────────────────────────────────────────────────────────────
 
 
@@ -110,6 +116,12 @@ def test_setitem(setup_list):
     assert len(obj) == 3
 
 
+def test_setitem_slice_raises_typeerror(setup_list):
+    obj, *_ = setup_list
+    with pytest.raises(TypeError, match="slice indexing"):
+        obj[1:3] = [99, 100]
+
+
 # ── __delitem__ ───────────────────────────────────────────────────────────────
 
 
@@ -118,6 +130,12 @@ def test_delitem(setup_list):
     del obj[1]
     assert len(obj) == 2
     assert list(obj) == [10, 30]
+
+
+def test_delitem_slice_raises_typeerror(setup_list):
+    obj, *_ = setup_list
+    with pytest.raises(TypeError, match="slice indexing"):
+        del obj[1:3]
 
 
 def test_delitem_first(setup_list):
