@@ -201,10 +201,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
 
     def _normalize_index(self, index: int, message: str = "list index out of range") -> int:
         if isinstance(index, slice):
-            raise TypeError(
-                "ListObject does not support slice indexing; "
-                "use list(obj)[start:stop] instead"
-            )
+            raise TypeError("ListObject does not support slice indexing; use list(obj)[start:stop] instead")
         length = self._redis().llen(self.raw_key)
         if index < 0:
             index = length + index

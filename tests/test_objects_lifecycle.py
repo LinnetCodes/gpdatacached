@@ -129,8 +129,6 @@ def test_meta_setter_checks_owner(domain, ns, clean_redis):
     parent_obj = ns.get_object(parent_name)
     child_obj = parent_obj[0]
 
-    from gpdatacached.meta import ObjectMeta
-
     new_meta = child_obj.meta.model_copy(update={"cache_mode": "ttl", "ttl": 300})
 
     with pytest.raises(LifecyclePermissionError):
