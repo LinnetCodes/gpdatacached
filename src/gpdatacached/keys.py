@@ -113,9 +113,6 @@ def collect_ref_names_from_raw(r, raw_key: str, raw_type: str) -> list[str]:
     elif raw_type == "collection:list":
         for val in r.lrange(raw_key, 0, -1):
             _extract_ref_name(val, names)
-    elif raw_type == "collection:set":
-        for val in r.smembers(raw_key):
-            _extract_ref_name(val, names)
     return names
 
 

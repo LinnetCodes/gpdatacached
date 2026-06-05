@@ -158,9 +158,6 @@ def _gc_scan_ref_keys(
                             if val == expected_ref:
                                 still_refs = True
                                 break
-                    elif member_meta.type == "collection:set":
-                        if expected_ref in r.smembers(member_raw_key):
-                            still_refs = True
                     if not still_refs:
                         r.srem(ref_key, member)
                 else:
