@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-import redis as redis_lib
 from unittest.mock import patch, MagicMock
 
 from gpdatacached.config import GPDCDomainConfig

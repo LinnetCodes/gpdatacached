@@ -203,9 +203,7 @@ class TestTypeRegistryThreading:
             except Exception as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=register_and_lookup, args=(i,)) for i in range(10)
-        ]
+        threads = [threading.Thread(target=register_and_lookup, args=(i,)) for i in range(10)]
         for t in threads:
             t.start()
         for t in threads:

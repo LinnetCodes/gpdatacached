@@ -483,7 +483,6 @@ class TestInheritedOverride:
     def test_anon_cache_mode_requires_owner_permission(self, gc_disabled_domain):
         d = gc_disabled_domain
         ns = d.get_namespace(_INHERIT_NS)
-        r = d._redis
 
         ns["d"] = {"a": [1, 2, 3]}
         inner = ns["d"]["a"]
@@ -495,7 +494,6 @@ class TestInheritedOverride:
     def test_anon_ttl_requires_owner_permission(self, gc_disabled_domain):
         d = gc_disabled_domain
         ns = d.get_namespace(_INHERIT_NS)
-        r = d._redis
 
         ns["d"] = {"a": [1, 2, 3]}
         inner = ns["d"]["a"]
