@@ -1,7 +1,18 @@
-# tests/test_namespace.py
 import datetime
+import threading
+import time
+
 import pytest
-from gpdatacached.keys import make_namespace_meta_key, make_object_key, make_domain_namespaces_key
+from gpdatacached import DictObject, ListObject, SetObject
+from gpdatacached.exceptions import CanonicalObjectReferencedError
+from gpdatacached.keys import (
+    make_domain_namespaces_key,
+    make_namespace_meta_key,
+    make_object_key,
+    make_object_key_prefix,
+    make_raw_key,
+    make_ref_key,
+)
 
 
 class TestNamespaceInit:
@@ -80,7 +91,6 @@ class TestNamespaceSetItem:
         data = clean_redis.hgetall(make_object_key("testdomain", "testns", "x"))
         assert "created_at" in data
         assert "updated_at" in data
-        # Both timestamps should be parseable
         datetime.datetime.fromisoformat(data["created_at"])
         datetime.datetime.fromisoformat(data["updated_at"])
 
@@ -92,8 +102,6 @@ class TestNamespaceSetItem:
         assert clean_redis.hget(key, "created_at") == created_at
 
     def test_update_changes_updated_at(self, ns, clean_redis):
-        import time
-
         ns["x"] = 1
         key = make_object_key("testdomain", "testns", "x")
         updated1 = clean_redis.hget(key, "updated_at")
@@ -237,8 +245,6 @@ class TestObjectValueSetter:
         assert ns["x"] == 99
 
     def test_set_value_updates_updated_at(self, ns, clean_redis):
-        import time
-
         ns["x"] = 1
         key = make_object_key("testdomain", "testns", "x")
         first = clean_redis.hget(key, "updated_at")
@@ -297,9 +303,6 @@ class TestCacheModeAndTTL:
         assert 95 <= remaining <= 100
 
     def test_expire_at_past_time_immediate_expiry(self, ns, clean_redis):
-        import datetime
-        import time
-
         ns["x"] = 42
         obj = ns.get_object("x")
         obj.cache_mode = "ttl"
@@ -326,8 +329,6 @@ class TestCacheModeAndTTL:
             obj.cache_mode = "invalid"
 
     def test_scalar_overwrite_preserves_and_reapplies_ttl(self, ns, clean_redis):
-        import time
-
         ns["x"] = 1
         obj = ns.get_object("x")
         obj.cache_mode = "ttl"
@@ -347,8 +348,6 @@ class TestCacheModeAndTTL:
         assert 290 <= remaining <= 300
 
     def test_scalar_to_container_overwrite_preserves_and_reapplies_ttl(self, ns, clean_redis):
-        import time
-
         ns["x"] = 1
         obj = ns.get_object("x")
         obj.cache_mode = "ttl"
@@ -370,9 +369,6 @@ class TestCacheModeAndTTL:
 
 
 class TestNamespaceInitWithConfig:
-    """GPDCNamespace.__init__ accepts an optional GPDCNamespaceConfig that
-    overrides domain defaults for new namespaces."""
-
     def test_init_with_config_uses_per_namespace_cache_mode(self, domain, clean_redis):
         from gpdatacached.config import GPDCNamespaceConfig
         from gpdatacached.namespace import GPDCNamespace
@@ -403,18 +399,14 @@ class TestNamespaceInitWithConfig:
         assert meta["default_ttl_seconds"] == str(domain.get_default_ttl_seconds())
 
     def test_init_prefers_redis_over_passed_config_when_namespace_exists(self, domain, clean_redis):
-        """If namespace already exists in Redis, passed-in config must be ignored."""
         from gpdatacached.config import GPDCNamespaceConfig
         from gpdatacached.namespace import GPDCNamespace
 
-        # First creation: uses domain defaults (permanent, 0)
         GPDCNamespace("existing_ns", domain)
 
-        # Second creation with a conflicting config
         cfg = GPDCNamespaceConfig(default_cache_mode="sliding", default_ttl_seconds=9999)
         GPDCNamespace("existing_ns", domain, config=cfg)
 
-        # Redis metadata must still reflect the original (first-creation) values
         meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "existing_ns"))
         assert meta["default_cache_mode"] == "permanent"
         assert meta["default_ttl_seconds"] == "0"
@@ -423,7 +415,6 @@ class TestNamespaceInitWithConfig:
         from gpdatacached.config import GPDCNamespaceConfig
         from gpdatacached.namespace import GPDCNamespace
 
-        # Only cache_mode specified; default_ttl_seconds left as None
         cfg = GPDCNamespaceConfig(default_cache_mode="sliding")
         GPDCNamespace("partial_ns", domain, config=cfg)
 
@@ -433,14 +424,10 @@ class TestNamespaceInitWithConfig:
 
 
 class TestNamespaceMutableMapping:
-    """GPDCNamespace 作为 MutableMapping 子类的完整接口测试。"""
-
     def test_is_mutablemapping(self, ns):
         from collections.abc import MutableMapping
 
         assert isinstance(ns, MutableMapping)
-
-    # ── __len__ ─────────────────────────────────────────────────────────────
 
     def test_len_empty(self, ns):
         assert len(ns) == 0
@@ -458,10 +445,6 @@ class TestNamespaceMutableMapping:
         assert len(ns) == 1
 
     def test_len_excludes_anonymous(self, ns, clean_redis):
-        """直接写入匿名对象 Redis key，验证 __len__ 不计入。"""
-        import datetime
-        from gpdatacached.keys import make_object_key_prefix
-
         prefix = make_object_key_prefix("testdomain", "testns")
         anon_key = prefix + "~anon:fake-uuid-0001"
         now = datetime.datetime.now(datetime.UTC).isoformat()
@@ -477,15 +460,9 @@ class TestNamespaceMutableMapping:
             },
         )
         ns["named_obj"] = 42
-        assert len(ns) == 1  # 匿名对象不计入
-
-    # ── __iter__ 匿名过滤 ────────────────────────────────────────────────────
+        assert len(ns) == 1
 
     def test_iter_excludes_anonymous(self, ns, clean_redis):
-        """直接写入匿名对象 Redis key，验证 __iter__ 不 yield 该名称。"""
-        import datetime
-        from gpdatacached.keys import make_object_key_prefix
-
         prefix = make_object_key_prefix("testdomain", "testns")
         anon_key = prefix + "~anon:fake-uuid-0002"
         now = datetime.datetime.now(datetime.UTC).isoformat()
@@ -502,8 +479,6 @@ class TestNamespaceMutableMapping:
         )
         ns["real"] = 1
         assert list(ns) == ["real"]
-
-    # ── MutableMapping mixin 方法 ────────────────────────────────────────────
 
     def test_keys(self, ns):
         ns["x"] = 1
@@ -547,8 +522,6 @@ class TestNamespaceMutableMapping:
         assert result is None
 
     def test_pop_missing_no_default_raises(self, ns):
-        import pytest
-
         with pytest.raises(KeyError):
             ns.pop("nonexistent")
 
@@ -565,9 +538,6 @@ class TestNamespaceMutableMapping:
         assert len(ns) == 0
 
     def test_clear_also_deletes_anonymous_objects(self, ns, clean_redis):
-        """clear() deletes realistic anonymous obj/raw/ref keys created by nested containers."""
-        from gpdatacached.keys import make_namespace_meta_key, make_object_key, make_raw_key, make_ref_key
-
         ns["named"] = {"nested": [1, 2, 3]}
         anon_name = ns["named"]["nested"].name
         anon_obj_key = make_object_key("testdomain", "testns", anon_name)
@@ -620,8 +590,6 @@ class TestNamespaceLargeScale:
     N = 200
 
     def test_iter_returns_all_keys_with_timing(self, ns):
-        import time
-
         for i in range(self.N):
             ns[f"key_{i:04d}"] = i
 
@@ -635,8 +603,6 @@ class TestNamespaceLargeScale:
         print(f"__iter__ {self.N} objects: {elapsed:.3f}s")
 
     def test_len_returns_correct_count_with_timing(self, ns):
-        import time
-
         for i in range(self.N):
             ns[f"key_{i:04d}"] = i
 
@@ -648,8 +614,6 @@ class TestNamespaceLargeScale:
         print(f"__len__ {self.N} objects: {elapsed:.3f}s")
 
     def test_iter_excludes_anonymous_in_large_set(self, ns, clean_redis):
-        from gpdatacached.keys import make_object_key, make_raw_key
-
         for i in range(self.N):
             ns[f"key_{i:04d}"] = i
 
@@ -663,3 +627,1038 @@ class TestNamespaceLargeScale:
         result = sorted(ns)
         assert len(result) == self.N
         assert "~ghost" not in result
+
+
+class TestNamespaceSetItemUnique:
+    def test_setitem_scalar_object(self, ns):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        ns["y"] = obj
+        assert ns["y"] == 42
+
+    def test_setitem_referrer_can_rebind_to_existing_container_object(self, ns):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+        ns["z"] = {"a": 1}
+
+        ns["y"] = ns["z"]
+
+        assert ns["y"]["a"] == 1
+        assert list(ns["x"]) == [1, 2, 3]
+
+    def test_contains_with_tilde_name(self, ns):
+        assert "~anon:abc" not in ns
+
+    def test_contains_with_empty_string(self, ns):
+        assert "" not in ns
+
+    def test_contains_with_non_string(self, ns):
+        assert 42 not in ns
+
+
+class TestListCreation:
+    def test_setitem_list_creates_obj_key(self, ns, clean_redis):
+        ns["mylist"] = [1, 2, 3]
+        obj_key = make_object_key("testdomain", "testns", "mylist")
+        assert clean_redis.exists(obj_key)
+        assert clean_redis.hget(obj_key, "type") == "collection:list"
+
+    def test_setitem_list_creates_raw_key(self, ns, clean_redis):
+        ns["mylist"] = [1, 2, 3]
+        raw_key = make_raw_key("testdomain", "testns", "mylist")
+        assert clean_redis.exists(raw_key)
+        assert clean_redis.llen(raw_key) == 3
+
+    def test_getitem_list_returns_list_object(self, ns):
+        ns["mylist"] = [1, 2, 3]
+        result = ns["mylist"]
+        assert isinstance(result, ListObject)
+
+    def test_getitem_list_index(self, ns):
+        ns["mylist"] = [10, 20, 30]
+        lst = ns["mylist"]
+        assert lst[0] == 10
+        assert lst[1] == 20
+        assert lst[2] == 30
+
+    def test_list_append(self, ns):
+        ns["mylist"] = [1, 2, 3]
+        lst = ns["mylist"]
+        lst.append(4)
+        assert list(ns["mylist"]) == [1, 2, 3, 4]
+
+    def test_new_list_has_empty_referrers(self, ns):
+        ns["mylist"] = [1, 2, 3]
+        obj = ns["mylist"]
+        assert obj.referrers() == set()
+
+
+class TestListReferenceSharing:
+    def test_assign_list_object_shares_raw_key(self, ns, clean_redis):
+        ns["a"] = [1, 2, 3]
+        ns["b"] = ns["a"]
+        obj_a_key = make_object_key("testdomain", "testns", "a")
+        obj_b_key = make_object_key("testdomain", "testns", "b")
+        assert clean_redis.type(obj_b_key) == "string"
+        assert clean_redis.get(obj_b_key) == f"ref:{obj_a_key}"
+
+    def test_assign_list_object_adds_to_ref_set(self, ns, clean_redis):
+        ns["a"] = [1, 2, 3]
+        ns["b"] = ns["a"]
+        ref_key = make_ref_key("testdomain", "testns", "a")
+        assert "b" in clean_redis.smembers(ref_key)
+
+    def test_referrers_method(self, ns):
+        ns["a"] = [1, 2, 3]
+        ns["b"] = ns["a"]
+        assert "b" in ns["a"].referrers()
+
+    def test_shared_modification_visible_through_both(self, ns):
+        ns["a"] = [1, 2, 3]
+        ns["b"] = ns["a"]
+        ns["b"].append(4)
+        assert list(ns["a"]) == [1, 2, 3, 4]
+
+    def test_no_raw_key_for_reference(self, ns, clean_redis):
+        ns["a"] = [1, 2, 3]
+        ns["b"] = ns["a"]
+        raw_b = make_raw_key("testdomain", "testns", "b")
+        obj_b_key = make_object_key("testdomain", "testns", "b")
+        assert clean_redis.type(obj_b_key) == "string"
+        assert clean_redis.get(obj_b_key).startswith("ref:")
+        assert not clean_redis.exists(raw_b)
+
+
+class TestListCopySemantics:
+    def test_copy_creates_independent_list(self, ns):
+        ns["a"] = [1, 2, 3]
+        ns["c"] = ns["a"].copy()
+        ns["c"].append(4)
+        assert list(ns["a"]) == [1, 2, 3]
+        assert list(ns["c"]) == [1, 2, 3, 4]
+
+    def test_copy_does_not_add_to_ref_set(self, ns, clean_redis):
+        ns["a"] = [1, 2, 3]
+        ns["c"] = ns["a"].copy()
+        ref_key = make_ref_key("testdomain", "testns", "a")
+        assert "c" not in clean_redis.smembers(ref_key)
+
+    def test_copy_creates_separate_raw_key(self, ns, clean_redis):
+        ns["a"] = [1, 2, 3]
+        ns["c"] = ns["a"].copy()
+        raw_a = make_raw_key("testdomain", "testns", "a")
+        raw_c = make_raw_key("testdomain", "testns", "c")
+        obj_c_value = clean_redis.hget(make_object_key("testdomain", "testns", "c"), "value")
+        assert obj_c_value == raw_c
+        assert obj_c_value != raw_a
+
+
+class TestListReassignment:
+    def test_reassign_removes_from_old_ref_set(self, ns, clean_redis):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+        ref_x = make_ref_key("testdomain", "testns", "x")
+        assert "y" in clean_redis.smembers(ref_x)
+        ns["y"] = [4, 5, 6]
+        assert "y" not in clean_redis.smembers(ref_x)
+
+    def test_reassign_creates_new_raw_key(self, ns, clean_redis):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+        ns["y"] = [4, 5, 6]
+        raw_y = make_raw_key("testdomain", "testns", "y")
+        assert clean_redis.exists(raw_y)
+        assert clean_redis.llen(raw_y) == 3
+
+    def test_reassign_new_list_independent(self, ns):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+        ns["y"] = [4, 5, 6]
+        assert list(ns["x"]) == [1, 2, 3]
+        assert list(ns["y"]) == [4, 5, 6]
+
+
+class TestListDeletion:
+    def test_delete_no_referrers_removes_all_keys(self, ns, clean_redis):
+        ns["a"] = [1, 2, 3]
+        del ns["a"]
+        assert not clean_redis.exists(make_object_key("testdomain", "testns", "a"))
+        assert not clean_redis.exists(make_raw_key("testdomain", "testns", "a"))
+        assert not clean_redis.exists(make_ref_key("testdomain", "testns", "a"))
+
+    def test_delete_with_referrers_raises_error(self, ns):
+        ns["a"] = [1, 2, 3]
+        ns["b"] = ns["a"]
+        with pytest.raises(CanonicalObjectReferencedError):
+            del ns["a"]
+
+    def test_delete_referrer_removes_from_original_ref_set(self, ns, clean_redis):
+        ns["a"] = [1, 2, 3]
+        ns["b"] = ns["a"]
+        del ns["b"]
+        assert not clean_redis.exists(make_object_key("testdomain", "testns", "b"))
+        ref_a = make_ref_key("testdomain", "testns", "a")
+        assert "b" not in clean_redis.smembers(ref_a)
+
+    def test_delete_referrer_leaves_raw_data_intact(self, ns, clean_redis):
+        ns["a"] = [1, 2, 3]
+        ns["b"] = ns["a"]
+
+        raw_key_a = clean_redis.hget(make_object_key("testdomain", "testns", "a"), "value")
+
+        del ns["b"]
+
+        assert clean_redis.exists(raw_key_a) == 1
+        assert clean_redis.lrange(raw_key_a, 0, -1) == ["int:1", "int:2", "int:3"]
+
+        lst = ns["a"]
+        assert list(lst) == [1, 2, 3]
+
+    def test_delete_nonexistent_raises_key_error(self, ns):
+        with pytest.raises(KeyError):
+            del ns["nonexistent"]
+
+
+class TestListMixedTypes:
+    def test_scalar_still_works(self, ns):
+        ns["x"] = 42
+        assert ns["x"] == 42
+
+    def test_scalar_and_list_coexist(self, ns):
+        ns["x"] = 42
+        ns["mylist"] = [1, 2, 3]
+        assert ns["x"] == 42
+        assert isinstance(ns["mylist"], ListObject)
+        assert list(ns["mylist"]) == [1, 2, 3]
+
+
+class TestDictCreation:
+    def test_setitem_dict_creates_obj_key(self, ns, clean_redis):
+        ns["mydict"] = {"a": 1, "b": "hello"}
+        obj_key = make_object_key("testdomain", "testns", "mydict")
+        assert clean_redis.exists(obj_key)
+        assert clean_redis.hget(obj_key, "type") == "collection:dict"
+
+    def test_setitem_dict_creates_raw_key(self, ns, clean_redis):
+        ns["mydict"] = {"a": 1, "b": "hello"}
+        raw_key = make_raw_key("testdomain", "testns", "mydict")
+        assert clean_redis.exists(raw_key)
+        assert clean_redis.hlen(raw_key) == 2
+
+    def test_getitem_dict_returns_dict_object(self, ns):
+        ns["mydict"] = {"a": 1, "b": "hello"}
+        result = ns["mydict"]
+        assert isinstance(result, DictObject)
+
+    def test_dict_read_write(self, ns):
+        ns["mydict"] = {"name": "Alice", "age": 30}
+        d = ns["mydict"]
+        assert d["name"] == "Alice"
+        assert d["age"] == 30
+
+    def test_new_dict_has_empty_referrers(self, ns):
+        ns["mydict"] = {"a": 1}
+        obj = ns["mydict"]
+        assert obj.referrers() == set()
+
+
+class TestDictReferenceSharing:
+    def test_assign_dict_object_shares_raw_key(self, ns, clean_redis):
+        ns["a"] = {"x": 1}
+        ns["b"] = ns["a"]
+        obj_a_key = make_object_key("testdomain", "testns", "a")
+        obj_b_key = make_object_key("testdomain", "testns", "b")
+        assert clean_redis.type(obj_b_key) == "string"
+        assert clean_redis.get(obj_b_key) == f"ref:{obj_a_key}"
+
+    def test_assign_dict_object_adds_to_ref_set(self, ns, clean_redis):
+        ns["a"] = {"x": 1}
+        ns["b"] = ns["a"]
+        ref_key = make_ref_key("testdomain", "testns", "a")
+        assert "b" in clean_redis.smembers(ref_key)
+
+    def test_shared_dict_modification_visible(self, ns):
+        ns["a"] = {"x": 1}
+        ns["b"] = ns["a"]
+        ns["b"]["y"] = 2
+        assert ns["a"]["y"] == 2
+
+
+class TestDictDeletion:
+    def test_delete_no_referrers_removes_all_keys(self, ns, clean_redis):
+        ns["d"] = {"x": 1}
+        del ns["d"]
+        assert not clean_redis.exists(make_object_key("testdomain", "testns", "d"))
+        assert not clean_redis.exists(make_raw_key("testdomain", "testns", "d"))
+        assert not clean_redis.exists(make_ref_key("testdomain", "testns", "d"))
+
+    def test_delete_with_referrers_raises_error(self, ns):
+        ns["a"] = {"x": 1}
+        ns["b"] = ns["a"]
+        with pytest.raises(CanonicalObjectReferencedError):
+            del ns["a"]
+
+    def test_delete_nonexistent_raises(self, ns):
+        with pytest.raises(KeyError):
+            del ns["nonexistent"]
+
+
+class TestDictMixedTypes:
+    def test_scalar_list_dict_coexist(self, ns):
+        ns["s"] = 42
+        ns["l"] = [1, 2, 3]
+        ns["d"] = {"a": 1}
+        assert ns["s"] == 42
+        d = ns["d"]
+        assert isinstance(d, DictObject)
+        assert d["a"] == 1
+
+
+class TestSetCreation:
+    def test_assign_set_creates_object(self, ns, clean_redis):
+        ns["primes"] = {2, 3, 5, 7}
+        obj_key = make_object_key("testdomain", "testns", "primes")
+        assert clean_redis.hget(obj_key, "type") == "collection:set"
+
+    def test_assign_set_creates_raw(self, ns, clean_redis):
+        ns["primes"] = {2, 3, 5}
+        raw_key = make_raw_key("testdomain", "testns", "primes")
+        members = clean_redis.smembers(raw_key)
+        assert members == {"int:2", "int:3", "int:5"}
+
+    def test_assign_set_returns_setobject(self, ns):
+        ns["primes"] = {2, 3, 5}
+        obj = ns["primes"]
+        assert isinstance(obj, SetObject)
+
+    def test_assign_set_correct_value(self, ns):
+        ns["primes"] = {2, 3, 5}
+        obj = ns["primes"]
+        assert set(obj) == {2, 3, 5}
+
+    def test_assign_empty_set(self, ns, clean_redis):
+        ns["empty"] = set()
+        obj_key = make_object_key("testdomain", "testns", "empty")
+        assert clean_redis.hget(obj_key, "type") == "collection:set"
+        obj = ns["empty"]
+        assert len(obj) == 0
+
+    def test_assign_set_with_tuples(self, ns):
+        ns["tset"] = {1, (2, 3)}
+        obj = ns["tset"]
+        assert 1 in obj
+        assert (2, 3) in obj
+
+
+class TestSetDeletion:
+    def test_del_set_removes_obj_key(self, ns, clean_redis):
+        ns["primes"] = {2, 3, 5}
+        obj_key = make_object_key("testdomain", "testns", "primes")
+        assert clean_redis.exists(obj_key)
+        del ns["primes"]
+        assert not clean_redis.exists(obj_key)
+
+    def test_del_set_removes_raw_key(self, ns, clean_redis):
+        ns["primes"] = {2, 3, 5}
+        raw_key = make_raw_key("testdomain", "testns", "primes")
+        assert clean_redis.exists(raw_key)
+        del ns["primes"]
+        assert not clean_redis.exists(raw_key)
+
+    def test_del_set_removes_ref_key(self, ns, clean_redis):
+        ns["primes"] = {2, 3, 5}
+        ref_key = make_ref_key("testdomain", "testns", "primes")
+        del ns["primes"]
+        assert not clean_redis.exists(ref_key)
+
+
+class TestSetReferenceSharing:
+    def test_assign_setobject_shares_raw(self, ns, clean_redis):
+        ns["a"] = {1, 2, 3}
+        ns["b"] = ns["a"]
+        obj_a_key = make_object_key("testdomain", "testns", "a")
+        obj_b = make_object_key("testdomain", "testns", "b")
+        assert clean_redis.type(obj_b) == "string"
+        assert clean_redis.get(obj_b) == f"ref:{obj_a_key}"
+
+    def test_ref_set_tracks_referrer(self, ns, clean_redis):
+        ns["a"] = {1, 2, 3}
+        ns["b"] = ns["a"]
+        ref_key_a = make_ref_key("testdomain", "testns", "a")
+        assert "b" in clean_redis.smembers(ref_key_a)
+
+    def test_del_referrer_preserves_raw(self, ns, clean_redis):
+        ns["a"] = {1, 2, 3}
+        ns["b"] = ns["a"]
+        del ns["b"]
+        raw_a = make_raw_key("testdomain", "testns", "a")
+        assert clean_redis.exists(raw_a)
+
+    def test_reassign_referrer_cleans_old_ref(self, ns, clean_redis):
+        ns["a"] = {1, 2, 3}
+        ns["b"] = ns["a"]
+        ns["b"] = {4, 5}
+        ref_key_a = make_ref_key("testdomain", "testns", "a")
+        assert "b" not in clean_redis.smembers(ref_key_a)
+
+
+class TestAliasStorageModel:
+    def test_owner_stored_as_hash(self, ns):
+        ns["mylist"] = [1, 2, 3]
+        r = ns._redis()
+        obj_key = make_object_key(ns.domain.name, ns.name, "mylist")
+        assert r.type(obj_key) == "hash"
+
+    def test_alias_stored_as_string(self, ns):
+        ns["owner"] = [10, 20]
+        ns["alias"] = ns["owner"]
+        r = ns._redis()
+        alias_key = make_object_key(ns.domain.name, ns.name, "alias")
+        assert r.type(alias_key) == "string"
+
+    def test_alias_string_value_is_ref_to_canonical(self, ns):
+        ns["owner"] = [10, 20]
+        ns["alias"] = ns["owner"]
+        r = ns._redis()
+        alias_key = make_object_key(ns.domain.name, ns.name, "alias")
+        owner_key = make_object_key(ns.domain.name, ns.name, "owner")
+        assert r.get(alias_key) == f"ref:{owner_key}"
+
+    def test_owner_metadata_has_no_binding_kind(self, ns):
+        ns["mylist"] = [1, 2, 3]
+        r = ns._redis()
+        obj_key = make_object_key(ns.domain.name, ns.name, "mylist")
+        meta = r.hgetall(obj_key)
+        assert "binding_kind" not in meta
+
+    def test_alias_in_ref_set(self, ns):
+        ns["owner"] = [10, 20]
+        ns["alias"] = ns["owner"]
+        r = ns._redis()
+        ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
+        assert r.smembers(ref_key) == {"alias"}
+
+
+class TestAliasHandleProperties:
+    def test_alias_name_is_alias(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        obj = ns.get_object("alias")
+        assert obj.name == "alias"
+
+    def test_alias_canonical_name_is_owner(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        obj = ns.get_object("alias")
+        assert obj.canonical_name == "owner"
+
+    def test_alias_is_reference_true(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        obj = ns.get_object("alias")
+        assert obj.is_reference is True
+
+    def test_owner_is_reference_false(self, ns):
+        ns["owner"] = [1, 2]
+        obj = ns.get_object("owner")
+        assert obj.is_reference is False
+
+    def test_alias_uri_uses_alias_name(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        obj = ns.get_object("alias")
+        assert "alias" in obj.uri
+        assert "owner" not in obj.uri
+
+    def test_alias_canonical_uri_uses_owner_name(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        obj = ns.get_object("alias")
+        assert "owner" in obj.canonical_uri
+
+    def test_alias_reads_same_data_as_owner(self, ns):
+        ns["owner"] = [10, 20, 30]
+        ns["alias"] = ns["owner"]
+        assert ns["alias"].value == [10, 20, 30]
+
+    def test_mutation_through_alias_visible_through_owner(self, ns):
+        ns["owner"] = [10, 20]
+        ns["alias"] = ns["owner"]
+        ns["alias"].append(30)
+        assert ns["owner"].value == [10, 20, 30]
+
+
+class TestAliasLifecycleResolvesToCanonical:
+    def test_cache_mode_reads_from_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        assert ns.get_object("alias").cache_mode == ns.get_object("owner").cache_mode
+
+    def test_cache_mode_set_through_alias_affects_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
+        assert ns.get_object("owner").cache_mode == "ttl"
+
+    def test_ttl_set_through_alias_affects_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
+        alias_obj.ttl = 300
+        assert ns.get_object("owner").ttl == 300
+
+    def test_created_at_reads_from_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        assert ns.get_object("alias").created_at == ns.get_object("owner").created_at
+
+    def test_updated_at_reads_from_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        assert ns.get_object("alias").updated_at == ns.get_object("owner").updated_at
+
+    def test_remaining_ttl_resolves_to_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
+        alias_obj.ttl = 300
+        owner_obj = ns.get_object("owner")
+        assert alias_obj.remaining_ttl() == owner_obj.remaining_ttl()
+
+    def test_expire_in_through_alias_affects_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
+        alias_obj.expire_in(600)
+        assert ns.get_object("owner").remaining_ttl() > 0
+
+    def test_expire_at_through_alias_affects_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
+        future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=600)
+        alias_obj.expire_at(future)
+        assert ns.get_object("owner").remaining_ttl() > 0
+
+    def test_persist_through_alias_affects_canonical(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        alias_obj = ns.get_object("alias")
+        alias_obj.cache_mode = "ttl"
+        alias_obj.ttl = 300
+        alias_obj.persist()
+        assert ns.get_object("owner").remaining_ttl() == -1
+
+
+class TestOwnerDeletionBlocking:
+    def test_delete_owner_with_refs_raises_error(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        with pytest.raises(CanonicalObjectReferencedError) as exc_info:
+            del ns["owner"]
+        assert exc_info.value.canonical_name == "owner"
+        assert "alias" in exc_info.value.referrers
+
+    def test_delete_owner_without_refs_succeeds(self, ns):
+        ns["owner"] = [1, 2, 3]
+        del ns["owner"]
+        assert "owner" not in ns
+
+    def test_delete_alias_succeeds(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        del ns["alias"]
+        assert "alias" not in ns
+        assert "owner" in ns
+
+    def test_delete_alias_removes_from_ref_set(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        del ns["alias"]
+        r = ns._redis()
+        ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
+        assert r.smembers(ref_key) == set()
+
+    def test_delete_owner_after_all_aliases_removed(self, ns):
+        ns["owner"] = [1, 2]
+        ns["a1"] = ns["owner"]
+        ns["a2"] = ns["owner"]
+        del ns["a1"]
+        del ns["a2"]
+        del ns["owner"]
+        assert "owner" not in ns
+
+
+class TestOwnerOverwrite:
+    def test_overwrite_owner_with_scalar(self, ns):
+        ns["x"] = [1, 2, 3]
+        ns["x"] = 42
+        assert ns["x"] == 42
+
+    def test_overwrite_owner_with_new_container(self, ns):
+        ns["x"] = [1, 2, 3]
+        ns["x"] = {"a": 1}
+        assert ns["x"].value == {"a": 1}
+
+    def test_overwrite_owner_with_refs_raises_error(self, ns):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+        with pytest.raises(CanonicalObjectReferencedError):
+            ns["x"] = 42
+
+    def test_overwrite_alias_with_scalar(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        ns["alias"] = 99
+        assert ns["alias"] == 99
+        assert ns["owner"].value == [1, 2]
+
+    def test_overwrite_alias_with_new_container(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        ns["alias"] = {"new": True}
+        assert ns["alias"].value == {"new": True}
+        assert ns["owner"].value == [1, 2]
+
+
+class TestSameRefNoOp:
+    def test_same_ref_assignment_is_noop(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        ns["alias"] = ns["owner"]
+        r = ns._redis()
+        ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
+        assert r.smembers(ref_key) == {"alias"}
+
+    def test_self_assignment_of_owner_is_noop(self, ns):
+        ns["x"] = [1, 2, 3]
+        ns["x"] = ns["x"]
+        assert ns["x"].value == [1, 2, 3]
+
+
+class TestBindingResolution:
+    def test_resolve_owner_hash(self, ns):
+        ns["mylist"] = [1, 2]
+        result = ns._resolve_binding("mylist")
+        assert result is not None
+        assert result.binding_kind == "owner"
+        assert result.canonical_name == "mylist"
+        assert result.binding_name == "mylist"
+
+    def test_resolve_alias_string(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        result = ns._resolve_binding("alias")
+        assert result is not None
+        assert result.binding_kind == "reference"
+        assert result.canonical_name == "owner"
+        assert result.binding_name == "alias"
+
+    def test_resolve_nonexistent_returns_none(self, ns):
+        result = ns._resolve_binding("nosuchkey")
+        assert result is None
+
+    def test_resolve_scalar_owner(self, ns):
+        ns["x"] = 42
+        result = ns._resolve_binding("x")
+        assert result is not None
+        assert result.binding_kind == "owner"
+        assert result.type == "scalar:int"
+
+    def test_resolve_malformed_ref_returns_none(self, ns):
+        r = ns._redis()
+        alias_key = make_object_key(ns.domain.name, ns.name, "bad_alias")
+        raw_key = make_raw_key(ns.domain.name, ns.name, "owner")
+        r.set(alias_key, f"ref:{raw_key}")
+        result = ns._resolve_binding("bad_alias")
+        assert result is None
+        r.delete(alias_key)
+
+    def test_resolve_cross_namespace_ref_returns_none(self, ns):
+        r = ns._redis()
+        alias_key = make_object_key(ns.domain.name, ns.name, "bad_alias")
+        cross_ns_obj_key = make_object_key(ns.domain.name, "other_ns", "owner")
+        r.set(alias_key, f"ref:{cross_ns_obj_key}")
+        result = ns._resolve_binding("bad_alias")
+        assert result is None
+        r.delete(alias_key)
+
+    def test_resolve_alias_to_alias_returns_none(self, ns):
+        r = ns._redis()
+        ns["owner"] = [1, 2]
+        ns["alias1"] = ns["owner"]
+        alias1_key = make_object_key(ns.domain.name, ns.name, "alias1")
+        alias2_key = make_object_key(ns.domain.name, ns.name, "alias2")
+        r.set(alias2_key, f"ref:{alias1_key}")
+        result = ns._resolve_binding("alias2")
+        assert result is None
+        r.delete(alias2_key)
+
+    def test_resolve_string_binding_to_non_hash_returns_none(self, ns):
+        r = ns._redis()
+        owner_key = make_object_key(ns.domain.name, ns.name, "owner")
+        alias_key = make_object_key(ns.domain.name, ns.name, "bad_alias")
+        r.set(owner_key, "not_a_hash_value")
+        r.set(alias_key, f"ref:{owner_key}")
+        result = ns._resolve_binding("bad_alias")
+        assert result is None
+        r.delete(alias_key)
+        r.delete(owner_key)
+
+
+class TestContainerThroughAlias:
+    def test_list_append_through_alias(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        ns["alias"].append(3)
+        assert ns["owner"].value == [1, 2, 3]
+
+    def test_dict_setitem_through_alias(self, ns):
+        ns["owner"] = {"a": 1}
+        ns["alias"] = ns["owner"]
+        ns["alias"]["b"] = 2
+        assert ns["owner"].value == {"a": 1, "b": 2}
+
+    def test_set_add_through_alias(self, ns):
+        ns["owner"] = {1, 2}
+        ns["alias"] = ns["owner"]
+        ns["alias"].add(3)
+        assert 3 in ns["owner"]
+
+    def test_alias_referrers_returns_canonical_refs(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        owner_obj = ns.get_object("owner")
+        alias_obj = ns.get_object("alias")
+        assert owner_obj.referrers() == {"alias"}
+        assert alias_obj.referrers() == {"alias"}
+
+    def test_alias_touch_updates_canonical_timestamp(self, ns):
+        ns["owner"] = [1, 2]
+        ns["alias"] = ns["owner"]
+        owner_updated = ns.get_object("owner").updated_at
+        ns["alias"].append(99)
+        new_updated = ns.get_object("owner").updated_at
+        assert new_updated >= owner_updated
+
+
+class TestStaleAliasContains:
+    def test_stale_alias_not_in_ns(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        r = ns._redis()
+        owner_key = make_object_key(ns.domain.name, ns.name, "owner")
+        ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
+        r.delete(owner_key)
+        r.delete(ref_key)
+        assert "alias" not in ns
+
+    def test_valid_alias_in_ns(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        assert "alias" in ns
+
+    def test_owner_still_in_ns_after_owner_deleted(self, ns):
+        ns["owner"] = [1, 2, 3]
+        assert "owner" in ns
+        del ns["owner"]
+        assert "owner" not in ns
+
+    def test_stale_alias_string_key_still_exists_in_redis(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        r = ns._redis()
+        owner_key = make_object_key(ns.domain.name, ns.name, "owner")
+        ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
+        r.delete(owner_key)
+        r.delete(ref_key)
+        alias_key = make_object_key(ns.domain.name, ns.name, "alias")
+        assert r.exists(alias_key) > 0
+        assert "alias" not in ns
+
+
+class TestStaleAliasGetItem:
+    def test_stale_alias_getitem_raises_keyerror(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        r = ns._redis()
+        owner_key = make_object_key(ns.domain.name, ns.name, "owner")
+        ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
+        r.delete(owner_key)
+        r.delete(ref_key)
+        with pytest.raises(KeyError):
+            ns["alias"]
+
+    def test_valid_alias_getitem_works(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        assert ns["alias"].value == [1, 2, 3]
+
+
+class TestStaleAliasIter:
+    def test_iter_excludes_stale_alias(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        ns["other"] = "hello"
+        r = ns._redis()
+        owner_key = make_object_key(ns.domain.name, ns.name, "owner")
+        ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
+        r.delete(owner_key)
+        r.delete(ref_key)
+        names = list(ns)
+        assert "alias" not in names
+        assert "other" in names
+
+    def test_iter_includes_valid_alias(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        names = list(ns)
+        assert "alias" in names
+        assert "owner" in names
+
+    def test_iter_multiple_stale_and_valid(self, ns):
+        ns["owner1"] = [1, 2]
+        ns["owner2"] = [3, 4]
+        ns["alias1"] = ns["owner1"]
+        ns["alias2"] = ns["owner2"]
+        ns["standalone"] = "val"
+        r = ns._redis()
+        owner1_key = make_object_key(ns.domain.name, ns.name, "owner1")
+        ref1_key = make_ref_key(ns.domain.name, ns.name, "owner1")
+        r.delete(owner1_key)
+        r.delete(ref1_key)
+        names = list(ns)
+        assert "alias1" not in names
+        assert "owner1" not in names
+        assert "alias2" in names
+        assert "owner2" in names
+        assert "standalone" in names
+
+
+class TestStaleAliasLen:
+    def test_len_excludes_stale_alias(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        ns["other"] = "hello"
+        r = ns._redis()
+        owner_key = make_object_key(ns.domain.name, ns.name, "owner")
+        ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
+        r.delete(owner_key)
+        r.delete(ref_key)
+        assert len(ns) == 1
+        assert set(ns) == {"other"}
+
+    def test_stale_alias_not_counted_fix(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        r = ns._redis()
+        owner_key = make_object_key(ns.domain.name, ns.name, "owner")
+        ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
+        r.delete(owner_key)
+        r.delete(ref_key)
+        assert len(ns) == 0
+
+    def test_len_counts_valid_alias(self, ns):
+        ns["owner"] = [1, 2, 3]
+        ns["alias"] = ns["owner"]
+        assert len(ns) == 2
+
+
+class TestReassignmentRefCleanup:
+    def test_overwrite_owner_list_with_scalar_when_no_refs(self, ns):
+        ns["x"] = [1, 2, 3]
+        ns["x"] = 42
+        assert ns["x"] == 42
+
+    def test_reassign_dict_to_scalar_cleans_ref(self, ns, clean_redis):
+        ns["x"] = {"a": 1}
+        ns["y"] = ns["x"]
+        ref_x = make_ref_key("testdomain", "testns", "x")
+        assert "y" in clean_redis.smembers(ref_x)
+
+        ns["y"] = "hello"
+        assert "y" not in clean_redis.smembers(ref_x)
+
+    def test_reassign_set_to_scalar_cleans_ref(self, ns, clean_redis):
+        ns["x"] = {1, 2, 3}
+        ns["y"] = ns["x"]
+        ref_x = make_ref_key("testdomain", "testns", "x")
+        assert "y" in clean_redis.smembers(ref_x)
+
+        ns["y"] = 99
+        assert "y" not in clean_redis.smembers(ref_x)
+
+    def test_reassign_alias_to_new_container_cleans_ref(self, ns, clean_redis):
+        ns["a"] = [1, 2]
+        ns["b"] = ns["a"]
+        ns["c"] = [10, 20]
+        ns["b"] = ns["c"]
+        ref_a = make_ref_key("testdomain", "testns", "a")
+        ref_c = make_ref_key("testdomain", "testns", "c")
+        assert "b" not in clean_redis.smembers(ref_a)
+        assert "b" in clean_redis.smembers(ref_c)
+
+    def test_reassign_ref_to_existing_container_cleans_old_ref(self, ns, clean_redis):
+        ns["x"] = [1, 2]
+        ns["y"] = [3, 4]
+        ns["z"] = ns["x"]
+
+        ns["z"] = ns["y"]
+        ref_x = make_ref_key("testdomain", "testns", "x")
+        ref_y = make_ref_key("testdomain", "testns", "y")
+        assert "z" not in clean_redis.smembers(ref_x)
+        assert "z" in clean_redis.smembers(ref_y)
+
+
+class TestMultipleRefs:
+    def test_multiple_refs_to_same_container(self, ns, clean_redis):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+        ns["z"] = ns["x"]
+        ref_x = make_ref_key("testdomain", "testns", "x")
+        assert clean_redis.smembers(ref_x) == {"y", "z"}
+
+    def test_del_one_ref_preserves_data(self, ns, clean_redis):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+        ns["z"] = ns["x"]
+        del ns["z"]
+        raw_x = make_raw_key("testdomain", "testns", "x")
+        assert clean_redis.exists(raw_x)
+
+    def test_del_all_refs_preserves_owner(self, ns, clean_redis):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+        del ns["y"]
+        raw_x = make_raw_key("testdomain", "testns", "x")
+        obj_x = make_object_key("testdomain", "testns", "x")
+        assert clean_redis.exists(raw_x)
+        assert clean_redis.exists(obj_x)
+
+    def test_delete_owner_blocked_when_refs_exist(self, ns):
+        ns["x"] = [1, 2]
+        ns["y"] = ns["x"]
+        with pytest.raises(CanonicalObjectReferencedError):
+            del ns["x"]
+        assert ns["x"].value == [1, 2]
+        assert ns["y"].value == [1, 2]
+
+
+class TestReassignToDifferentContainerType:
+    def test_reassign_list_to_dict(self, ns, clean_redis):
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]
+        ns["y"] = {"a": 1}
+        ref_x = make_ref_key("testdomain", "testns", "x")
+        assert "y" not in clean_redis.smembers(ref_x)
+        obj_y = make_object_key("testdomain", "testns", "y")
+        assert clean_redis.hget(obj_y, "type") == "collection:dict"
+
+    def test_reassign_dict_to_set(self, ns, clean_redis):
+        ns["x"] = {"a": 1}
+        ns["y"] = ns["x"]
+        ns["y"] = {1, 2}
+        ref_x = make_ref_key("testdomain", "testns", "x")
+        assert "y" not in clean_redis.smembers(ref_x)
+        obj_y = make_object_key("testdomain", "testns", "y")
+        assert clean_redis.hget(obj_y, "type") == "collection:set"
+
+    def test_reassign_set_to_list(self, ns, clean_redis):
+        ns["x"] = {1, 2}
+        ns["y"] = ns["x"]
+        ns["y"] = [3, 4]
+        ref_x = make_ref_key("testdomain", "testns", "x")
+        assert "y" not in clean_redis.smembers(ref_x)
+        obj_y = make_object_key("testdomain", "testns", "y")
+        assert clean_redis.hget(obj_y, "type") == "collection:list"
+
+
+class TestNamespaceThreading:
+    def test_concurrent_writes_no_data_loss(self, domain):
+        ns = domain.get_namespace("ns1")
+        n_threads = 10
+        n_writes = 50
+        errors = []
+
+        def writer(thread_id):
+            try:
+                for i in range(n_writes):
+                    key = f"t{thread_id}_k{i}"
+                    ns[key] = thread_id * 1000 + i
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=writer, args=(tid,)) for tid in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        for tid in range(n_threads):
+            for i in range(n_writes):
+                key = f"t{tid}_k{i}"
+                assert ns[key] == tid * 1000 + i
+
+    def test_concurrent_reads_consistent(self, domain):
+        ns = domain.get_namespace("ns2")
+        for i in range(100):
+            ns[f"key{i}"] = i
+
+        results = {}
+        errors = []
+
+        def reader(thread_id):
+            try:
+                local = {}
+                for i in range(100):
+                    local[f"key{i}"] = ns[f"key{i}"]
+                results[thread_id] = local
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=reader, args=(tid,)) for tid in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        for tid, data in results.items():
+            for i in range(100):
+                assert data[f"key{i}"] == i
+
+    def test_concurrent_read_write_no_crash(self, domain):
+        ns = domain.get_namespace("ns3")
+        for i in range(50):
+            ns[f"key{i}"] = i
+
+        errors = []
+
+        def writer():
+            try:
+                for i in range(50, 100):
+                    ns[f"key{i}"] = i
+            except Exception as e:
+                errors.append(e)
+
+        def reader():
+            try:
+                for i in range(50):
+                    _ = ns.get(f"key{i}")
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=writer)
+        t2 = threading.Thread(target=reader)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert errors == []
