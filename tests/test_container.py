@@ -1204,3 +1204,47 @@ class TestSetScalarRestriction:
         ns["s"] = {1, 2, 3}
         s = ns.get_object("s")
         assert s.deepcopy() == s.copy()
+
+
+class TestContainerErrorPaths:
+    def test_list_index_out_of_range(self, ns):
+        ns["lst"] = [1, 2, 3]
+        lst = ns.get_object("lst")
+        with pytest.raises(IndexError):
+            lst[10]
+
+    def test_list_pop_empty(self, ns):
+        ns["lst"] = []
+        lst = ns.get_object("lst")
+        with pytest.raises(IndexError, match="empty list"):
+            lst.pop()
+
+    def test_list_remove_missing(self, ns):
+        ns["lst"] = [1, 2, 3]
+        lst = ns.get_object("lst")
+        with pytest.raises(ValueError, match="not in list"):
+            lst.remove(99)
+
+    def test_dict_key_error(self, ns):
+        ns["d"] = {"a": 1}
+        d = ns.get_object("d")
+        with pytest.raises(KeyError):
+            d["nonexistent"]
+
+    def test_dict_del_missing_key(self, ns):
+        ns["d"] = {"a": 1}
+        d = ns.get_object("d")
+        with pytest.raises(KeyError):
+            del d["nonexistent"]
+
+    def test_set_pop_empty(self, ns):
+        ns["s"] = set()
+        s = ns.get_object("s")
+        with pytest.raises(KeyError, match="empty set"):
+            s.pop()
+
+    def test_set_remove_missing(self, ns):
+        ns["s"] = {1, 2}
+        s = ns.get_object("s")
+        with pytest.raises(KeyError):
+            s.remove(99)

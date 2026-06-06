@@ -275,3 +275,19 @@ class TestRegistryExtensibility:
         decoded = TupleCodec.decode_value(encoded)
         assert decoded == original
         assert decoded[0] == Decimal("1.5")
+
+
+class TestRegistryErrorPaths:
+    def test_lookup_unsupported_python_type(self):
+        with pytest.raises(TypeError, match="Unsupported Python type"):
+            GPDCTypeRegistry.lookup_by_python_type(complex(1, 2))
+
+    def test_lookup_unknown_gpdc_type(self):
+        with pytest.raises(ValueError, match="Unknown GPDC type"):
+            GPDCTypeRegistry.lookup_by_gpdc_type("unknown:type")
+
+    def test_invalid_cache_mode(self, ns):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        with pytest.raises(ValueError, match="Invalid cache_mode"):
+            obj.cache_mode = "invalid"

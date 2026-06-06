@@ -85,3 +85,15 @@ class TestGPDCDomainConfig:
         cfg = GPDCDomainConfig(default_cache_mode="permanent", default_ttl_seconds=0)
         assert cfg.default_cache_mode == "permanent"
         assert cfg.default_ttl_seconds == 0
+
+    def test_rejects_invalid_cache_mode(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(default_cache_mode="bad")
+
+    def test_rejects_negative_ttl(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(default_ttl_seconds=-1)

@@ -1662,3 +1662,42 @@ class TestNamespaceThreading:
         t2.join()
 
         assert errors == []
+
+
+class TestNamespaceErrorPaths:
+    def test_getitem_missing_key(self, ns):
+        with pytest.raises(KeyError):
+            ns["nonexistent"]
+
+    def test_delitem_missing_key(self, ns):
+        with pytest.raises(KeyError):
+            del ns["nonexistent"]
+
+    def test_setitem_invalid_name(self, ns):
+        with pytest.raises(ValueError):
+            ns["__reserved__"] = 42
+
+    def test_setitem_invalid_chars(self, ns):
+        with pytest.raises(ValueError):
+            ns["has space"] = 42
+
+    def test_setitem_cross_namespace_ref(self):
+        from gpdatacached.config import GPDCDomainConfig
+        from gpdatacached.domain import GPDCDomain
+        import redis as redis_lib
+
+        r = redis_lib.Redis(host="127.0.0.1", port=6379, db=1, password="123456", decode_responses=True)
+        r.flushdb()
+        cfg = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_db=1, redis_password="123456")
+        domain = GPDCDomain("testdomain", cfg)
+        ns1 = domain.get_namespace("ns1")
+        ns2 = domain.get_namespace("ns2")
+        ns1["lst"] = [1, 2, 3]
+        lst = ns1.get_object("lst")
+        with pytest.raises(ValueError, match="Cross-namespace"):
+            ns2["ref"] = lst
+        domain.close()
+
+    def test_setitem_unsupported_type(self, ns):
+        with pytest.raises(TypeError, match="Unsupported Python type"):
+            ns["x"] = complex(1, 2)

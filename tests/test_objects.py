@@ -393,6 +393,18 @@ class TestObjectGoneErrorRead:
             _ = obj.updated_at
 
 
+class TestScalarTypeEnforcement:
+    def test_scalar_object_rejects_value_of_different_declared_type(self, ns):
+        ns["x"] = 1
+        obj = ns.get_object("x")
+        assert obj.value == 1
+
+        with pytest.raises(TypeError):
+            obj.value = "abc"
+
+        assert obj.value == 1
+
+
 class TestObjectGoneErrorAttributes:
     def test_exception_carries_uri(self, ns, raw_redis):
         ns["x"] = 42

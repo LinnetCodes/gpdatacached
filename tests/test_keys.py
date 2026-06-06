@@ -127,3 +127,21 @@ class TestValidateDomainAndNamespace:
     def test_invalid_domain_reserved(self):
         with pytest.raises(ValueError):
             validate_domain_name("__meta__")
+
+
+class TestKeysErrorPaths:
+    def test_uri_invalid_prefix(self):
+        with pytest.raises(ValueError, match="must start with"):
+            uri_to_redis_key("http://domain/ns/name")
+
+    def test_uri_invalid_format(self):
+        with pytest.raises(ValueError, match="must be gpdc://"):
+            uri_to_redis_key("gpdc://domain/name")
+
+    def test_validate_reserved_name(self):
+        with pytest.raises(ValueError, match="reserved"):
+            validate_object_name("__meta__")
+
+    def test_validate_invalid_chars(self):
+        with pytest.raises(ValueError, match="only letters"):
+            validate_object_name("has spaces")

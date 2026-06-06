@@ -465,3 +465,35 @@ class TestCodecErrors:
             encoded = codec.encode_value(v)
             decoded = codec.decode_value(encoded)
             assert decoded == v, f"Roundtrip failed for {v!r}: got {decoded!r}"
+
+    def test_decode_empty_string(self):
+        with pytest.raises(ValueError, match="Invalid scalar encoding"):
+            IntCodec.decode_value("")
+
+    def test_decode_no_colon(self):
+        with pytest.raises(ValueError, match="Invalid scalar encoding"):
+            IntCodec.decode_value("invalid")
+
+    def test_decode_bad_int(self):
+        with pytest.raises(ValueError, match="Invalid scalar value"):
+            IntCodec.decode_value("int:abc")
+
+    def test_decode_bad_float(self):
+        with pytest.raises(ValueError, match="Invalid scalar value"):
+            FloatCodec.decode_value("float:xyz")
+
+    def test_decode_bad_datetime(self):
+        with pytest.raises(ValueError, match="Invalid scalar value"):
+            DateTimeCodec.decode_value("datetime:not-a-date")
+
+    def test_decode_bad_date(self):
+        with pytest.raises(ValueError, match="Invalid scalar value"):
+            DateCodec.decode_value("date:bad")
+
+    def test_decode_bad_time(self):
+        with pytest.raises(ValueError, match="Invalid scalar value"):
+            TimeCodec.decode_value("time:bad")
+
+    def test_encode_unsupported_type(self):
+        with pytest.raises(TypeError):
+            IntCodec.encode_value(complex(1, 2))
