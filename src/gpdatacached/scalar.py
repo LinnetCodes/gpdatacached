@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import datetime
-from .exceptions import ObjectGoneError
+from .exceptions import GPDCError, ObjectGoneError
 from .objects import GPDCDataObject
 from .meta import ObjectMeta
 
@@ -22,8 +22,12 @@ class GPDCScalarObject(GPDCDataObject):
     def value(self) -> object:
         key = self._canonical_redis_key()
         meta = ObjectMeta.load(self._redis(), key)
-        if meta is None or not meta.value:
+        if meta is None:
+            raise ObjectGoneError(self.canonical_uri)
+        if self.TYPE == "scalar:none":
             return None
+        if not meta.value:
+            raise GPDCError(f"Corrupted scalar object {self.canonical_uri!r}: empty value field")
         from .types import GPDCTypeRegistry
 
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(self.TYPE)
