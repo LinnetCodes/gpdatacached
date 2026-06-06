@@ -92,7 +92,9 @@ class GPDCDataObject(ABC):
     @property
     def cache_mode(self) -> str:
         meta = self.meta
-        return meta.cache_mode if meta else ""
+        if meta is None:
+            raise ObjectGoneError(self.canonical_uri)
+        return meta.cache_mode
 
     def _load_lifecycle_context(self) -> _LifecycleContext:
         from .keys import make_ref_key
@@ -179,7 +181,9 @@ class GPDCDataObject(ABC):
     @property
     def ttl(self) -> int:
         meta = self.meta
-        return meta.ttl if meta else 0
+        if meta is None:
+            raise ObjectGoneError(self.canonical_uri)
+        return meta.ttl
 
     @ttl.setter
     def ttl(self, seconds: int) -> None:
@@ -193,12 +197,16 @@ class GPDCDataObject(ABC):
     @property
     def created_at(self) -> datetime.datetime | None:
         meta = self.meta
-        return meta.created_at if meta else None
+        if meta is None:
+            raise ObjectGoneError(self.canonical_uri)
+        return meta.created_at
 
     @property
     def updated_at(self) -> datetime.datetime | None:
         meta = self.meta
-        return meta.updated_at if meta else None
+        if meta is None:
+            raise ObjectGoneError(self.canonical_uri)
+        return meta.updated_at
 
     def expire_in(self, seconds: int) -> None:
         from .ttl import TTLPolicy

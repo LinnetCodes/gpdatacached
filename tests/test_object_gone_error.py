@@ -75,6 +75,36 @@ class TestObjectGoneErrorContainerTouch:
             obj["b"] = 2
 
 
+class TestObjectGoneErrorReadPath:
+    def test_cache_mode_raises_on_gone(self, ns, raw_redis):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        _delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            _ = obj.cache_mode
+
+    def test_ttl_raises_on_gone(self, ns, raw_redis):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        _delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            _ = obj.ttl
+
+    def test_created_at_raises_on_gone(self, ns, raw_redis):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        _delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            _ = obj.created_at
+
+    def test_updated_at_raises_on_gone(self, ns, raw_redis):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        _delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            _ = obj.updated_at
+
+
 class TestObjectGoneErrorAttributes:
     def test_exception_carries_uri(self, ns, raw_redis):
         ns["x"] = 42
