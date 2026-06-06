@@ -1,7 +1,30 @@
-# tests/test_domain.py
+import logging
+
 import pytest
 from gpdatacached.domain import GPDCDomain, GPDC_VERSION
-from gpdatacached.keys import GLOBAL_META_KEY, GLOBAL_DOMAINS_KEY, make_domain_meta_key
+from gpdatacached.config import GPDCDomainConfig
+from gpdatacached.keys import (
+    GLOBAL_DOMAINS_KEY,
+    GLOBAL_META_KEY,
+    make_domain_meta_key,
+    make_domain_namespaces_key,
+    make_namespace_meta_key,
+)
+
+
+REDIS_HOST = "127.0.0.1"
+REDIS_PORT = 6379
+REDIS_DB = 1
+REDIS_PASSWORD = "123456"
+
+
+def _make_config():
+    return GPDCDomainConfig(
+        redis_host=REDIS_HOST,
+        redis_port=REDIS_PORT,
+        redis_db=REDIS_DB,
+        redis_password=REDIS_PASSWORD,
+    )
 
 
 class TestGPDCDomainInit:
@@ -24,16 +47,14 @@ class TestGPDCDomainInit:
     def test_domain_redis_accessible(self, domain):
         r = domain.redis
         assert r is not None
-        r.ping()  # Should not raise
+        r.ping()
 
     def test_incompatible_version_raises(self, clean_redis, domain_config):
-        # Manually set wrong version
         clean_redis.hset(GLOBAL_META_KEY, "version", "99.99.99")
         with pytest.raises(RuntimeError, match="Incompatible GPDC version"):
             GPDCDomain("testdomain", domain_config)
 
     def test_reconnect_compatible_version_ok(self, domain, domain_config):
-        # A second domain connecting to same Redis should succeed (same version)
         domain2 = GPDCDomain("anotherdomain", domain_config)
         assert domain2.name == "anotherdomain"
 
@@ -107,19 +128,14 @@ class TestGPDCDomainContainerProtocol:
         assert "newns" not in domain
 
 
-class TestGPDCDomainContainerProtocolRedisSource:
-    """Container protocol methods must use Redis as authoritative source,
-    not just the in-memory session cache."""
-
+class TestGPDCDomainRedisSource:
     def _make_domain(self, domain_config):
         return GPDCDomain("testdomain", domain_config)
 
     def test_contains_sees_namespace_registered_by_previous_session(self, clean_redis, domain_config):
-        # Session 1: create namespace → writes to Redis
         d1 = self._make_domain(domain_config)
         d1.get_namespace("myns")
 
-        # Session 2: fresh memory cache, same Redis data
         d2 = self._make_domain(domain_config)
         assert "myns" in d2
 
@@ -160,8 +176,6 @@ class TestGPDCDomainContainerProtocolRedisSource:
             _ = d["neverexisted"]
 
     def test_getitem_does_not_register_namespace_in_redis_on_miss(self, clean_redis, domain_config):
-        from gpdatacached.keys import make_domain_namespaces_key
-
         d = self._make_domain(domain_config)
         with pytest.raises(KeyError):
             _ = d["ghost"]
@@ -170,8 +184,6 @@ class TestGPDCDomainContainerProtocolRedisSource:
 
 
 class TestGPDCDomainPredefinedNamespaces:
-    """GPDCDomain should auto-create predefined namespaces from config on init."""
-
     def test_predefined_namespaces_registered_in_redis(self, domain_with_namespaces):
         assert "ns_1" in domain_with_namespaces
         assert "ns_2" in domain_with_namespaces
@@ -180,20 +192,14 @@ class TestGPDCDomainPredefinedNamespaces:
         assert len(domain_with_namespaces) == 2
 
     def test_predefined_namespace_uses_per_namespace_cache_mode(self, domain_with_namespaces, clean_redis):
-        from gpdatacached.keys import make_namespace_meta_key
-
         meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "ns_1"))
         assert meta["default_cache_mode"] == "ttl"
 
     def test_predefined_namespace_uses_per_namespace_ttl(self, domain_with_namespaces, clean_redis):
-        from gpdatacached.keys import make_namespace_meta_key
-
         meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "ns_1"))
         assert meta["default_ttl_seconds"] == "3600"
 
     def test_second_predefined_namespace_uses_its_own_config(self, domain_with_namespaces, clean_redis):
-        from gpdatacached.keys import make_namespace_meta_key
-
         meta = clean_redis.hgetall(make_namespace_meta_key("testdomain", "ns_2"))
         assert meta["default_cache_mode"] == "sliding"
         assert meta["default_ttl_seconds"] == "7200"
@@ -206,19 +212,14 @@ class TestGPDCDomainPredefinedNamespaces:
         assert ns.name == "ns_1"
 
     def test_predefined_namespace_config_not_overwritten_on_reconnect(self, clean_redis, domain_config_with_namespaces):
-        """If namespace already exists in Redis, per-namespace config must not
-        overwrite the existing metadata on a subsequent domain connection."""
         from gpdatacached.domain import GPDCDomain
         from gpdatacached.keys import make_namespace_meta_key
 
-        # First session: namespace created with per-namespace config (ttl=3600)
         GPDCDomain("testdomain", domain_config_with_namespaces)
 
-        # Simulate a runtime change to namespace metadata in Redis
         meta_key = make_namespace_meta_key("testdomain", "ns_1")
         clean_redis.hset(meta_key, "default_ttl_seconds", "9999")
 
-        # Second session with same config: must NOT revert to 3600
         GPDCDomain("testdomain", domain_config_with_namespaces)
         meta = clean_redis.hgetall(meta_key)
         assert meta["default_ttl_seconds"] == "9999"
@@ -289,3 +290,245 @@ class TestMultiDomainIsolation:
 
         d1.close()
         d2.close()
+
+
+class TestDeleteNamespace:
+    def test_removes_namespace_from_domain(self, domain, clean_redis):
+        ns = domain.get_namespace("ns1")
+        ns["x"] = 42
+        ns["y"] = [1, 2, 3]
+
+        domain.delete_namespace("ns1")
+
+        assert "ns1" not in domain
+        assert len(domain) == 0
+
+    def test_deletes_all_namespace_keys(self, domain, clean_redis):
+        ns = domain.get_namespace("ns1")
+        ns["x"] = 42
+        ns["y"] = [1, 2, 3]
+        ns["z"] = {"a": 1}
+
+        domain.delete_namespace("ns1")
+
+        pattern = "gpdc:testdomain:ns1:*"
+        cursor, keys = clean_redis.scan(cursor=0, match=pattern, count=100)
+        assert keys == []
+
+    def test_removes_namespace_meta(self, domain, clean_redis):
+        domain.get_namespace("ns1")
+        meta_key = make_namespace_meta_key("testdomain", "ns1")
+
+        domain.delete_namespace("ns1")
+
+        assert clean_redis.exists(meta_key) == 0
+
+    def test_removes_from_namespaces_set(self, domain, clean_redis):
+        domain.get_namespace("ns1")
+        ns_key = make_domain_namespaces_key("testdomain")
+
+        domain.delete_namespace("ns1")
+
+        assert clean_redis.sismember(ns_key, "ns1") == 0
+
+    def test_removes_from_memory_cache(self, domain):
+        domain.get_namespace("ns1")
+        assert "ns1" in domain._namespaces
+
+        domain.delete_namespace("ns1")
+
+        assert "ns1" not in domain._namespaces
+
+    def test_raises_keyerror_for_nonexistent(self, domain):
+        with pytest.raises(KeyError):
+            domain.delete_namespace("does_not_exist")
+
+    def test_other_namespaces_unaffected(self, domain):
+        ns1 = domain.get_namespace("ns1")
+        ns2 = domain.get_namespace("ns2")
+        ns1["x"] = 42
+        ns2["y"] = 99
+
+        domain.delete_namespace("ns1")
+
+        assert "ns1" not in domain
+        assert "ns2" in domain
+        assert ns2["y"] == 99
+
+    def test_visible_across_sessions(self, clean_redis):
+        cfg = _make_config()
+        d1 = GPDCDomain("testdomain", cfg)
+        d1.get_namespace("ns1")
+        d1.get_namespace("ns2")
+        d1.delete_namespace("ns1")
+        d1.close()
+
+        d2 = GPDCDomain("testdomain", cfg)
+        assert "ns1" not in d2
+        assert "ns2" in d2
+        d2.close()
+
+
+class TestNamespaceDestroy:
+    def test_destroy_removes_namespace(self, domain, clean_redis):
+        ns = domain.get_namespace("ns1")
+        ns["x"] = 42
+
+        ns.destroy()
+
+        assert "ns1" not in domain
+
+    def test_destroy_deletes_all_keys(self, domain, clean_redis):
+        ns = domain.get_namespace("ns1")
+        ns["x"] = 42
+
+        ns.destroy()
+
+        pattern = "gpdc:testdomain:ns1:*"
+        cursor, keys = clean_redis.scan(cursor=0, match=pattern, count=100)
+        assert keys == []
+
+
+class TestDomainDestroy:
+    def test_removes_domain_from_global_set(self, clean_redis):
+        cfg = _make_config()
+        d = GPDCDomain("testdomain", cfg)
+        d.destroy()
+
+        assert clean_redis.sismember(GLOBAL_DOMAINS_KEY, "testdomain") == 0
+
+    def test_deletes_domain_meta(self, clean_redis):
+        cfg = _make_config()
+        d = GPDCDomain("testdomain", cfg)
+        meta_key = make_domain_meta_key("testdomain")
+
+        d.destroy()
+
+        assert clean_redis.exists(meta_key) == 0
+
+    def test_deletes_domain_namespaces_set(self, clean_redis):
+        cfg = _make_config()
+        d = GPDCDomain("testdomain", cfg)
+        d.get_namespace("ns1")
+        ns_key = make_domain_namespaces_key("testdomain")
+
+        d.destroy()
+
+        assert clean_redis.exists(ns_key) == 0
+
+    def test_deletes_all_namespace_data(self, clean_redis):
+        cfg = _make_config()
+        d = GPDCDomain("testdomain", cfg)
+        ns = d.get_namespace("ns1")
+        ns["x"] = 42
+        ns["y"] = {"a": 1}
+
+        d.destroy()
+
+        pattern = "gpdc:testdomain:*"
+        cursor, keys = clean_redis.scan(cursor=0, match=pattern, count=100)
+        assert keys == []
+
+    def test_closes_domain(self, clean_redis):
+        cfg = _make_config()
+        d = GPDCDomain("testdomain", cfg)
+        assert not d._closed
+
+        d.destroy()
+
+        assert d._closed
+        with pytest.raises(RuntimeError, match="closed"):
+            d.redis
+
+    def test_multiple_namespaces_all_cleaned(self, clean_redis):
+        cfg = _make_config()
+        d = GPDCDomain("testdomain", cfg)
+        d.get_namespace("ns1")
+        d.get_namespace("ns2")
+        d.get_namespace("ns3")
+
+        d.destroy()
+
+        assert clean_redis.sismember(GLOBAL_DOMAINS_KEY, "testdomain") == 0
+        ns_key = make_domain_namespaces_key("testdomain")
+        assert clean_redis.exists(ns_key) == 0
+
+
+class TestDomainClose:
+    def test_close_is_idempotent(self, domain):
+        domain.close()
+        domain.close()
+
+    def test_redis_property_raises_after_close(self, domain):
+        domain.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            _ = domain.redis
+
+    def test_get_namespace_raises_after_close(self, domain):
+        domain.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            domain.get_namespace("any")
+
+    def test_contains_raises_after_close(self, domain):
+        domain.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            _ = "x" in domain
+
+    def test_iter_raises_after_close(self, domain):
+        domain.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            list(domain)
+
+    def test_len_raises_after_close(self, domain):
+        domain.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            len(domain)
+
+    def test_getitem_raises_after_close(self, domain):
+        domain.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            _ = domain["x"]
+
+    def test_run_gc_raises_after_close(self, domain):
+        domain.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            domain.run_gc()
+
+    def test_context_manager_closes_domain(self, clean_redis, domain_config):
+        with GPDCDomain("testdomain", domain_config) as d:
+            _ = d.redis
+        with pytest.raises(RuntimeError, match="closed"):
+            _ = d.redis
+
+    def test_del_auto_closes_with_warning(self, clean_redis, domain_config, caplog):
+        d = GPDCDomain("testdomain", domain_config)
+        assert not d._closed
+        with caplog.at_level(logging.WARNING, logger="gpdatacached.domain"):
+            del d
+        assert "not explicitly closed" in caplog.text
+
+
+class TestDomainContextManager:
+    def test_domain_as_context_manager(self, clean_redis, domain_config):
+        from gpdatacached.domain import GPDCDomain
+
+        domain_config.gc_enabled = True
+        with GPDCDomain("testdomain", domain_config) as domain:
+            assert domain.name == "testdomain"
+            ns = domain.get_namespace("testns")
+            ns["x"] = 42
+            assert ns["x"] == 42
+        assert domain._gc_thread is None or not domain._gc_thread.is_alive()
+
+    def test_domain_context_manager_closes_on_exception(self, clean_redis, domain_config):
+        from gpdatacached.domain import GPDCDomain
+
+        domain_config.gc_enabled = True
+        domain = None
+        try:
+            with GPDCDomain("testdomain", domain_config) as d:
+                domain = d
+                raise ValueError("test error")
+        except ValueError:
+            pass
+        assert domain._gc_thread is None or not domain._gc_thread.is_alive()
