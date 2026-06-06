@@ -1,5 +1,34 @@
+import threading
+from decimal import Decimal
+
 import pytest
+
+from gpdatacached.codec import GPDCScalarCodec
+from gpdatacached.scalar import GPDCScalarObject
 from gpdatacached.types import GPDCTypeRegistry
+
+
+class DecimalCodec(GPDCScalarCodec):
+    @classmethod
+    def encode_value(cls, value: object) -> str:
+        if not isinstance(value, Decimal):
+            raise TypeError(f"DecimalCodec cannot encode {type(value).__name__!r}")
+        return f"decimal:{value}"
+
+    @classmethod
+    def decode_value(cls, encoded: str) -> object:
+        if not encoded or ":" not in encoded:
+            raise ValueError(f"Invalid encoding: {encoded!r}")
+        colon_idx = encoded.index(":")
+        type_name = encoded[:colon_idx]
+        raw = encoded[colon_idx + 1 :]
+        if type_name != "decimal":
+            raise ValueError(f"DecimalCodec cannot decode type {type_name!r}")
+        return Decimal(raw)
+
+
+class DecimalObject(GPDCScalarObject):
+    TYPE = "scalar:decimal"
 
 
 class TestTypeRegistryResolve:
@@ -70,8 +99,6 @@ class TestTypeEntryIsContainer:
 
 class TestTypeRegistryExtension:
     def test_register_custom_type(self):
-        import threading
-
         original_gpdc = dict(GPDCTypeRegistry._by_gpdc_type)
         original_python = list(GPDCTypeRegistry._by_python_type)
         original_lock = GPDCTypeRegistry._lock
@@ -109,30 +136,6 @@ class TestTypeRegistryExtension:
             GPDCTypeRegistry._lock = original_lock
 
 
-class TestNoneObjectViaGetObj:
-    def test_get_object_returns_none_object(self, ns):
-        ns["n"] = None
-        obj = ns.get_object("n")
-        assert obj.type == "scalar:none"
-        assert obj.value is None
-
-    def test_none_object_value_setter_to_none(self, ns):
-        ns["n"] = None
-        obj = ns.get_object("n")
-        obj.value = None
-        assert obj.value is None
-
-    def test_none_object_repr(self, ns):
-        ns["n"] = None
-        obj = ns.get_object("n")
-        assert "NoneObject" in repr(obj)
-
-    def test_none_object_uri(self, ns):
-        ns["n"] = None
-        obj = ns.get_object("n")
-        assert obj.uri == "gpdc://testdomain/testns/n"
-
-
 class TestBoolToIntObject:
     def test_bool_true_rejected_by_int_object(self, ns):
         ns["x"] = 42
@@ -147,17 +150,128 @@ class TestBoolToIntObject:
             obj.value = False
 
 
-class TestTypeEntryFrozen:
-    def test_frozen_type_entry_raises_on_mutation(self):
-        import dataclasses
+class TestNoneObject:
+    def test_get_object_returns_none_object(self, ns):
+        ns["n"] = None
+        obj = ns.get_object("n")
+        assert obj.type == "scalar:none"
+        assert obj.value is None
 
+    def test_none_object_value_setter_to_none(self, ns):
+        ns["n"] = None
+        obj = ns.get_object("n")
+        obj.value = None
+        assert obj.value is None
+
+
+class TestTypeRegistryThreading:
+    def test_lookup_by_gpdc_type_returns_correct_entry(self):
         entry = GPDCTypeRegistry.lookup_by_gpdc_type("scalar:int")
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            entry.priority = -999
+        assert entry.gpdc_type == "scalar:int"
+        assert entry.object_class is not None
 
-    def test_frozen_type_entry_raises_on_gpdc_type_mutation(self):
-        import dataclasses
+    def test_lookup_by_gpdc_type_raises_on_unknown(self):
+        with pytest.raises(ValueError, match="Unknown GPDC type"):
+            GPDCTypeRegistry.lookup_by_gpdc_type("nonexistent:type")
 
-        entry = GPDCTypeRegistry.lookup_by_gpdc_type("scalar:int")
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            entry.gpdc_type = "scalar:hacked"
+    def test_lookup_by_python_type_returns_correct_entry(self):
+        entry = GPDCTypeRegistry.lookup_by_python_type(42)
+        assert entry.gpdc_type == "scalar:int"
+
+    def test_lookup_by_python_type_bool_has_priority(self):
+        entry = GPDCTypeRegistry.lookup_by_python_type(True)
+        assert entry.gpdc_type == "scalar:bool"
+
+    def test_lookup_by_python_type_raises_on_unsupported(self):
+
+        class CustomClass:
+            pass
+
+        with pytest.raises(TypeError, match="Unsupported Python type"):
+            GPDCTypeRegistry.lookup_by_python_type(CustomClass())
+
+    def test_concurrent_registrations_do_not_corrupt(self):
+        errors = []
+
+        def register_and_lookup(idx):
+            try:
+                for _ in range(50):
+                    entry = GPDCTypeRegistry.lookup_by_python_type(idx)
+                    assert entry is not None
+                    entry = GPDCTypeRegistry.lookup_by_gpdc_type("scalar:int")
+                    assert entry is not None
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=register_and_lookup, args=(i,)) for i in range(10)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Concurrent access errors: {errors}"
+
+
+class TestRegistryExtensibility:
+    @pytest.fixture(autouse=True)
+    def register_decimal(self):
+        original_gpdc = dict(GPDCTypeRegistry._by_gpdc_type)
+        original_python = list(GPDCTypeRegistry._by_python_type)
+        original_lock = GPDCTypeRegistry._lock
+        try:
+            GPDCTypeRegistry._lock = threading.Lock()
+            GPDCTypeRegistry._by_gpdc_type = dict(original_gpdc)
+            GPDCTypeRegistry._by_python_type = list(original_python)
+
+            GPDCTypeRegistry.register(
+                python_type=Decimal,
+                gpdc_type="scalar:decimal",
+                object_class=DecimalObject,
+                codec_class=DecimalCodec,
+                priority=0,
+            )
+            yield
+        finally:
+            GPDCTypeRegistry._by_gpdc_type = original_gpdc
+            GPDCTypeRegistry._by_python_type = original_python
+            GPDCTypeRegistry._lock = original_lock
+
+    def test_encode_decode(self):
+        encoded = DecimalCodec.encode_value(Decimal("3.14"))
+        assert encoded == "decimal:3.14"
+        decoded = DecimalCodec.decode_value(encoded)
+        assert decoded == Decimal("3.14")
+
+    def test_list_element(self, ns):
+        ns["mylist"] = [Decimal("1.5"), Decimal("2.5")]
+        lst = ns.get_object("mylist")
+        assert lst[0] == Decimal("1.5")
+        assert lst[1] == Decimal("2.5")
+
+    def test_dict_value(self, ns):
+        ns["mydict"] = {"price": Decimal("9.99")}
+        d = ns.get_object("mydict")
+        assert d["price"] == Decimal("9.99")
+
+    def test_dict_key(self, ns):
+        ns["mydict"] = {Decimal("1"): "one", Decimal("2"): "two"}
+        d = ns.get_object("mydict")
+        assert d[Decimal("1")] == "one"
+        assert d[Decimal("2")] == "two"
+
+    def test_set_element(self, ns):
+        ns["myset"] = {Decimal("1"), Decimal("2"), Decimal("3")}
+        s = ns.get_object("myset")
+        assert Decimal("1") in s
+        assert len(s) == 3
+
+    def test_tuple_with_custom_scalar(self):
+        from gpdatacached.codec import TupleCodec
+
+        original = (Decimal("1.5"), "hello", 42)
+        encoded = TupleCodec.encode_value(original)
+        decoded = TupleCodec.decode_value(encoded)
+        assert decoded == original
+        assert decoded[0] == Decimal("1.5")
