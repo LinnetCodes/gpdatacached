@@ -494,6 +494,10 @@ class TestCodecErrors:
         with pytest.raises(ValueError, match="Invalid scalar value"):
             TimeCodec.decode_value("time:bad")
 
+    def test_decode_bad_bool(self):
+        with pytest.raises(ValueError, match="Invalid scalar value"):
+            BoolCodec.decode_value("bool:not_bool")
+
     def test_encode_unsupported_type(self):
         with pytest.raises(TypeError):
             IntCodec.encode_value(complex(1, 2))
