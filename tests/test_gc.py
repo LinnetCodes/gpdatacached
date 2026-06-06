@@ -263,6 +263,39 @@ class TestGCStaleRefSetMembers:
         assert "scalar" not in r.smembers(ref_key)
 
 
+class TestGCSingleRoundCleanup:
+    def test_orphan_raw_with_stale_ref_cleaned_in_one_round(self, ns, r):
+        """Orphan raw key with stale ref-set member must be deleted in one GC round.
+
+        Regression: _gc_scan_ref_keys must run before _gc_scan_raw_keys so that
+        stale ref-set members are removed first; otherwise the raw scan sees the
+        stale member's obj key still exists and keeps the orphan raw key alive.
+        """
+        from gpdatacached.gc import run_gc_for_namespace
+        from gpdatacached.keys import (
+            make_object_key,
+            make_raw_key,
+            make_raw_key_prefix,
+        )
+
+        ns["target"] = [100, 200]
+        ns["holder"] = [1, 2]
+        ns["holder"].append(ns["target"])
+
+        holder_raw = make_raw_key(DOMAIN, NS, "holder")
+        r.delete(holder_raw)
+        r.rpush(holder_raw, "val1", "val2")
+
+        r.delete(make_object_key(DOMAIN, NS, "target"))
+
+        deleted = run_gc_for_namespace(r, DOMAIN, NS)
+        assert deleted > 0
+
+        raw_prefix = make_raw_key_prefix(DOMAIN, NS)
+        remaining = [k for k in r.scan_iter(match=f"{raw_prefix}*") if "target" in k]
+        assert remaining == [], f"Orphan target raw key should be deleted in one GC round, found: {remaining}"
+
+
 class TestGCNoNamespaces:
     def test_run_gc_empty_domain(self, r):
         config = GPDCDomainConfig(

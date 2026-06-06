@@ -179,7 +179,7 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
     raw_to_obj: dict[str, str] = {}
 
     deleted = _gc_scan_obj_keys(r, obj_prefix, raw_to_obj)
-    deleted += _gc_scan_raw_keys(r, domain, namespace, raw_prefix, raw_to_obj)
     deleted += _gc_scan_ref_keys(r, domain, namespace, ref_prefix)
+    deleted += _gc_scan_raw_keys(r, domain, namespace, raw_prefix, raw_to_obj)
 
     return deleted
