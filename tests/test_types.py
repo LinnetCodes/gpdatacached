@@ -145,3 +145,19 @@ class TestBoolToIntObject:
         obj = ns.get_object("x")
         with pytest.raises(TypeError, match="IntCodec cannot encode 'bool'"):
             obj.value = False
+
+
+class TestTypeEntryFrozen:
+    def test_frozen_type_entry_raises_on_mutation(self):
+        import dataclasses
+
+        entry = GPDCTypeRegistry.lookup_by_gpdc_type("scalar:int")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            entry.priority = -999
+
+    def test_frozen_type_entry_raises_on_gpdc_type_mutation(self):
+        import dataclasses
+
+        entry = GPDCTypeRegistry.lookup_by_gpdc_type("scalar:int")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            entry.gpdc_type = "scalar:hacked"

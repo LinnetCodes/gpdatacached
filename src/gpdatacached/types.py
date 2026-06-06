@@ -13,7 +13,7 @@ from .keys import make_object_key, make_raw_key, make_ref_key
 from .objects import GPDCDataObject
 
 
-@dataclass
+@dataclass(frozen=True)
 class TypeEntry:
     python_type: type | tuple[type, ...]
     gpdc_type: str
