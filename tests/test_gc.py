@@ -353,3 +353,42 @@ class TestGCItemCountMaintenance:
         ns["st"].clear()
         obj_key = make_object_key(DOMAIN, NS, "st")
         assert clean_redis.hget(obj_key, "item_count") == "0"
+
+
+class TestGCWithCustomContainerType:
+    def test_gc_preserves_ref_for_custom_hash_container(self, ns, clean_redis):
+        from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
+        import datetime
+
+        ns["target"] = [100, 200]
+        target_ref_key = make_ref_key(DOMAIN, NS, "target")
+
+        custom_obj_key = make_object_key(DOMAIN, NS, "custom_obj")
+        custom_raw_key = make_raw_key(DOMAIN, NS, "custom_obj")
+        custom_ref_key = make_ref_key(DOMAIN, NS, "custom_obj")
+
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        target_obj_key = make_object_key(DOMAIN, NS, "target")
+        ref_val = f"ref:{target_obj_key}"
+
+        clean_redis.hset(
+            custom_obj_key,
+            mapping={
+                "type": "collection:CustomType",
+                "value": custom_raw_key,
+                "cache_mode": "permanent",
+                "ttl": "0",
+                "owner": "custom_obj",
+                "created_at": now,
+                "updated_at": now,
+                "item_count": "1",
+            },
+        )
+        clean_redis.hset(custom_raw_key, mapping={"str:field1": ref_val})
+        clean_redis.sadd(custom_ref_key, "custom_obj")
+        clean_redis.sadd(target_ref_key, "custom_obj")
+
+        assert "custom_obj" in clean_redis.smembers(target_ref_key)
+
+        run_gc_for_namespace(clean_redis, DOMAIN, NS)
+        assert "custom_obj" in clean_redis.smembers(target_ref_key)

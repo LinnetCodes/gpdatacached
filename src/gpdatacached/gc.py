@@ -148,12 +148,13 @@ def _gc_scan_ref_keys(
                     expected_ref = f"ref:{obj_key}"
                     still_refs = False
                     member_raw_key = member_meta.value
-                    if member_meta.type == "collection:dict":
+                    member_raw_type = r.type(member_raw_key) if member_raw_key else "none"
+                    if member_raw_type == "hash":
                         for val in r.hvals(member_raw_key):
                             if val == expected_ref:
                                 still_refs = True
                                 break
-                    elif member_meta.type == "collection:list":
+                    elif member_raw_type == "list":
                         for val in r.lrange(member_raw_key, 0, -1):
                             if val == expected_ref:
                                 still_refs = True
