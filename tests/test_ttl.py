@@ -280,7 +280,7 @@ def _make_namespace(r, domain_name, cache_mode="permanent", ttl=0):
         default_ttl_seconds=ttl,
     )
     domain = GPDCDomain(domain_name, config)
-    return domain.get_namespace(_INHERIT_NS)
+    return domain.ensure_namespace(_INHERIT_NS)
 
 
 def _extract_anon_name_from_dict(r, domain, ns, parent, field):
@@ -292,7 +292,7 @@ def _extract_anon_name_from_dict(r, domain, ns, parent, field):
 
 class TestTTLExpiry:
     def test_ttl_object_disappears_after_expiry(self, ttl_domain):
-        ns = ttl_domain.get_namespace("testns_ttl_expiry")
+        ns = ttl_domain.ensure_namespace("testns_ttl_expiry")
 
         ns["x"] = 42
         obj = ns.get_object("x")
@@ -309,7 +309,7 @@ class TestTTLExpiry:
         assert ns.get("x") is None
 
     def test_sliding_object_disappears_after_expiry(self, ttl_domain):
-        ns = ttl_domain.get_namespace("testns_ttl_expiry")
+        ns = ttl_domain.ensure_namespace("testns_ttl_expiry")
 
         ns["y"] = "hello"
         obj = ns.get_object("y")
@@ -324,7 +324,7 @@ class TestTTLExpiry:
             _ = ns["y"]
 
     def test_ttl_container_disappears_after_expiry(self, ttl_domain):
-        ns = ttl_domain.get_namespace("testns_ttl_expiry")
+        ns = ttl_domain.ensure_namespace("testns_ttl_expiry")
 
         ns["mylist"] = [1, 2, 3]
         obj = ns.get_object("mylist")
@@ -342,7 +342,7 @@ class TestTTLExpiry:
 class TestAnonymousInherited:
     def test_anon_object_has_inherited_cache_mode(self, gc_disabled_domain):
         d = gc_disabled_domain
-        ns = d.get_namespace(_INHERIT_NS)
+        ns = d.ensure_namespace(_INHERIT_NS)
         r = d._redis
         domain_name = "testdomain"
 
@@ -433,7 +433,7 @@ class TestTTLExpiryConsistency:
 class TestInheritedOverride:
     def test_anon_cache_mode_requires_owner_permission(self, gc_disabled_domain):
         d = gc_disabled_domain
-        ns = d.get_namespace(_INHERIT_NS)
+        ns = d.ensure_namespace(_INHERIT_NS)
 
         ns["d"] = {"a": [1, 2, 3]}
         inner = ns["d"]["a"]
@@ -444,7 +444,7 @@ class TestInheritedOverride:
 
     def test_anon_ttl_requires_owner_permission(self, gc_disabled_domain):
         d = gc_disabled_domain
-        ns = d.get_namespace(_INHERIT_NS)
+        ns = d.ensure_namespace(_INHERIT_NS)
 
         ns["d"] = {"a": [1, 2, 3]}
         inner = ns["d"]["a"]
@@ -457,7 +457,7 @@ class TestInheritedOverride:
 class TestPermanentContainerLifecycle:
     def test_permanent_container_raw_is_persistent(self, gc_disabled_domain):
         d = gc_disabled_domain
-        ns = d.get_namespace(_INHERIT_NS)
+        ns = d.ensure_namespace(_INHERIT_NS)
         r = d._redis
         domain_name = "testdomain"
 

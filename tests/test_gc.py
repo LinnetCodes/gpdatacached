@@ -223,7 +223,7 @@ class TestGCNoNamespaces:
 
 class TestGCLogging:
     def test_gc_loop_logs_exceptions(self, domain, caplog):
-        domain.get_namespace("testns")
+        domain.ensure_namespace("testns")
         stop_event = MagicMock()
         stop_event.wait.side_effect = [False, True]
         domain._gc_stop_event = stop_event

@@ -63,22 +63,22 @@ class TestGPDCDomainInit:
             GPDCDomain("my:invalid:domain", domain_config)
 
 
-class TestGPDCDomainGetNamespace:
-    def test_get_namespace_returns_namespace(self, domain):
+class TestGPDCDomainEnsureNamespace:
+    def test_ensure_namespace_returns_namespace(self, domain):
         from gpdatacached.namespace import GPDCNamespace
 
-        ns = domain.get_namespace("myns")
+        ns = domain.ensure_namespace("myns")
         assert isinstance(ns, GPDCNamespace)
         assert ns.name == "myns"
 
-    def test_get_namespace_cached(self, domain):
-        ns1 = domain.get_namespace("myns")
-        ns2 = domain.get_namespace("myns")
+    def test_ensure_namespace_cached(self, domain):
+        ns1 = domain.ensure_namespace("myns")
+        ns2 = domain.ensure_namespace("myns")
         assert ns1 is ns2
 
-    def test_get_namespace_different_names(self, domain):
-        ns1 = domain.get_namespace("ns1")
-        ns2 = domain.get_namespace("ns2")
+    def test_ensure_namespace_different_names(self, domain):
+        ns1 = domain.ensure_namespace("ns1")
+        ns2 = domain.ensure_namespace("ns2")
         assert ns1 is not ns2
         assert ns1.name == "ns1"
         assert ns2.name == "ns2"
@@ -86,15 +86,15 @@ class TestGPDCDomainGetNamespace:
 
 class TestGPDCDomainContainerProtocol:
     def test_contains_returns_true_for_existing_namespace(self, domain):
-        domain.get_namespace("myns")
+        domain.ensure_namespace("myns")
         assert "myns" in domain
 
     def test_contains_returns_false_for_nonexistent_namespace(self, domain):
         assert "nonexistent" not in domain
 
     def test_iter_yields_namespace_names(self, domain):
-        domain.get_namespace("ns1")
-        domain.get_namespace("ns2")
+        domain.ensure_namespace("ns1")
+        domain.ensure_namespace("ns2")
         names = list(domain)
         assert set(names) == {"ns1", "ns2"}
 
@@ -102,9 +102,9 @@ class TestGPDCDomainContainerProtocol:
         assert list(domain) == []
 
     def test_len_returns_namespace_count(self, domain):
-        domain.get_namespace("ns1")
-        domain.get_namespace("ns2")
-        domain.get_namespace("ns3")
+        domain.ensure_namespace("ns1")
+        domain.ensure_namespace("ns2")
+        domain.ensure_namespace("ns3")
         assert len(domain) == 3
 
     def test_len_empty_domain_is_zero(self, domain):
@@ -113,7 +113,7 @@ class TestGPDCDomainContainerProtocol:
     def test_getitem_returns_existing_namespace(self, domain):
         from gpdatacached.namespace import GPDCNamespace
 
-        ns = domain.get_namespace("myns")
+        ns = domain.ensure_namespace("myns")
         result = domain["myns"]
         assert result is ns
         assert isinstance(result, GPDCNamespace)
@@ -134,7 +134,7 @@ class TestGPDCDomainRedisSource:
 
     def test_contains_sees_namespace_registered_by_previous_session(self, clean_redis, domain_config):
         d1 = self._make_domain(domain_config)
-        d1.get_namespace("myns")
+        d1.ensure_namespace("myns")
 
         d2 = self._make_domain(domain_config)
         assert "myns" in d2
@@ -145,16 +145,16 @@ class TestGPDCDomainRedisSource:
 
     def test_iter_yields_namespaces_registered_by_previous_session(self, clean_redis, domain_config):
         d1 = self._make_domain(domain_config)
-        d1.get_namespace("ns1")
-        d1.get_namespace("ns2")
+        d1.ensure_namespace("ns1")
+        d1.ensure_namespace("ns2")
 
         d2 = self._make_domain(domain_config)
         assert set(d2) == {"ns1", "ns2"}
 
     def test_len_counts_namespaces_from_redis(self, clean_redis, domain_config):
         d1 = self._make_domain(domain_config)
-        d1.get_namespace("ns1")
-        d1.get_namespace("ns2")
+        d1.ensure_namespace("ns1")
+        d1.ensure_namespace("ns2")
 
         d2 = self._make_domain(domain_config)
         assert len(d2) == 2
@@ -163,7 +163,7 @@ class TestGPDCDomainRedisSource:
         from gpdatacached.namespace import GPDCNamespace
 
         d1 = self._make_domain(domain_config)
-        d1.get_namespace("myns")
+        d1.ensure_namespace("myns")
 
         d2 = self._make_domain(domain_config)
         ns = d2["myns"]
@@ -229,8 +229,8 @@ class TestMultiDomainIsolation:
     def test_same_key_different_values(self, clean_redis, domain_config):
         d1 = GPDCDomain("domain_a", domain_config)
         d2 = GPDCDomain("domain_b", domain_config)
-        ns1 = d1.get_namespace("shared_ns")
-        ns2 = d2.get_namespace("shared_ns")
+        ns1 = d1.ensure_namespace("shared_ns")
+        ns2 = d2.ensure_namespace("shared_ns")
 
         ns1["x"] = 1
         ns2["x"] = 999
@@ -244,8 +244,8 @@ class TestMultiDomainIsolation:
     def test_delete_in_one_domain_does_not_affect_other(self, clean_redis, domain_config):
         d1 = GPDCDomain("domain_a", domain_config)
         d2 = GPDCDomain("domain_b", domain_config)
-        ns1 = d1.get_namespace("shared_ns")
-        ns2 = d2.get_namespace("shared_ns")
+        ns1 = d1.ensure_namespace("shared_ns")
+        ns2 = d2.ensure_namespace("shared_ns")
 
         ns1["x"] = 1
         ns2["x"] = 2
@@ -261,8 +261,8 @@ class TestMultiDomainIsolation:
     def test_iter_len_independent(self, clean_redis, domain_config):
         d1 = GPDCDomain("domain_a", domain_config)
         d2 = GPDCDomain("domain_b", domain_config)
-        ns1 = d1.get_namespace("ns")
-        ns2 = d2.get_namespace("ns")
+        ns1 = d1.ensure_namespace("ns")
+        ns2 = d2.ensure_namespace("ns")
 
         ns1["a"] = 1
         ns1["b"] = 2
@@ -280,8 +280,8 @@ class TestMultiDomainIsolation:
         d1 = GPDCDomain("domain_a", domain_config)
         d2 = GPDCDomain("domain_b", domain_config)
 
-        d1.get_namespace("only_in_a")
-        d2.get_namespace("only_in_b")
+        d1.ensure_namespace("only_in_a")
+        d2.ensure_namespace("only_in_b")
 
         assert "only_in_a" in d1
         assert "only_in_a" not in d2
@@ -294,7 +294,7 @@ class TestMultiDomainIsolation:
 
 class TestDeleteNamespace:
     def test_removes_namespace_from_domain(self, domain, clean_redis):
-        ns = domain.get_namespace("ns1")
+        ns = domain.ensure_namespace("ns1")
         ns["x"] = 42
         ns["y"] = [1, 2, 3]
 
@@ -304,7 +304,7 @@ class TestDeleteNamespace:
         assert len(domain) == 0
 
     def test_deletes_all_namespace_keys(self, domain, clean_redis):
-        ns = domain.get_namespace("ns1")
+        ns = domain.ensure_namespace("ns1")
         ns["x"] = 42
         ns["y"] = [1, 2, 3]
         ns["z"] = {"a": 1}
@@ -316,7 +316,7 @@ class TestDeleteNamespace:
         assert keys == []
 
     def test_removes_namespace_meta(self, domain, clean_redis):
-        domain.get_namespace("ns1")
+        domain.ensure_namespace("ns1")
         meta_key = make_namespace_meta_key("testdomain", "ns1")
 
         domain.delete_namespace("ns1")
@@ -324,7 +324,7 @@ class TestDeleteNamespace:
         assert clean_redis.exists(meta_key) == 0
 
     def test_removes_from_namespaces_set(self, domain, clean_redis):
-        domain.get_namespace("ns1")
+        domain.ensure_namespace("ns1")
         ns_key = make_domain_namespaces_key("testdomain")
 
         domain.delete_namespace("ns1")
@@ -332,7 +332,7 @@ class TestDeleteNamespace:
         assert clean_redis.sismember(ns_key, "ns1") == 0
 
     def test_removes_from_memory_cache(self, domain):
-        domain.get_namespace("ns1")
+        domain.ensure_namespace("ns1")
         assert "ns1" in domain._namespaces
 
         domain.delete_namespace("ns1")
@@ -344,8 +344,8 @@ class TestDeleteNamespace:
             domain.delete_namespace("does_not_exist")
 
     def test_other_namespaces_unaffected(self, domain):
-        ns1 = domain.get_namespace("ns1")
-        ns2 = domain.get_namespace("ns2")
+        ns1 = domain.ensure_namespace("ns1")
+        ns2 = domain.ensure_namespace("ns2")
         ns1["x"] = 42
         ns2["y"] = 99
 
@@ -358,8 +358,8 @@ class TestDeleteNamespace:
     def test_visible_across_sessions(self, clean_redis):
         cfg = _make_config()
         d1 = GPDCDomain("testdomain", cfg)
-        d1.get_namespace("ns1")
-        d1.get_namespace("ns2")
+        d1.ensure_namespace("ns1")
+        d1.ensure_namespace("ns2")
         d1.delete_namespace("ns1")
         d1.close()
 
@@ -371,7 +371,7 @@ class TestDeleteNamespace:
 
 class TestNamespaceDestroy:
     def test_destroy_removes_namespace(self, domain, clean_redis):
-        ns = domain.get_namespace("ns1")
+        ns = domain.ensure_namespace("ns1")
         ns["x"] = 42
 
         ns.destroy()
@@ -379,7 +379,7 @@ class TestNamespaceDestroy:
         assert "ns1" not in domain
 
     def test_destroy_deletes_all_keys(self, domain, clean_redis):
-        ns = domain.get_namespace("ns1")
+        ns = domain.ensure_namespace("ns1")
         ns["x"] = 42
 
         ns.destroy()
@@ -409,7 +409,7 @@ class TestDomainDestroy:
     def test_deletes_domain_namespaces_set(self, clean_redis):
         cfg = _make_config()
         d = GPDCDomain("testdomain", cfg)
-        d.get_namespace("ns1")
+        d.ensure_namespace("ns1")
         ns_key = make_domain_namespaces_key("testdomain")
 
         d.destroy()
@@ -419,7 +419,7 @@ class TestDomainDestroy:
     def test_deletes_all_namespace_data(self, clean_redis):
         cfg = _make_config()
         d = GPDCDomain("testdomain", cfg)
-        ns = d.get_namespace("ns1")
+        ns = d.ensure_namespace("ns1")
         ns["x"] = 42
         ns["y"] = {"a": 1}
 
@@ -443,9 +443,9 @@ class TestDomainDestroy:
     def test_multiple_namespaces_all_cleaned(self, clean_redis):
         cfg = _make_config()
         d = GPDCDomain("testdomain", cfg)
-        d.get_namespace("ns1")
-        d.get_namespace("ns2")
-        d.get_namespace("ns3")
+        d.ensure_namespace("ns1")
+        d.ensure_namespace("ns2")
+        d.ensure_namespace("ns3")
 
         d.destroy()
 
@@ -464,10 +464,10 @@ class TestDomainClose:
         with pytest.raises(RuntimeError, match="closed"):
             _ = domain.redis
 
-    def test_get_namespace_raises_after_close(self, domain):
+    def test_ensure_namespace_raises_after_close(self, domain):
         domain.close()
         with pytest.raises(RuntimeError, match="closed"):
-            domain.get_namespace("any")
+            domain.ensure_namespace("any")
 
     def test_contains_raises_after_close(self, domain):
         domain.close()
@@ -515,7 +515,7 @@ class TestDomainContextManager:
         domain_config.gc_enabled = True
         with GPDCDomain("testdomain", domain_config) as domain:
             assert domain.name == "testdomain"
-            ns = domain.get_namespace("testns")
+            ns = domain.ensure_namespace("testns")
             ns["x"] = 42
             assert ns["x"] == 42
         assert domain._gc_thread is None or not domain._gc_thread.is_alive()
@@ -532,6 +532,27 @@ class TestDomainContextManager:
         except ValueError:
             pass
         assert domain._gc_thread is None or not domain._gc_thread.is_alive()
+
+
+class TestGPDCDomainGetNamespaceReadOnly:
+    def test_get_namespace_returns_existing(self, domain):
+        domain.ensure_namespace("myns")
+        ns = domain.get_namespace("myns")
+        assert ns.name == "myns"
+
+    def test_get_namespace_raises_for_nonexistent(self, domain):
+        with pytest.raises(KeyError):
+            domain.get_namespace("doesnotexist")
+
+    def test_get_namespace_does_not_create(self, domain):
+        with pytest.raises(KeyError):
+            domain.get_namespace("newns")
+        assert "newns" not in domain
+
+    def test_get_namespace_raises_after_close(self, domain):
+        domain.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            domain.get_namespace("any")
 
 
 class TestDomainMetaRedisSource:
@@ -573,7 +594,7 @@ class TestDomainMetaRedisSource:
             default_cache_mode="ttl", default_ttl_seconds=300,
         )
         d1 = GPDCDomain("testdomain", cfg_ttl)
-        ns1 = d1.get_namespace("myns")
+        ns1 = d1.ensure_namespace("myns")
         assert ns1._get_default_cache_mode() == "ttl"
         assert ns1._get_default_ttl_seconds() == 300
         d1.close()
@@ -584,7 +605,7 @@ class TestDomainMetaRedisSource:
             default_cache_mode="permanent", default_ttl_seconds=0,
         )
         d2 = GPDCDomain("testdomain", cfg_permanent)
-        ns2 = d2.get_namespace("myns")
+        ns2 = d2.ensure_namespace("myns")
         assert ns2._get_default_cache_mode() == "ttl"
         assert ns2._get_default_ttl_seconds() == 300
         d2.close()

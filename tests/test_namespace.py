@@ -1572,7 +1572,7 @@ class TestReassignToDifferentContainerType:
 
 class TestNamespaceThreading:
     def test_concurrent_writes_no_data_loss(self, domain):
-        ns = domain.get_namespace("ns1")
+        ns = domain.ensure_namespace("ns1")
         n_threads = 10
         n_writes = 50
         errors = []
@@ -1598,7 +1598,7 @@ class TestNamespaceThreading:
                 assert ns[key] == tid * 1000 + i
 
     def test_concurrent_reads_consistent(self, domain):
-        ns = domain.get_namespace("ns2")
+        ns = domain.ensure_namespace("ns2")
         for i in range(100):
             ns[f"key{i}"] = i
 
@@ -1626,7 +1626,7 @@ class TestNamespaceThreading:
                 assert data[f"key{i}"] == i
 
     def test_concurrent_read_write_no_crash(self, domain):
-        ns = domain.get_namespace("ns3")
+        ns = domain.ensure_namespace("ns3")
         for i in range(50):
             ns[f"key{i}"] = i
 
@@ -1682,8 +1682,8 @@ class TestNamespaceErrorPaths:
         r.flushdb()
         cfg = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_db=1, redis_password="123456")
         domain = GPDCDomain("testdomain", cfg)
-        ns1 = domain.get_namespace("ns1")
-        ns2 = domain.get_namespace("ns2")
+        ns1 = domain.ensure_namespace("ns1")
+        ns2 = domain.ensure_namespace("ns2")
         ns1["lst"] = [1, 2, 3]
         lst = ns1.get_object("lst")
         with pytest.raises(ValueError, match="Cross-namespace"):

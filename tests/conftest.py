@@ -50,7 +50,7 @@ def domain(clean_redis, domain_config):
 
 @pytest.fixture
 def ns(domain):
-    return domain.get_namespace("testns")
+    return domain.ensure_namespace("testns")
 
 
 @pytest.fixture

@@ -108,13 +108,16 @@ class GPDCDomain(GPConfigurable):
         self._check_open()
         return self._redis
 
-    def get_namespace(self, name: str):
+    def ensure_namespace(self, name: str):
         self._check_open()
         from .namespace import GPDCNamespace
 
         if name not in self._namespaces:
             self._namespaces[name] = GPDCNamespace(name, self)
         return self._namespaces[name]
+
+    def get_namespace(self, name: str):
+        return self[name]
 
     def __contains__(self, name: object) -> bool:
         self._check_open()
