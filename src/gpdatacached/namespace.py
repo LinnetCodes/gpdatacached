@@ -352,8 +352,16 @@ class GPDCNamespace(MutableMapping):
 
         if entry.is_container:
             raw_key = make_raw_key(self._domain.name, self._name, key)
+            try:
+                count = len(value)
+            except TypeError:
+                model_fields = getattr(type(value), "model_fields", None)
+                if model_fields is not None:
+                    count = len(model_fields)
+                else:
+                    count = 0
             self._write_container_meta(
-                obj_key, entry, raw_key, policy, now, is_new=is_new, item_count=len(value), obj_name=key
+                obj_key, entry, raw_key, policy, now, is_new=is_new, item_count=count, obj_name=key
             )
             if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
                 if not is_new:

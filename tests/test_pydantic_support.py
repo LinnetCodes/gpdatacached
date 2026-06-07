@@ -434,3 +434,75 @@ class TestPydanticContainerCodecDeleteRaw:
         assert ns._redis().exists(raw_key)
         PydanticModelContainerCodec.delete_raw(ns, raw_key)
         assert not ns._redis().exists(raw_key)
+
+
+class TestPydanticContainerNamespaceIntegration:
+    def test_set_and_get_model_container(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        assert isinstance(obj, OrderModelObject)
+        order = obj.value
+        assert isinstance(order, OrderModel)
+        assert order.order_id == "ORD-001"
+        assert order.total == 99.5
+
+    def test_field_level_get(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        assert obj["order_id"] == "ORD-001"
+        assert obj["total"] == 99.5
+
+    def test_field_level_set(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        obj["total"] = 199.5
+        assert obj["total"] == 199.5
+        assert obj.value.total == 199.5
+
+    def test_field_set_unknown_key_raises(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        with pytest.raises(KeyError, match="unknown_field"):
+            obj["unknown_field"] = "value"
+
+    def test_delete_field_raises(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        with pytest.raises(TypeError, match="Cannot delete"):
+            del obj["order_id"]
+
+    def test_iter_yields_field_names(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        assert set(obj) == {"order_id", "total"}
+
+    def test_len_returns_field_count(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        assert len(obj) == 2
+
+    def test_contains(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        assert "order_id" in obj
+        assert "nonexistent" not in obj
+
+    def test_nested_list_field(self, ns, register_container_types):
+        ns["order1"] = OrderWithList(order_id="ORD-001", items=["apple", "banana"])
+        obj = ns["order1"]
+        items_obj = obj["items"]
+        items_obj.append("cherry")
+        assert obj.value.items == ["apple", "banana", "cherry"]
+
+    def test_deepcopy(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        copied = obj.deepcopy()
+        assert isinstance(copied, OrderModel)
+        assert copied == OrderModel(order_id="ORD-001", total=99.5)
+
+    def test_delete_container_from_namespace(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        assert "order1" in ns
+        del ns["order1"]
+        assert "order1" not in ns
