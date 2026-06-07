@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from gpdatacached.scalar import GPDCScalarObject
 from gpdatacached.types import GPDCTypeRegistry
+from gpdatacached.extensions.pydantic_support import BaseModelContainerObject, PydanticModelContainerCodec
 
 
 class SimpleUser(BaseModel):
@@ -71,6 +72,33 @@ class UserDateObject(GPDCScalarObject):
 
 class UserTimeObject(GPDCScalarObject):
     TYPE = "scalar:UserWithTime"
+
+
+class OrderModel(BaseModel):
+    order_id: str
+    total: float
+
+
+class OrderWithList(BaseModel):
+    order_id: str
+    items: list[str]
+
+
+class OrderWithDict(BaseModel):
+    order_id: str
+    metadata: dict[str, str]
+
+
+class OrderModelObject(BaseModelContainerObject):
+    TYPE = "collection:OrderModel"
+
+
+class OrderWithListObject(BaseModelContainerObject):
+    TYPE = "collection:OrderWithList"
+
+
+class OrderWithDictObject(BaseModelContainerObject):
+    TYPE = "collection:OrderWithDict"
 
 
 @pytest.fixture(autouse=True)
@@ -317,3 +345,92 @@ class TestPydanticScalarNamespaceIntegration:
         d = ns["data"]
         assert isinstance(d["u1"], SimpleUser)
         assert d["u1"].name == "Alice"
+
+
+@pytest.fixture
+def register_container_types():
+    original_gpdc = dict(GPDCTypeRegistry._by_gpdc_type)
+    original_python = list(GPDCTypeRegistry._by_python_type)
+    original_lock = GPDCTypeRegistry._lock
+    try:
+        GPDCTypeRegistry._lock = threading.Lock()
+        GPDCTypeRegistry._by_gpdc_type = dict(original_gpdc)
+        GPDCTypeRegistry._by_python_type = list(original_python)
+
+        GPDCTypeRegistry.register(
+            python_type=OrderModel,
+            gpdc_type="collection:OrderModel",
+            object_class=OrderModelObject,
+            codec_class=PydanticModelContainerCodec,
+            priority=0,
+        )
+        GPDCTypeRegistry.register(
+            python_type=OrderWithList,
+            gpdc_type="collection:OrderWithList",
+            object_class=OrderWithListObject,
+            codec_class=PydanticModelContainerCodec,
+            priority=0,
+        )
+        GPDCTypeRegistry.register(
+            python_type=OrderWithDict,
+            gpdc_type="collection:OrderWithDict",
+            object_class=OrderWithDictObject,
+            codec_class=PydanticModelContainerCodec,
+            priority=0,
+        )
+        yield
+    finally:
+        GPDCTypeRegistry._by_gpdc_type = original_gpdc
+        GPDCTypeRegistry._by_python_type = original_python
+        GPDCTypeRegistry._lock = original_lock
+
+
+class TestPydanticContainerCodecCreateRaw:
+    def test_create_raw_writes_hash(self, ns, register_container_types):
+        raw_key = "gpdc:testdomain:testns:raw:test_order"
+        try:
+            order = OrderModel(order_id="ORD-001", total=99.5)
+            PydanticModelContainerCodec.create_raw(ns, raw_key, order, "owner", "permanent", 0)
+            assert ns._redis().hexists(raw_key, "order_id")
+            assert ns._redis().hexists(raw_key, "total")
+        finally:
+            ns._redis().delete(raw_key)
+
+    def test_create_raw_with_nested_list(self, ns, register_container_types):
+        raw_key = "gpdc:testdomain:testns:raw:test_order_list"
+        try:
+            order = OrderWithList(order_id="ORD-002", items=["apple", "banana"])
+            PydanticModelContainerCodec.create_raw(ns, raw_key, order, "owner", "permanent", 0)
+            items_val = ns._redis().hget(raw_key, "items")
+            assert items_val is not None
+            assert items_val.startswith("ref:")
+        finally:
+            ns._redis().delete(raw_key)
+
+
+class TestPydanticContainerCodecReadRaw:
+    def test_read_raw_returns_dict(self, ns, register_container_types):
+        raw_key = "gpdc:testdomain:testns:raw:test_order"
+        try:
+            order = OrderModel(order_id="ORD-001", total=99.5)
+            PydanticModelContainerCodec.create_raw(ns, raw_key, order, "owner", "permanent", 0)
+            result = PydanticModelContainerCodec.read_raw(ns, raw_key)
+            assert isinstance(result, dict)
+            assert result["order_id"] == "ORD-001"
+            assert result["total"] == 99.5
+        finally:
+            ns._redis().delete(raw_key)
+
+    def test_read_raw_empty_returns_empty_dict(self, ns, register_container_types):
+        result = PydanticModelContainerCodec.read_raw(ns, "gpdc:nonexistent:key")
+        assert result == {}
+
+
+class TestPydanticContainerCodecDeleteRaw:
+    def test_delete_raw(self, ns, register_container_types):
+        raw_key = "gpdc:testdomain:testns:raw:test_order"
+        order = OrderModel(order_id="ORD-001", total=99.5)
+        PydanticModelContainerCodec.create_raw(ns, raw_key, order, "owner", "permanent", 0)
+        assert ns._redis().exists(raw_key)
+        PydanticModelContainerCodec.delete_raw(ns, raw_key)
+        assert not ns._redis().exists(raw_key)

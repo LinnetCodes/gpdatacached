@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import collections.abc
 import json
 from typing import Any
 
-from ..codec import GPDCScalarCodec
+from ..codec import GPDCContainerCodec, GPDCScalarCodec
+from ..container import GPDCContainerObject
+from ..types import decode_element, encode_element
 
 
 class PydanticModelScalarCodec(GPDCScalarCodec):
@@ -54,3 +57,113 @@ def _gpdc_type_to_prefix(model_instance) -> str:
 
     entry = GPDCTypeRegistry.lookup_by_python_type(model_instance)
     return entry.gpdc_type.split(":", 1)[1]
+
+
+class PydanticModelContainerCodec(GPDCContainerCodec):
+    @classmethod
+    def create_raw(cls, namespace, raw_key: str, value: object, owner_name: str, cache_mode: str, ttl: int) -> None:
+        from pydantic import BaseModel
+        from ..ttl import policy_from_defaults
+
+        if not isinstance(value, BaseModel):
+            raise TypeError(f"Expected BaseModel, got {type(value).__name__!r}")
+
+        policy = policy_from_defaults(cache_mode, ttl)
+        mapping = {}
+        for field_name in type(value).model_fields:
+            field_value = getattr(value, field_name)
+            mapping[field_name] = encode_element(field_value, namespace, owner_name, policy)
+        if mapping:
+            namespace._redis().hset(raw_key, mapping=mapping)
+
+    @classmethod
+    def read_raw(cls, namespace, raw_key: str) -> dict:
+        data = namespace._redis().hgetall(raw_key)
+        if not data:
+            return {}
+        result = {}
+        for field_name, encoded_val in data.items():
+            result[field_name] = decode_element(encoded_val, namespace)
+        return result
+
+    @classmethod
+    def delete_raw(cls, namespace, raw_key: str) -> None:
+        namespace._redis().delete(raw_key)
+
+
+class BaseModelContainerObject(GPDCContainerObject, collections.abc.MutableMapping):
+    @property
+    def type(self) -> str:
+        return self.__class__.TYPE
+
+    @property
+    def _model_class(self):
+        from ..types import GPDCTypeRegistry
+
+        return GPDCTypeRegistry.lookup_by_gpdc_type(self.TYPE).python_type
+
+    @property
+    def _field_names(self) -> frozenset[str]:
+        return frozenset(self._model_class.model_fields.keys())
+
+    @property
+    def value(self):
+        raw_dict = PydanticModelContainerCodec.read_raw(self._namespace, self.raw_key)
+        return self._model_class(**raw_dict)
+
+    @value.setter
+    def value(self, new_value):
+        self._reject_value_replacement()
+
+    def _current_item_count(self) -> int:
+        return len(self._field_names)
+
+    def __getitem__(self, key: str):
+        if key not in self._field_names:
+            raise KeyError(key)
+        encoded_val = self._redis().hget(self.raw_key, key)
+        if encoded_val is None:
+            field = self._model_class.model_fields[key]
+            if field.default is not None:
+                return field.default
+            if field.default_factory is not None:
+                return field.default_factory()
+            raise KeyError(key)
+        return decode_element(encoded_val, self._namespace)
+
+    def __setitem__(self, key: str, value: object) -> None:
+        if key not in self._field_names:
+            raise KeyError(f"Cannot set unknown field {key!r} on {self._model_class.__name__}")
+        from ..ttl import policy_from_meta
+        from ..meta import ObjectMeta
+
+        r = self._redis()
+        old_encoded = r.hget(self.raw_key, key)
+        meta = ObjectMeta.load(r, self._canonical_redis_key())
+        policy = policy_from_meta(meta) if meta else None
+        encoded_val = encode_element(value, self._namespace, self._binding_name(), policy)
+        r.hset(self.raw_key, key, encoded_val)
+        self._cleanup_slot_overwrite(old_encoded)
+        self._touch()
+
+    def __delitem__(self, key: str) -> None:
+        raise TypeError("Cannot delete fields from a Pydantic model container")
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._field_names
+
+    def __iter__(self):
+        return iter(self._field_names)
+
+    def __len__(self) -> int:
+        return len(self._field_names)
+
+    def deepcopy(self):
+        result = {}
+        for field_name, encoded_val in self._redis().hgetall(self.raw_key).items():
+            decoded = decode_element(encoded_val, self._namespace)
+            if hasattr(decoded, "deepcopy"):
+                result[field_name] = decoded.deepcopy()
+            else:
+                result[field_name] = decoded
+        return self._model_class(**result)
