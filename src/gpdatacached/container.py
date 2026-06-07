@@ -98,6 +98,8 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             return encoded in r.lrange(self.raw_key, 0, -1)
         if redis_type == "hash":
             return encoded in r.hvals(self.raw_key)
+        # "set" is intentionally not supported here: encode_key rejects container
+        # types, so a set can never contain ref-encoded strings. See design doc.
         return False
 
     def _cleanup_slot_overwrite(self, old_encoded: str | None) -> None:
