@@ -80,15 +80,6 @@ class GPDCDataObject(ABC):
     def meta(self) -> ObjectMeta | None:
         return ObjectMeta.load(self._redis(), self._canonical_redis_key())
 
-    @meta.setter
-    def meta(self, new_meta: ObjectMeta) -> None:
-        from .ttl import policy_from_meta
-
-        ctx = self._load_lifecycle_context()
-        self._check_owner_permission(ctx.meta)
-        policy = policy_from_meta(new_meta)
-        self.set_lifecycle(policy)
-
     @property
     def cache_mode(self) -> str:
         meta = self.meta
@@ -150,6 +141,21 @@ class GPDCDataObject(ABC):
                 set(),
             )
 
+    def update_cache_mode_and_ttl(self, cache_mode: str, ttl: int) -> None:
+        from .ttl import TTLPolicy
+
+        if cache_mode not in ("permanent", "ttl", "sliding"):
+            raise ValueError(f"Invalid cache_mode: {cache_mode!r}")
+        if ttl < 0:
+            raise ValueError(f"ttl must be >= 0: {ttl}")
+        if cache_mode in ("ttl", "sliding") and ttl <= 0:
+            raise ValueError(f"cache_mode='{cache_mode}' requires ttl > 0, got {ttl}")
+        ctx = self._load_lifecycle_context()
+        self._check_owner_permission(ctx.meta)
+        expire_seconds = ttl if cache_mode in ("ttl", "sliding") else None
+        policy = TTLPolicy(cache_mode=cache_mode, declared_ttl=ttl, expire_seconds=expire_seconds)
+        self.set_lifecycle(policy)
+
     def take_ownership(self) -> None:
         if not self._is_reference:
             raise TypeError("take_ownership() can only be called on named reference objects")
@@ -167,32 +173,12 @@ class GPDCDataObject(ABC):
 
         meta.with_updates(owner=self.canonical_name).save(r, key)
 
-    @cache_mode.setter
-    def cache_mode(self, mode: str) -> None:
-        from .ttl import policy_from_meta, policy_for_cache_mode_change
-
-        if mode not in ("permanent", "ttl", "sliding"):
-            raise ValueError(f"Invalid cache_mode: {mode!r}")
-        ctx = self._load_lifecycle_context()
-        self._check_owner_permission(ctx.meta)
-        policy = policy_for_cache_mode_change(policy_from_meta(ctx.meta), mode)
-        self.set_lifecycle(policy)
-
     @property
     def ttl(self) -> int:
         meta = self.meta
         if meta is None:
             raise ObjectGoneError(self.canonical_uri)
         return meta.ttl
-
-    @ttl.setter
-    def ttl(self, seconds: int) -> None:
-        from .ttl import policy_from_meta, policy_for_ttl_change
-
-        ctx = self._load_lifecycle_context()
-        self._check_owner_permission(ctx.meta)
-        policy = policy_for_ttl_change(policy_from_meta(ctx.meta), seconds)
-        self.set_lifecycle(policy)
 
     @property
     def created_at(self) -> datetime.datetime | None:
@@ -226,6 +212,9 @@ class GPDCDataObject(ABC):
             raise TypeError("expire_at() only applies to objects with cache_mode='ttl'")
         self._check_owner_permission(ctx.meta)
         seconds = max(0, int((when - datetime.datetime.now(datetime.UTC)).total_seconds()))
+        if seconds == 0:
+            self._redis().delete(ctx.key)
+            return
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
         self.set_lifecycle(policy)
 

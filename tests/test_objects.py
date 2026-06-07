@@ -214,7 +214,7 @@ class TestObjectsLifecycle:
         child_obj = parent_obj[0]
 
         with pytest.raises(LifecyclePermissionError):
-            child_obj.cache_mode = "ttl"
+            child_obj.update_cache_mode_and_ttl("ttl", 60)
 
     def test_persist_checks_owner(self, domain, ns, clean_redis):
         r = clean_redis
@@ -228,21 +228,6 @@ class TestObjectsLifecycle:
 
         with pytest.raises(LifecyclePermissionError):
             child_obj.persist()
-
-    def test_meta_setter_checks_owner(self, domain, ns, clean_redis):
-        r = clean_redis
-        d = domain.name
-        n = ns.name
-
-        parent_name, child_name = self._setup_parent_and_child(r, d, n)
-
-        parent_obj = ns.get_object(parent_name)
-        child_obj = parent_obj[0]
-
-        new_meta = child_obj.meta.model_copy(update={"cache_mode": "ttl", "ttl": 300})
-
-        with pytest.raises(LifecyclePermissionError):
-            child_obj.meta = new_meta
 
 
 class TestScalarValueGone:
@@ -290,19 +275,12 @@ class TestObjectGoneErrorScalar:
     def _delete_meta(self, obj, raw_redis):
         raw_redis.delete(obj._canonical_redis_key())
 
-    def test_cache_mode_setter_raises(self, ns, raw_redis):
+    def test_update_cache_mode_and_ttl_raises_on_gone(self, ns, raw_redis):
         ns["x"] = 42
         obj = ns.get_object("x")
         self._delete_meta(obj, raw_redis)
         with pytest.raises(ObjectGoneError, match="no longer exists"):
-            obj.cache_mode = "ttl"
-
-    def test_ttl_setter_raises(self, ns, raw_redis):
-        ns["x"] = 42
-        obj = ns.get_object("x")
-        self._delete_meta(obj, raw_redis)
-        with pytest.raises(ObjectGoneError, match="no longer exists"):
-            obj.ttl = 100
+            obj.update_cache_mode_and_ttl("ttl", 60)
 
     def test_expire_in_raises(self, ns, raw_redis):
         ns["x"] = 42
@@ -411,6 +389,6 @@ class TestObjectGoneErrorAttributes:
         obj = ns.get_object("x")
         raw_redis.delete(obj._canonical_redis_key())
         with pytest.raises(ObjectGoneError) as exc_info:
-            obj.cache_mode = "ttl"
+            obj.update_cache_mode_and_ttl("ttl", 60)
         assert exc_info.value.object_uri == obj.canonical_uri
         assert "gpdc://" in str(exc_info.value)

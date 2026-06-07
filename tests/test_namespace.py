@@ -264,14 +264,13 @@ class TestCacheModeAndTTL:
     def test_set_cache_mode_ttl(self, ns):
         ns["x"] = 1
         obj = ns.get_object("x")
-        obj.cache_mode = "ttl"
+        obj.update_cache_mode_and_ttl("ttl", 60)
         assert ns.get_object("x").cache_mode == "ttl"
 
     def test_set_ttl_applies_expire(self, ns, clean_redis):
         ns["x"] = 1
         obj = ns.get_object("x")
-        obj.cache_mode = "ttl"
-        obj.ttl = 60
+        obj.update_cache_mode_and_ttl("ttl", 60)
         key = make_object_key("testdomain", "testns", "x")
         remaining = clean_redis.ttl(key)
         assert 55 <= remaining <= 60
@@ -279,8 +278,7 @@ class TestCacheModeAndTTL:
     def test_persist_removes_ttl(self, ns, clean_redis):
         ns["x"] = 1
         obj = ns.get_object("x")
-        obj.cache_mode = "ttl"
-        obj.ttl = 60
+        obj.update_cache_mode_and_ttl("ttl", 60)
         key = make_object_key("testdomain", "testns", "x")
         assert clean_redis.hget(key, "ttl") == "60"
         obj.persist()
@@ -296,7 +294,7 @@ class TestCacheModeAndTTL:
     def test_expire_in(self, ns, clean_redis):
         ns["x"] = 1
         obj = ns.get_object("x")
-        obj.cache_mode = "ttl"
+        obj.update_cache_mode_and_ttl("ttl", 200)
         obj.expire_in(100)
         key = make_object_key("testdomain", "testns", "x")
         remaining = clean_redis.ttl(key)
@@ -305,7 +303,7 @@ class TestCacheModeAndTTL:
     def test_expire_at_past_time_immediate_expiry(self, ns, clean_redis):
         ns["x"] = 42
         obj = ns.get_object("x")
-        obj.cache_mode = "ttl"
+        obj.update_cache_mode_and_ttl("ttl", 200)
         past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=100)
         obj.expire_at(past)
         time.sleep(0.1)
@@ -315,8 +313,7 @@ class TestCacheModeAndTTL:
     def test_sliding_mode_resets_ttl_on_write(self, ns, clean_redis):
         ns["x"] = 1
         obj = ns.get_object("x")
-        obj.cache_mode = "sliding"
-        obj.ttl = 300
+        obj.update_cache_mode_and_ttl("sliding", 300)
         obj.value = 2
         key = make_object_key("testdomain", "testns", "x")
         remaining = clean_redis.ttl(key)
@@ -326,13 +323,12 @@ class TestCacheModeAndTTL:
         ns["x"] = 1
         obj = ns.get_object("x")
         with pytest.raises(ValueError):
-            obj.cache_mode = "invalid"
+            obj.update_cache_mode_and_ttl("invalid", 0)
 
     def test_scalar_overwrite_preserves_and_reapplies_ttl(self, ns, clean_redis):
         ns["x"] = 1
         obj = ns.get_object("x")
-        obj.cache_mode = "ttl"
-        obj.ttl = 300
+        obj.update_cache_mode_and_ttl("ttl", 300)
         key = make_object_key("testdomain", "testns", "x")
 
         time.sleep(1)
@@ -350,8 +346,7 @@ class TestCacheModeAndTTL:
     def test_scalar_to_container_overwrite_preserves_and_reapplies_ttl(self, ns, clean_redis):
         ns["x"] = 1
         obj = ns.get_object("x")
-        obj.cache_mode = "ttl"
-        obj.ttl = 300
+        obj.update_cache_mode_and_ttl("ttl", 300)
         key = make_object_key("testdomain", "testns", "x")
 
         time.sleep(1)
@@ -1098,15 +1093,14 @@ class TestAliasLifecycleResolvesToCanonical:
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         alias_obj = ns.get_object("alias")
-        alias_obj.cache_mode = "ttl"
+        alias_obj.update_cache_mode_and_ttl("ttl", 300)
         assert ns.get_object("owner").cache_mode == "ttl"
 
     def test_ttl_set_through_alias_affects_canonical(self, ns):
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         alias_obj = ns.get_object("alias")
-        alias_obj.cache_mode = "ttl"
-        alias_obj.ttl = 300
+        alias_obj.update_cache_mode_and_ttl("ttl", 300)
         assert ns.get_object("owner").ttl == 300
 
     def test_created_at_reads_from_canonical(self, ns):
@@ -1123,8 +1117,7 @@ class TestAliasLifecycleResolvesToCanonical:
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         alias_obj = ns.get_object("alias")
-        alias_obj.cache_mode = "ttl"
-        alias_obj.ttl = 300
+        alias_obj.update_cache_mode_and_ttl("ttl", 300)
         owner_obj = ns.get_object("owner")
         assert alias_obj.remaining_ttl() == owner_obj.remaining_ttl()
 
@@ -1132,7 +1125,7 @@ class TestAliasLifecycleResolvesToCanonical:
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         alias_obj = ns.get_object("alias")
-        alias_obj.cache_mode = "ttl"
+        alias_obj.update_cache_mode_and_ttl("ttl", 300)
         alias_obj.expire_in(600)
         assert ns.get_object("owner").remaining_ttl() > 0
 
@@ -1140,7 +1133,7 @@ class TestAliasLifecycleResolvesToCanonical:
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         alias_obj = ns.get_object("alias")
-        alias_obj.cache_mode = "ttl"
+        alias_obj.update_cache_mode_and_ttl("ttl", 200)
         future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=600)
         alias_obj.expire_at(future)
         assert ns.get_object("owner").remaining_ttl() > 0
@@ -1149,8 +1142,7 @@ class TestAliasLifecycleResolvesToCanonical:
         ns["owner"] = [1, 2]
         ns["alias"] = ns["owner"]
         alias_obj = ns.get_object("alias")
-        alias_obj.cache_mode = "ttl"
-        alias_obj.ttl = 300
+        alias_obj.update_cache_mode_and_ttl("ttl", 300)
         alias_obj.persist()
         assert ns.get_object("owner").remaining_ttl() == -1
 

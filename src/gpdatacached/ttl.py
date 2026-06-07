@@ -33,11 +33,17 @@ def _validate_policy(policy: TTLPolicy) -> None:
         raise ValueError(f"Invalid cache_mode: {policy.cache_mode!r}")
     if policy.declared_ttl < 0:
         raise ValueError(f"ttl must be >= 0: {policy.declared_ttl}")
+    if policy.cache_mode in ("ttl", "sliding") and policy.declared_ttl <= 0:
+        raise ValueError(f"cache_mode='{policy.cache_mode}' requires declared_ttl > 0, got {policy.declared_ttl}")
 
 
 def policy_from_defaults(cache_mode: str, ttl: int) -> TTLPolicy:
     if cache_mode not in ("permanent", "ttl", "sliding"):
         raise ValueError(f"Invalid cache_mode: {cache_mode!r}")
+    if ttl < 0:
+        raise ValueError(f"ttl must be >= 0: {ttl}")
+    if cache_mode in ("ttl", "sliding") and ttl <= 0:
+        raise ValueError(f"cache_mode='{cache_mode}' requires ttl > 0, got {ttl}")
     expire_seconds = ttl if cache_mode in ("ttl", "sliding") and ttl > 0 else None
     return TTLPolicy(cache_mode=cache_mode, declared_ttl=ttl, expire_seconds=expire_seconds)
 
@@ -46,24 +52,6 @@ def policy_from_meta(meta: ObjectMeta) -> TTLPolicy:
     if meta.cache_mode in ("ttl", "sliding") and meta.ttl > 0:
         return TTLPolicy(cache_mode=meta.cache_mode, declared_ttl=meta.ttl, expire_seconds=meta.ttl)
     return TTLPolicy(cache_mode=meta.cache_mode, declared_ttl=meta.ttl, expire_seconds=None)
-
-
-def policy_for_cache_mode_change(current: TTLPolicy, new_mode: str) -> TTLPolicy:
-    if new_mode not in ("permanent", "ttl", "sliding"):
-        raise ValueError(f"Invalid cache_mode: {new_mode!r}")
-    if new_mode == "permanent":
-        return TTLPolicy(cache_mode=new_mode, declared_ttl=current.declared_ttl, expire_seconds=None)
-    if current.declared_ttl > 0:
-        return TTLPolicy(cache_mode=new_mode, declared_ttl=current.declared_ttl, expire_seconds=current.declared_ttl)
-    return TTLPolicy(cache_mode=new_mode, declared_ttl=current.declared_ttl, expire_seconds=None)
-
-
-def policy_for_ttl_change(current: TTLPolicy, new_ttl: int) -> TTLPolicy:
-    if current.cache_mode == "permanent":
-        return TTLPolicy(cache_mode=current.cache_mode, declared_ttl=new_ttl, expire_seconds=None)
-    if new_ttl > 0:
-        return TTLPolicy(cache_mode=current.cache_mode, declared_ttl=new_ttl, expire_seconds=new_ttl)
-    return TTLPolicy(cache_mode=current.cache_mode, declared_ttl=new_ttl, expire_seconds=None)
 
 
 def policy_for_sliding_touch(current: TTLPolicy) -> TTLPolicy:

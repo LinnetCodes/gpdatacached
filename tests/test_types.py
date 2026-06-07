@@ -288,4 +288,4 @@ class TestRegistryErrorPaths:
         ns["x"] = 42
         obj = ns.get_object("x")
         with pytest.raises(ValueError, match="Invalid cache_mode"):
-            obj.cache_mode = "invalid"
+            obj.update_cache_mode_and_ttl("invalid", 0)

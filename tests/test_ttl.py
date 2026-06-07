@@ -11,8 +11,6 @@ from gpdatacached.ttl import (
     TTLPolicy,
     policy_from_defaults,
     policy_from_meta,
-    policy_for_cache_mode_change,
-    policy_for_ttl_change,
     policy_for_sliding_touch,
     apply_policy,
 )
@@ -36,8 +34,8 @@ class TestPolicyFromDefaults:
         assert p.expire_seconds == 300
 
     def test_ttl_with_zero_ttl(self):
-        p = policy_from_defaults("ttl", 0)
-        assert p.expire_seconds is None
+        with pytest.raises(ValueError, match="requires ttl > 0"):
+            policy_from_defaults("ttl", 0)
 
     def test_sliding_with_positive_ttl(self):
         p = policy_from_defaults("sliding", 60)
@@ -46,8 +44,8 @@ class TestPolicyFromDefaults:
         assert p.expire_seconds == 60
 
     def test_sliding_with_zero_ttl(self):
-        p = policy_from_defaults("sliding", 0)
-        assert p.expire_seconds is None
+        with pytest.raises(ValueError, match="requires ttl > 0"):
+            policy_from_defaults("sliding", 0)
 
     def test_invalid_cache_mode_raises(self):
         with pytest.raises(ValueError, match="Invalid cache_mode"):
@@ -85,57 +83,6 @@ class TestPolicyFromMeta:
         p = policy_from_meta(ObjectMeta(type="scalar:int", cache_mode="ttl", ttl=0))
         assert p.declared_ttl == 0
         assert p.expire_seconds is None
-
-
-class TestPolicyForCacheModeChange:
-    def test_change_to_permanent(self):
-        current = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
-        p = policy_for_cache_mode_change(current, "permanent")
-        assert p.cache_mode == "permanent"
-        assert p.declared_ttl == 300
-        assert p.expire_seconds is None
-
-    def test_change_to_ttl_with_declared_ttl(self):
-        current = TTLPolicy(cache_mode="permanent", declared_ttl=300, expire_seconds=None)
-        p = policy_for_cache_mode_change(current, "ttl")
-        assert p.cache_mode == "ttl"
-        assert p.expire_seconds == 300
-
-    def test_change_to_sliding_with_zero_declared(self):
-        current = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
-        p = policy_for_cache_mode_change(current, "sliding")
-        assert p.expire_seconds is None
-
-    def test_invalid_mode_raises(self):
-        current = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
-        with pytest.raises(ValueError, match="Invalid cache_mode"):
-            policy_for_cache_mode_change(current, "bad")
-
-
-class TestPolicyForTtlChange:
-    def test_change_ttl_in_ttl_mode(self):
-        current = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
-        p = policy_for_ttl_change(current, 600)
-        assert p.declared_ttl == 600
-        assert p.expire_seconds == 600
-
-    def test_change_ttl_in_permanent_mode_no_expire(self):
-        current = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
-        p = policy_for_ttl_change(current, 300)
-        assert p.declared_ttl == 300
-        assert p.expire_seconds is None
-
-    def test_change_to_zero_in_ttl_mode(self):
-        current = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
-        p = policy_for_ttl_change(current, 0)
-        assert p.declared_ttl == 0
-        assert p.expire_seconds is None
-
-    def test_change_ttl_in_sliding_mode(self):
-        current = TTLPolicy(cache_mode="sliding", declared_ttl=60, expire_seconds=10)
-        p = policy_for_ttl_change(current, 120)
-        assert p.declared_ttl == 120
-        assert p.expire_seconds == 120
 
 
 class TestPolicyForSlidingTouch:
@@ -199,13 +146,6 @@ class TestPolicyFromDefaultsRejectsInherited:
             policy_from_defaults("inherited", 300)
 
 
-class TestPolicyForCacheModeChangeRejectsInherited:
-    def test_change_to_inherited_rejected(self):
-        current = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
-        with pytest.raises(ValueError, match="Invalid cache_mode"):
-            policy_for_cache_mode_change(current, "inherited")
-
-
 def test_effective_policy_removed():
     import gpdatacached.ttl as ttl_mod
 
@@ -224,6 +164,20 @@ def test_validate_policy_rejects_negative_ttl():
 
     with pytest.raises(ValueError):
         _validate_policy(TTLPolicy(cache_mode="ttl", declared_ttl=-1, expire_seconds=1))
+
+
+def test_validate_policy_rejects_ttl_mode_with_zero_ttl():
+    from gpdatacached.ttl import _validate_policy, TTLPolicy
+
+    with pytest.raises(ValueError, match="requires declared_ttl > 0"):
+        _validate_policy(TTLPolicy(cache_mode="ttl", declared_ttl=0, expire_seconds=None))
+
+
+def test_validate_policy_rejects_sliding_mode_with_zero_ttl():
+    from gpdatacached.ttl import _validate_policy, TTLPolicy
+
+    with pytest.raises(ValueError, match="requires declared_ttl > 0"):
+        _validate_policy(TTLPolicy(cache_mode="sliding", declared_ttl=0, expire_seconds=None))
 
 
 def test_propagate_lifecycle_uses_owner_check(clean_redis):
@@ -342,8 +296,7 @@ class TestTTLExpiry:
 
         ns["x"] = 42
         obj = ns.get_object("x")
-        obj.cache_mode = "ttl"
-        obj.ttl = 1
+        obj.update_cache_mode_and_ttl("ttl", 1)
 
         assert "x" in ns
         assert ns["x"] == 42
@@ -360,8 +313,7 @@ class TestTTLExpiry:
 
         ns["y"] = "hello"
         obj = ns.get_object("y")
-        obj.cache_mode = "sliding"
-        obj.ttl = 1
+        obj.update_cache_mode_and_ttl("sliding", 1)
 
         assert "y" in ns
 
@@ -376,8 +328,7 @@ class TestTTLExpiry:
 
         ns["mylist"] = [1, 2, 3]
         obj = ns.get_object("mylist")
-        obj.cache_mode = "ttl"
-        obj.ttl = 1
+        obj.update_cache_mode_and_ttl("ttl", 1)
 
         assert "mylist" in ns
 
@@ -489,7 +440,7 @@ class TestInheritedOverride:
         from gpdatacached.exceptions import LifecyclePermissionError
 
         with pytest.raises(LifecyclePermissionError):
-            inner.cache_mode = "ttl"
+            inner.update_cache_mode_and_ttl("ttl", 600)
 
     def test_anon_ttl_requires_owner_permission(self, gc_disabled_domain):
         d = gc_disabled_domain
@@ -500,7 +451,7 @@ class TestInheritedOverride:
         from gpdatacached.exceptions import LifecyclePermissionError
 
         with pytest.raises(LifecyclePermissionError):
-            inner.ttl = 600
+            inner.update_cache_mode_and_ttl("ttl", 600)
 
 
 class TestPermanentContainerLifecycle:
