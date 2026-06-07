@@ -159,11 +159,5 @@ class BaseModelContainerObject(GPDCContainerObject, collections.abc.MutableMappi
         return len(self._field_names)
 
     def deepcopy(self):
-        result = {}
-        for field_name, encoded_val in self._redis().hgetall(self.raw_key).items():
-            decoded = decode_element(encoded_val, self._namespace)
-            if hasattr(decoded, "deepcopy"):
-                result[field_name] = decoded.deepcopy()
-            else:
-                result[field_name] = decoded
-        return self._model_class(**result)
+        raw = PydanticModelContainerCodec.read_raw(self._namespace, self.raw_key)
+        return self._model_class(**{k: v.deepcopy() if hasattr(v, "deepcopy") else v for k, v in raw.items()})
