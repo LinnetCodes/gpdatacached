@@ -53,7 +53,7 @@ class GPDCScalarObject(GPDCDataObject):
         meta.with_updates(value=encoded, updated_at=now).save(r, key)
         current = policy_from_meta(meta)
         new_policy = policy_for_sliding_touch(current)
-        if new_policy is not current:
+        if new_policy != current:
             self.set_lifecycle(new_policy)
 
 

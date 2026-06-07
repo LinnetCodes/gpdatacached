@@ -48,7 +48,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         if meta.owner == self.canonical_name:
             current = policy_from_meta(meta)
             new_policy = policy_for_sliding_touch(current)
-            if new_policy is not current:
+            if new_policy != current:
                 self.set_lifecycle(new_policy)
         else:
             owner_name = meta.owner
@@ -60,7 +60,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
                 if owner_meta.owner == owner_name:
                     current = policy_from_meta(owner_meta)
                     new_policy = policy_for_sliding_touch(current)
-                    if new_policy is not current:
+                    if new_policy != current:
                         owner_obj = self.namespace.get_object(owner_name)
                         owner_obj.set_lifecycle(new_policy)
                     break
