@@ -93,12 +93,11 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         if not self.raw_key:
             return False
         r = self._redis()
-        if self.type == "collection:list":
+        redis_type = r.type(self.raw_key)
+        if redis_type == "list":
             return encoded in r.lrange(self.raw_key, 0, -1)
-        if self.type == "collection:dict":
+        if redis_type == "hash":
             return encoded in r.hvals(self.raw_key)
-        # SetObject is intentionally not supported here: encode_key rejects container
-        # types, so a set can never contain ref-encoded strings. See design doc.
         return False
 
     def _cleanup_slot_overwrite(self, old_encoded: str | None) -> None:
