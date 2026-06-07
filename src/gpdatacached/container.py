@@ -101,10 +101,13 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         # types, so a set can never contain ref-encoded strings. See design doc.
         return False
 
-    def _handle_container_slot_overwrite(self, old_encoded: str) -> None:
-        if not self._is_container_ref(old_encoded):
+    def _cleanup_slot_overwrite(self, old_encoded: str | None) -> None:
+        if old_encoded is None:
             return
-        obj_key = old_encoded[len("ref:") :]
+        if not self._is_container_ref(old_encoded):
+            self._unbind_old_ref(old_encoded)
+            return
+        obj_key = old_encoded[len("ref:"):]
         parts = obj_key.split(":obj:")
         if len(parts) != 2:
             return
@@ -113,6 +116,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         r = self._redis()
         old_meta = ObjectMeta.load(r, target_obj_key)
         if old_meta is not None and old_meta.owner != self._binding_name():
+            self._unbind_old_ref(old_encoded)
             return
         self._unbind_old_ref(old_encoded)
 
@@ -225,8 +229,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         policy = policy_from_meta(meta) if meta else None
         encoded = encode_element(value, self._namespace, self._binding_name(), policy)
         r.lset(self.raw_key, index, encoded)
-        if self._is_container_ref(old_encoded):
-            self._handle_container_slot_overwrite(old_encoded)
+        self._cleanup_slot_overwrite(old_encoded)
         self._touch()
 
     def _delete_index(self, index: int) -> str:
@@ -429,10 +432,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         policy = policy_from_meta(meta) if meta else None
         encoded_val = encode_element(value, self._namespace, self._binding_name(), policy)
         r.hset(self.raw_key, encoded_key, encoded_val)
-        if self._is_container_ref(old_encoded):
-            self._handle_container_slot_overwrite(old_encoded)
-        if old_encoded is not None:
-            self._unbind_old_ref(old_encoded)
+        self._cleanup_slot_overwrite(old_encoded)
         self._touch()
 
     def __delitem__(self, key: object) -> None:
@@ -528,10 +528,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
                 old_encoded = r.hget(self.raw_key, encoded_key)
                 encoded_val = encode_element(v, self._namespace, binding_owner, policy)
                 r.hset(self.raw_key, encoded_key, encoded_val)
-                if self._is_container_ref(old_encoded):
-                    self._handle_container_slot_overwrite(old_encoded)
-                if old_encoded is not None:
-                    self._unbind_old_ref(old_encoded)
+                self._cleanup_slot_overwrite(old_encoded)
                 dirty = True
         finally:
             if dirty:
