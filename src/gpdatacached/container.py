@@ -356,14 +356,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         return items.index(value, start, stop)
 
     def deepcopy(self):
-        result = []
-        for item in self._redis().lrange(self.raw_key, 0, -1):
-            decoded = decode_element(item, self._namespace)
-            if hasattr(decoded, "deepcopy"):
-                result.append(decoded.deepcopy())
-            else:
-                result.append(decoded)
-        return result
+        return [v.deepcopy() if hasattr(v, "deepcopy") else v for v in self.value]
 
     def __add__(self, other):
         """Not supported. Use ``list(obj) + other`` to concatenate."""
@@ -533,15 +526,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         self._touch()
 
     def deepcopy(self):
-        result = {}
-        for encoded_key, encoded_val in self._redis().hgetall(self.raw_key).items():
-            key = decode_key(encoded_key)
-            decoded = decode_element(encoded_val, self._namespace)
-            if hasattr(decoded, "deepcopy"):
-                result[key] = decoded.deepcopy()
-            else:
-                result[key] = decoded
-        return result
+        return {k: v.deepcopy() if hasattr(v, "deepcopy") else v for k, v in self.value.items()}
 
 
 # ── SetObject ──────────────────────────────────────────────────────────────────
