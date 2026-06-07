@@ -568,9 +568,12 @@ class TestDomainMetaRedisSource:
 
     def test_second_connection_reads_redis_not_config(self, clean_redis, domain_config):
         cfg_ttl = GPDCDomainConfig(
-            redis_host=REDIS_HOST, redis_port=REDIS_PORT,
-            redis_db=REDIS_DB, redis_password=REDIS_PASSWORD,
-            default_cache_mode="ttl", default_ttl_seconds=300,
+            redis_host=REDIS_HOST,
+            redis_port=REDIS_PORT,
+            redis_db=REDIS_DB,
+            redis_password=REDIS_PASSWORD,
+            default_cache_mode="ttl",
+            default_ttl_seconds=300,
         )
         d1 = GPDCDomain("testdomain", cfg_ttl)
         assert d1.get_default_cache_mode() == "ttl"
@@ -578,9 +581,12 @@ class TestDomainMetaRedisSource:
         d1.close()
 
         cfg_permanent = GPDCDomainConfig(
-            redis_host=REDIS_HOST, redis_port=REDIS_PORT,
-            redis_db=REDIS_DB, redis_password=REDIS_PASSWORD,
-            default_cache_mode="permanent", default_ttl_seconds=0,
+            redis_host=REDIS_HOST,
+            redis_port=REDIS_PORT,
+            redis_db=REDIS_DB,
+            redis_password=REDIS_PASSWORD,
+            default_cache_mode="permanent",
+            default_ttl_seconds=0,
         )
         d2 = GPDCDomain("testdomain", cfg_permanent)
         assert d2.get_default_cache_mode() == "ttl"
@@ -589,9 +595,12 @@ class TestDomainMetaRedisSource:
 
     def test_namespace_defaults_come_from_redis_namespace_meta(self, clean_redis):
         cfg_ttl = GPDCDomainConfig(
-            redis_host=REDIS_HOST, redis_port=REDIS_PORT,
-            redis_db=REDIS_DB, redis_password=REDIS_PASSWORD,
-            default_cache_mode="ttl", default_ttl_seconds=300,
+            redis_host=REDIS_HOST,
+            redis_port=REDIS_PORT,
+            redis_db=REDIS_DB,
+            redis_password=REDIS_PASSWORD,
+            default_cache_mode="ttl",
+            default_ttl_seconds=300,
         )
         d1 = GPDCDomain("testdomain", cfg_ttl)
         ns1 = d1.ensure_namespace("myns")
@@ -600,9 +609,12 @@ class TestDomainMetaRedisSource:
         d1.close()
 
         cfg_permanent = GPDCDomainConfig(
-            redis_host=REDIS_HOST, redis_port=REDIS_PORT,
-            redis_db=REDIS_DB, redis_password=REDIS_PASSWORD,
-            default_cache_mode="permanent", default_ttl_seconds=0,
+            redis_host=REDIS_HOST,
+            redis_port=REDIS_PORT,
+            redis_db=REDIS_DB,
+            redis_password=REDIS_PASSWORD,
+            default_cache_mode="permanent",
+            default_ttl_seconds=0,
         )
         d2 = GPDCDomain("testdomain", cfg_permanent)
         ns2 = d2.ensure_namespace("myns")

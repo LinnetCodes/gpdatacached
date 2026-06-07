@@ -107,7 +107,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         if not self._is_container_ref(old_encoded):
             self._unbind_old_ref(old_encoded)
             return
-        obj_key = old_encoded[len("ref:"):]
+        obj_key = old_encoded[len("ref:") :]
         parts = obj_key.split(":obj:")
         if len(parts) != 2:
             return
