@@ -1,7 +1,7 @@
 import logging
 
 import pytest
-from gpdatacached.domain import GPDCDomain, GPDC_VERSION
+from gpdatacached.domain import GPDCDomain, GPDC_PROTOCOL_VERSION
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.keys import (
     GLOBAL_DOMAINS_KEY,
@@ -34,7 +34,7 @@ class TestGPDCDomainInit:
 
     def test_global_meta_version_set(self, domain, clean_redis):
         version = clean_redis.hget(GLOBAL_META_KEY, "version")
-        assert version == GPDC_VERSION
+        assert version == GPDC_PROTOCOL_VERSION
 
     def test_domain_meta_written(self, domain, clean_redis):
         meta = clean_redis.hgetall(make_domain_meta_key("testdomain"))

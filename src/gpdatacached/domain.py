@@ -23,7 +23,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-GPDC_VERSION = "0.1.0"
+# Wire protocol version (Major.Minor), changes only when Redis data layout
+# becomes incompatible.  Do not confuse with the library __version__.
+GPDC_PROTOCOL_VERSION = "1.0"
 
 
 class GPDCDomain(GPConfigurable):
@@ -59,9 +61,9 @@ class GPDCDomain(GPConfigurable):
         """Initialize or verify global GPDC metadata."""
         existing = self._redis.hget(GLOBAL_META_KEY, "version")
         if existing is None:
-            self._redis.hset(GLOBAL_META_KEY, "version", GPDC_VERSION)
-        elif existing != GPDC_VERSION:
-            raise RuntimeError(f"Incompatible GPDC version in Redis: {existing!r} (expected {GPDC_VERSION!r})")
+            self._redis.hset(GLOBAL_META_KEY, "version", GPDC_PROTOCOL_VERSION)
+        elif existing != GPDC_PROTOCOL_VERSION:
+            raise RuntimeError(f"Incompatible GPDC version in Redis: {existing!r} (expected {GPDC_PROTOCOL_VERSION!r})")
 
     def _init_domain_meta(self) -> None:
         """Initialize domain metadata in Redis."""
