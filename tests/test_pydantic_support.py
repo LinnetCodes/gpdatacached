@@ -506,3 +506,59 @@ class TestPydanticContainerNamespaceIntegration:
         assert "order1" in ns
         del ns["order1"]
         assert "order1" not in ns
+
+
+class TestPydanticContainerGC:
+    def test_gc_preserves_pydantic_container(self, ns, clean_redis, register_container_types):
+        from gpdatacached.gc import run_gc_for_namespace
+        from gpdatacached.keys import make_object_key, make_raw_key
+
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        run_gc_for_namespace(clean_redis, "testdomain", "testns")
+        assert clean_redis.exists(make_object_key("testdomain", "testns", "order1"))
+        assert clean_redis.exists(make_raw_key("testdomain", "testns", "order1"))
+
+    def test_gc_cleans_orphan_pydantic_container_raw(self, ns, clean_redis, register_container_types):
+        from gpdatacached.gc import run_gc_for_namespace
+        from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
+
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        raw_key = make_raw_key("testdomain", "testns", "order1")
+        clean_redis.delete(make_object_key("testdomain", "testns", "order1"))
+        clean_redis.delete(make_ref_key("testdomain", "testns", "order1"))
+        assert clean_redis.exists(raw_key)
+        run_gc_for_namespace(clean_redis, "testdomain", "testns")
+        assert not clean_redis.exists(raw_key)
+
+    def test_gc_scans_nested_refs_in_pydantic_container(self, ns, clean_redis, register_container_types):
+        from gpdatacached.gc import run_gc_for_namespace
+        from gpdatacached.keys import make_ref_key
+
+        ns["target"] = [100, 200]
+        ns["order1"] = OrderWithList(order_id="ORD-001", items=["a", "b"])
+        target_ref_key = make_ref_key("testdomain", "testns", "target")
+
+        order_obj = ns["order1"]
+        items_obj = order_obj["items"]
+        items_obj.append(ns["target"])
+
+        referrers = clean_redis.smembers(target_ref_key)
+        assert len(referrers) >= 1
+        items_referrer = next(iter(referrers))
+
+        items_raw_key = items_obj.raw_key
+        clean_redis.delete(items_raw_key)
+        clean_redis.rpush(items_raw_key, "str:fallback")
+
+        run_gc_for_namespace(clean_redis, "testdomain", "testns")
+        assert items_referrer not in clean_redis.smembers(target_ref_key)
+
+
+class TestPydanticContainerTTL:
+    def test_sliding_ttl_touch(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns.get_object("order1")
+        obj.update_cache_mode_and_ttl("sliding", 3600)
+        obj["total"] = 199.5
+        remaining = obj.remaining_ttl()
+        assert remaining > 0
