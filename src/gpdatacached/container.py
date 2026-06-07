@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
-from .codec import SetCodec
+from .codec import DictCodec, ListCodec, SetCodec
 from .keys import make_object_key, make_raw_key, make_ref_key
 from .objects import GPDCDataObject
 from .meta import ObjectMeta
@@ -190,9 +190,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
 
     @property
     def value(self) -> list:
-        r = self._redis()
-        items = r.lrange(self.raw_key, 0, -1)
-        return [decode_element(item, self._namespace) for item in items]
+        return ListCodec.read_raw(self._namespace, self.raw_key)
 
     @value.setter
     def value(self, new_value: list) -> None:
@@ -398,15 +396,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
 
     @property
     def value(self) -> dict:
-        r = self._redis()
-        data = r.hgetall(self.raw_key)
-        if not data:
-            return {}
-        result = {}
-        for encoded_key, encoded_val in data.items():
-            key = decode_key(encoded_key)
-            result[key] = decode_element(encoded_val, self._namespace)
-        return result
+        return DictCodec.read_raw(self._namespace, self.raw_key)
 
     @value.setter
     def value(self, new_value: dict) -> None:
