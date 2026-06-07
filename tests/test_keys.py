@@ -145,3 +145,47 @@ class TestKeysErrorPaths:
     def test_validate_invalid_chars(self):
         with pytest.raises(ValueError, match="only letters"):
             validate_object_name("has spaces")
+
+
+class TestCollectRefNamesFromRaw:
+    def test_scans_hash_raw_key(self, raw_redis):
+        from gpdatacached.keys import collect_ref_names_from_raw
+
+        raw_key = "gpdc:test:d:ns:raw:testobj"
+        ref_obj_key = "gpdc:test:d:ns:obj:~anon:abc"
+        raw_redis.hset(raw_key, mapping={"str:k1": f"ref:{ref_obj_key}", "str:k2": "str:hello"})
+        try:
+            names = collect_ref_names_from_raw(raw_redis, raw_key, "collection:unknown")
+            assert "~anon:abc" in names
+        finally:
+            raw_redis.delete(raw_key)
+
+    def test_scans_list_raw_key(self, raw_redis):
+        from gpdatacached.keys import collect_ref_names_from_raw
+
+        raw_key = "gpdc:test:d:ns:raw:testlist"
+        ref_obj_key = "gpdc:test:d:ns:obj:~anon:xyz"
+        raw_redis.rpush(raw_key, f"ref:{ref_obj_key}", "int:42")
+        try:
+            names = collect_ref_names_from_raw(raw_redis, raw_key, "collection:unknown")
+            assert "~anon:xyz" in names
+        finally:
+            raw_redis.delete(raw_key)
+
+    def test_empty_raw_key(self, raw_redis):
+        from gpdatacached.keys import collect_ref_names_from_raw
+
+        names = collect_ref_names_from_raw(raw_redis, "", "collection:dict")
+        assert names == []
+
+    def test_set_raw_key_not_scanned(self, raw_redis):
+        from gpdatacached.keys import collect_ref_names_from_raw
+
+        raw_key = "gpdc:test:d:ns:raw:testset"
+        ref_obj_key = "gpdc:test:d:ns:obj:~anon:setref"
+        raw_redis.sadd(raw_key, f"ref:{ref_obj_key}")
+        try:
+            names = collect_ref_names_from_raw(raw_redis, raw_key, "collection:set")
+            assert names == []
+        finally:
+            raw_redis.delete(raw_key)

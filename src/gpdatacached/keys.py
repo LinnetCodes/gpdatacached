@@ -107,10 +107,11 @@ def collect_ref_names_from_raw(r, raw_key: str, raw_type: str) -> list[str]:
     if not raw_key:
         return []
     names: list[str] = []
-    if raw_type == "collection:dict":
+    redis_type = r.type(raw_key)
+    if redis_type == "hash":
         for val in r.hvals(raw_key):
             _extract_ref_name(val, names)
-    elif raw_type == "collection:list":
+    elif redis_type == "list":
         for val in r.lrange(raw_key, 0, -1):
             _extract_ref_name(val, names)
     return names
