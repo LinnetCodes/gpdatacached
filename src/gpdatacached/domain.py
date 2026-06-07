@@ -142,10 +142,18 @@ class GPDCDomain(GPConfigurable):
 
     def get_default_cache_mode(self) -> str:
         """Effective default_cache_mode for this domain."""
+        meta_key = make_domain_meta_key(self._name)
+        val = self._redis.hget(meta_key, "default_cache_mode")
+        if val:
+            return val
         return self._config.default_cache_mode
 
     def get_default_ttl_seconds(self) -> int:
         """Effective default_ttl_seconds for this domain."""
+        meta_key = make_domain_meta_key(self._name)
+        raw = self._redis.hget(meta_key, "default_ttl_seconds")
+        if raw:
+            return int(raw)
         return self._config.default_ttl_seconds
 
     def _start_gc(self) -> None:
