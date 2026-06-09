@@ -7,7 +7,7 @@ import time
 import pytest
 
 from gpdatacached import DictObject, ListObject, SetObject, TupleObject
-from gpdatacached.codec import DictCodec, ListCodec, SetCodec
+from gpdatacached import DictCodec, ListCodec, SetCodec
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 
 DOMAIN = "testdomain"

@@ -71,13 +71,13 @@ class TestTypeRegistryResolve:
 
 class TestTypeRegistryLookup:
     def test_lookup_scalar_int(self):
-        from gpdatacached.scalar import IntObject
+        from gpdatacached import IntObject
 
         entry = GPDCTypeRegistry.lookup_by_gpdc_type("scalar:int")
         assert entry.object_class is IntObject
 
     def test_lookup_collection_list(self):
-        from gpdatacached.container import ListObject
+        from gpdatacached import ListObject
 
         entry = GPDCTypeRegistry.lookup_by_gpdc_type("collection:list")
         assert entry.object_class is ListObject
@@ -266,7 +266,7 @@ class TestRegistryExtensibility:
         assert len(s) == 3
 
     def test_tuple_with_custom_scalar(self):
-        from gpdatacached.codec import TupleCodec
+        from gpdatacached import TupleCodec
 
         original = (Decimal("1.5"), "hello", 42)
         encoded = TupleCodec.encode_value(original)

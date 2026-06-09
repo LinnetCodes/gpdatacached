@@ -5,7 +5,7 @@ import datetime
 import pytest
 import redis as redis_lib
 
-from gpdatacached.codec import (
+from gpdatacached import (
     NoneCodec,
     BoolCodec,
     IntCodec,
