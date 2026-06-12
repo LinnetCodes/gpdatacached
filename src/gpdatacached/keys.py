@@ -117,10 +117,17 @@ def collect_ref_names_from_raw(r, raw_key: str, raw_type: str) -> list[str]:
     return names
 
 
+def parse_ref_encoded(encoded: str) -> str | None:
+    if not isinstance(encoded, str) or not encoded.startswith("ref:"):
+        return None
+    obj_key = encoded[len("ref:"):]
+    parts = obj_key.split(":obj:")
+    if len(parts) != 2:
+        return None
+    return parts[1]
+
+
 def _extract_ref_name(encoded: str, names: list[str]) -> None:
-    """If *encoded* is a ref-encoded value, extract the object name and append to *names*."""
-    if isinstance(encoded, str) and encoded.startswith("ref:"):
-        obj_key = encoded[len("ref:") :]
-        parts = obj_key.split(":obj:")
-        if len(parts) == 2:
-            names.append(parts[1])
+    name = parse_ref_encoded(encoded)
+    if name is not None:
+        names.append(name)
