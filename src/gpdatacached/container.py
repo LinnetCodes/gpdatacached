@@ -26,10 +26,27 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         self.raw_key: str = make_raw_key(domain_name, ns_name, name)
         self.ref_key: str = make_ref_key(domain_name, ns_name, name)
 
+    def _propagate_sliding_touch_to_owners(self, owner_name: str, r) -> None:
+        from .ttl import policy_from_meta, policy_for_sliding_touch
+        from .keys import make_object_key
+
+        while owner_name:
+            owner_obj_key = make_object_key(self.domain.name, self.namespace.name, owner_name)
+            owner_meta = ObjectMeta.load(r, owner_obj_key)
+            if owner_meta is None:
+                break
+            if owner_meta.owner == owner_name:
+                current = policy_from_meta(owner_meta)
+                new_policy = policy_for_sliding_touch(current)
+                if new_policy != current:
+                    owner_obj = self.namespace.get_object(owner_name)
+                    owner_obj.set_lifecycle(new_policy)
+                break
+            owner_name = owner_meta.owner
+
     def _touch(self) -> None:
         from .ttl import policy_from_meta, policy_for_sliding_touch
         from .meta import ObjectMeta
-        from .keys import make_object_key
         from .exceptions import ObjectGoneError
 
         key = self._canonical_redis_key()
@@ -47,20 +64,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             if new_policy != current:
                 self.set_lifecycle(new_policy)
         else:
-            owner_name = meta.owner
-            while owner_name:
-                owner_obj_key = make_object_key(self.domain.name, self.namespace.name, owner_name)
-                owner_meta = ObjectMeta.load(r, owner_obj_key)
-                if owner_meta is None:
-                    break
-                if owner_meta.owner == owner_name:
-                    current = policy_from_meta(owner_meta)
-                    new_policy = policy_for_sliding_touch(current)
-                    if new_policy != current:
-                        owner_obj = self.namespace.get_object(owner_name)
-                        owner_obj.set_lifecycle(new_policy)
-                    break
-                owner_name = owner_meta.owner
+            self._propagate_sliding_touch_to_owners(meta.owner, r)
 
     def _current_item_count(self) -> int:
         return len(self)
