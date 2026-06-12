@@ -64,9 +64,6 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
     def __len__(self) -> int:
         return self._redis().hlen(self.raw_key)
 
-    def _current_item_count(self) -> int:
-        return self._redis().hlen(self.raw_key)
-
     def __getitem__(self, key: object) -> object:
         encoded_key = encode_key(key)
         encoded_val = self._redis().hget(self.raw_key, encoded_key)

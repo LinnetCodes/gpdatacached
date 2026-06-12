@@ -56,9 +56,6 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def __len__(self) -> int:
         return self._redis().llen(self.raw_key)
 
-    def _current_item_count(self) -> int:
-        return self._redis().llen(self.raw_key)
-
     def _normalize_index(self, index: int, message: str = "list index out of range") -> int:
         if isinstance(index, slice):
             raise TypeError("ListObject does not support slice indexing; use list(obj)[start:stop] instead")

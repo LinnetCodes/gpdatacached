@@ -53,9 +53,6 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
     def __len__(self) -> int:
         return self._redis().scard(self.raw_key)
 
-    def _current_item_count(self) -> int:
-        return self._redis().scard(self.raw_key)
-
     def __contains__(self, item: object) -> bool:
         encoded = encode_key(item)
         return self._redis().sismember(self.raw_key, encoded)
