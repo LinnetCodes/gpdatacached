@@ -120,7 +120,7 @@ def collect_ref_names_from_raw(r, raw_key: str, raw_type: str) -> list[str]:
 def parse_ref_encoded(encoded: str) -> str | None:
     if not isinstance(encoded, str) or not encoded.startswith("ref:"):
         return None
-    obj_key = encoded[len("ref:"):]
+    obj_key = encoded[len("ref:") :]
     parts = obj_key.split(":obj:")
     if len(parts) != 2:
         return None

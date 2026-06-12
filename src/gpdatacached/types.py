@@ -143,7 +143,7 @@ def _load_ref_object(namespace: GPDCNamespace, ref_str: str):
     anon_name = parse_ref_encoded(ref_str)
     if anon_name is None:
         raise ValueError(f"Invalid ref string: {ref_str!r}")
-    obj_key = ref_str[len("ref:"):]
+    obj_key = ref_str[len("ref:") :]
     r = namespace._redis()
     meta = ObjectMeta.load(r, obj_key)
     if meta is None:
