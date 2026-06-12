@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
-from .keys import make_object_key, make_raw_key, make_ref_key
+from .keys import make_object_key, make_raw_key, make_ref_key, parse_ref_encoded
 from .objects import GPDCDataObject
 from .meta import ObjectMeta
 from .types import decode_element
@@ -62,30 +62,37 @@ class GPDCContainerObject(GPDCDataObject, ABC):
                     break
                 owner_name = owner_meta.owner
 
-    @abstractmethod
     def _current_item_count(self) -> int:
-        """Return the current element count from Redis."""
+        return len(self)
+
+    def _remove_ref(self, target_name: str) -> None:
+        target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
+        self._redis().srem(target_ref_key, self._binding_name())
+
+    def _try_gc_anonymous(self, target_name: str) -> None:
+        if not target_name.startswith("~"):
+            return
+        target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
+        r = self._redis()
+        if r.smembers(target_ref_key):
+            return
+        target_obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, target_name)
+        target_meta = ObjectMeta.load(r, target_obj_key)
+        if target_meta is None or target_meta.owner == self._binding_name():
+            self._namespace._cascade_delete_anonymous(target_name)
 
     def _unbind_old_ref(self, old_encoded: str) -> None:
         if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
             return
-        if self._owner_still_refs_encoded(old_encoded):
+        if self._raw_contains_encoded(old_encoded):
             return
-        obj_key = old_encoded[len("ref:") :]
-        parts = obj_key.split(":obj:")
-        if len(parts) != 2:
+        target_name = parse_ref_encoded(old_encoded)
+        if target_name is None:
             return
-        target_name = parts[1]
-        target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
-        r = self._redis()
-        r.srem(target_ref_key, self._binding_name())
-        if target_name.startswith("~") and not r.smembers(target_ref_key):
-            target_obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, target_name)
-            target_meta = ObjectMeta.load(r, target_obj_key)
-            if target_meta is None or target_meta.owner == self._binding_name():
-                self._namespace._cascade_delete_anonymous(target_name)
+        self._remove_ref(target_name)
+        self._try_gc_anonymous(target_name)
 
-    def _owner_still_refs_encoded(self, encoded: str) -> bool:
+    def _raw_contains_encoded(self, encoded: str) -> bool:
         if not self.raw_key:
             return False
         r = self._redis()
@@ -97,23 +104,8 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         return False
 
     def _cleanup_slot_overwrite(self, old_encoded: str | None) -> None:
-        if old_encoded is None:
-            return
-        if not self._is_container_ref(old_encoded):
+        if old_encoded is not None:
             self._unbind_old_ref(old_encoded)
-            return
-        obj_key = old_encoded[len("ref:") :]
-        parts = obj_key.split(":obj:")
-        if len(parts) != 2:
-            return
-        target_name = parts[1]
-        target_obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, target_name)
-        r = self._redis()
-        old_meta = ObjectMeta.load(r, target_obj_key)
-        if old_meta is not None and old_meta.owner != self._binding_name():
-            self._unbind_old_ref(old_encoded)
-            return
-        self._unbind_old_ref(old_encoded)
 
     def _reject_value_replacement(self) -> None:
         raise TypeError("Container value replacement is not supported; use explicit mutating methods instead")
