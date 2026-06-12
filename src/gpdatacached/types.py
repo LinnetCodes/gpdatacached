@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
-from .keys import make_object_key, make_raw_key, make_ref_key
+from .keys import make_object_key, make_raw_key, make_ref_key, parse_ref_encoded
 from .objects import GPDCDataObject
 
 
@@ -140,11 +140,10 @@ def _load_ref_object(namespace: GPDCNamespace, ref_str: str):
     from .container import GPDCContainerObject
     from .meta import ObjectMeta
 
-    obj_key = ref_str[len("ref:") :]
-    parts = obj_key.split(":obj:")
-    if len(parts) != 2:
+    anon_name = parse_ref_encoded(ref_str)
+    if anon_name is None:
         raise ValueError(f"Invalid ref string: {ref_str!r}")
-    anon_name = parts[1]
+    obj_key = ref_str[len("ref:"):]
     r = namespace._redis()
     meta = ObjectMeta.load(r, obj_key)
     if meta is None:
