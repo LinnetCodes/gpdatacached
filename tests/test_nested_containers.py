@@ -588,3 +588,98 @@ class TestListNestedSet:
         inner = lst[1]
         assert isinstance(inner, SetObject)
         assert set(inner) == {2, 3}
+
+
+class TestMultiReferenceRefCounting:
+    """Verify Hash-based ref counts when the same child is referenced
+    multiple times within the same parent container."""
+
+    def test_dict_same_child_in_two_keys_count_is_two(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = {"a": ns["child"], "b": ns["child"]}
+
+        ref_key = make_ref_key(DOMAIN, NS, "child")
+        assert r.hget(ref_key, "parent") == "2"
+
+    def test_dict_delete_one_slot_decrements_count_child_survives(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = {"a": ns["child"], "b": ns["child"]}
+
+        del ns["parent"]["a"]
+
+        ref_key = make_ref_key(DOMAIN, NS, "child")
+        assert r.hget(ref_key, "parent") == "1"
+        assert r.exists(make_object_key(DOMAIN, NS, "child"))
+
+    def test_dict_delete_both_slots_child_gone_from_refset(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = {"a": ns["child"], "b": ns["child"]}
+
+        del ns["parent"]["a"]
+        del ns["parent"]["b"]
+
+        ref_key = make_ref_key(DOMAIN, NS, "child")
+        assert not r.hexists(ref_key, "parent")
+
+    def test_list_same_child_twice_count_is_two(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = [ns["child"], ns["child"]]
+
+        ref_key = make_ref_key(DOMAIN, NS, "child")
+        assert r.hget(ref_key, "parent") == "2"
+
+    def test_list_pop_one_decrements_count_child_survives(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = [ns["child"], ns["child"]]
+
+        ns["parent"].pop(0)
+
+        ref_key = make_ref_key(DOMAIN, NS, "child")
+        assert r.hget(ref_key, "parent") == "1"
+        assert r.exists(make_object_key(DOMAIN, NS, "child"))
+
+    def test_list_pop_both_child_gone_from_refset(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = [ns["child"], ns["child"]]
+
+        ns["parent"].pop(0)
+        ns["parent"].pop(0)
+
+        ref_key = make_ref_key(DOMAIN, NS, "child")
+        assert not r.hexists(ref_key, "parent")
+
+    def test_overwrite_one_slot_decrements_count(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = {"a": ns["child"], "b": ns["child"]}
+
+        ns["parent"]["a"] = 42
+
+        ref_key = make_ref_key(DOMAIN, NS, "child")
+        assert r.hget(ref_key, "parent") == "1"
+        assert r.exists(make_object_key(DOMAIN, NS, "child"))
+
+    def test_anon_child_referenced_twice_survives_one_delete(self, ns, r):
+        ns["parent"] = [{"x": 1}, {"x": 1}]
+        lst = ns["parent"]
+        anon1 = lst[0].name
+
+        lst.append(lst[0])
+        ref_key = make_ref_key(DOMAIN, NS, anon1)
+        assert r.hget(ref_key, "parent") == "2"
+
+        del lst[0]
+
+        assert r.hget(ref_key, "parent") == "1"
+        assert r.exists(make_object_key(DOMAIN, NS, anon1))
+
+    def test_sort_preserves_ref_counts(self, ns, r):
+        ns["child"] = {"x": 1}
+        ns["parent"] = [3, ns["child"], ns["child"], 1]
+
+        ref_key = make_ref_key(DOMAIN, NS, "child")
+        assert r.hget(ref_key, "parent") == "2"
+
+        ns["parent"].sort(key=lambda v: (1, 0) if hasattr(v, "name") else (0, v))
+
+        assert r.hget(ref_key, "parent") == "2"
+        assert len(ns["parent"]) == 4
