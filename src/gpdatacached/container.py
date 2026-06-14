@@ -71,7 +71,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
 
     def _remove_self_from_refset(self, target_name: str) -> None:
         target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
-        self._redis().srem(target_ref_key, self._binding_name())
+        self._redis().srem(target_ref_key, self._data_owner_name())
 
     def _gc_anonymous_if_orphaned(self, target_name: str) -> None:
         if not target_name.startswith("~"):
@@ -82,7 +82,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             return
         target_obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, target_name)
         target_meta = ObjectMeta.load(r, target_obj_key)
-        if target_meta is None or target_meta.owner == self._binding_name():
+        if target_meta is None or target_meta.owner == self._data_owner_name():
             self._namespace._cascade_delete_anonymous(target_name)
 
     def _unbind_old_ref(self, old_encoded: str) -> None:
@@ -123,7 +123,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             return value.deepcopy()
         return value
 
-    def _binding_name(self) -> str:
+    def _data_owner_name(self) -> str:
         if self._is_reference:
             return self._canonical_name
         meta = ObjectMeta.load(self._redis(), self._redis_key())
@@ -137,14 +137,14 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         return self._name
 
     def _reference_obj_key(self) -> str:
-        return make_object_key(self._namespace.domain.name, self._namespace.name, self._binding_name())
+        return make_object_key(self._namespace.domain.name, self._namespace.name, self._data_owner_name())
 
     def _reference_ref_value(self) -> str:
         return f"ref:{self._reference_obj_key()}"
 
     def referrers(self) -> set[str]:
         """Return set of object names referencing this object's raw data."""
-        owner_name = self._binding_name()
+        owner_name = self._data_owner_name()
         ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, owner_name)
         return self._redis().smembers(ref_key)
 

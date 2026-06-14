@@ -77,7 +77,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         old_encoded = r.hget(self.raw_key, encoded_key)
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else None
-        encoded_val = encode_element(value, self._namespace, self._binding_name(), policy)
+        encoded_val = encode_element(value, self._namespace, self._data_owner_name(), policy)
         r.hset(self.raw_key, encoded_key, encoded_val)
         self._cleanup_slot_overwrite(old_encoded)
         self._touch()
@@ -165,7 +165,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         if not pairs:
             return
         r = self._redis()
-        binding_owner = self._binding_name()
+        binding_owner = self._data_owner_name()
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else None
         dirty = False

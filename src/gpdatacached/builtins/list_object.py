@@ -80,7 +80,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         old_encoded = r.lindex(self.raw_key, index)
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else None
-        encoded = encode_element(value, self._namespace, self._binding_name(), policy)
+        encoded = encode_element(value, self._namespace, self._data_owner_name(), policy)
         r.lset(self.raw_key, index, encoded)
         self._cleanup_slot_overwrite(old_encoded)
         self._touch()
@@ -106,7 +106,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         items = r.lrange(self.raw_key, 0, -1)
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else None
-        encoded = encode_element(value, self._namespace, self._binding_name(), policy)
+        encoded = encode_element(value, self._namespace, self._data_owner_name(), policy)
         items.insert(index, encoded)
         pipe = r.pipeline()
         pipe.delete(self.raw_key)
@@ -118,12 +118,12 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def append(self, value: object) -> None:
         meta = self.meta
         policy = policy_from_meta(meta) if meta else None
-        encoded = encode_element(value, self._namespace, self._binding_name(), policy)
+        encoded = encode_element(value, self._namespace, self._data_owner_name(), policy)
         self._redis().rpush(self.raw_key, encoded)
         self._touch()
 
     def extend(self, values) -> None:
-        binding_owner = self._binding_name()
+        binding_owner = self._data_owner_name()
         meta = self.meta
         policy = policy_from_meta(meta) if meta else None
         encoded = [encode_element(v, self._namespace, binding_owner, policy) for v in values]
@@ -188,7 +188,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         raw_items = r.lrange(self.raw_key, 0, -1)
         decoded = [decode_element(enc, self._namespace) for enc in raw_items]
         decoded.sort(key=key, reverse=reverse)
-        binding_owner = self._binding_name()
+        binding_owner = self._data_owner_name()
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else None
         encoded = [encode_element(v, self._namespace, binding_owner, policy) for v in decoded]
