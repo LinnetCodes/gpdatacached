@@ -144,14 +144,14 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
             encoded = r.lindex(self.raw_key, -1)
             if encoded is None:
                 raise IndexError("pop from empty list")
-            value = self._materialize_decoded_value(encoded)
+            value = self._decode_and_copy_value(encoded)
             self._delete_index(-1)
             return value
         index = self._normalize_index(index, "pop index out of range")
         encoded = self._redis().lindex(self.raw_key, index)
         if encoded is None:
             raise IndexError("pop index out of range")
-        value = self._materialize_decoded_value(encoded)
+        value = self._decode_and_copy_value(encoded)
         self._delete_index(index)
         return value
 
@@ -160,7 +160,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         if isinstance(value, GPDCContainerObject):
             if value._namespace is not self._namespace:
                 raise ValueError("Cross-namespace container reference sharing is not supported")
-            target_ref = value._reference_ref_value()
+            target_ref = value._encode_as_ref_value()
 
         for index, encoded in enumerate(self._redis().lrange(self.raw_key, 0, -1)):
             if target_ref is not None and encoded == target_ref:

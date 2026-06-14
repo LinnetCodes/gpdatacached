@@ -144,7 +144,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
             if default is DictObject._SENTINEL:
                 raise KeyError(key)
             return default
-        value = self._materialize_decoded_value(encoded_val)
+        value = self._decode_and_copy_value(encoded_val)
         del self[key]
         return value
 

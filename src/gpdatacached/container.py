@@ -113,7 +113,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
     def _is_ref_encoded(self, encoded: str | None) -> bool:
         return isinstance(encoded, str) and encoded.startswith("ref:")
 
-    def _materialize_decoded_value(self, encoded: str) -> object:
+    def _decode_and_copy_value(self, encoded: str) -> object:
         value = decode_element(encoded, self._namespace)
         if self._is_ref_encoded(encoded) and hasattr(value, "deepcopy"):
             return value.deepcopy()
@@ -132,11 +132,10 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             return raw_key[len(prefix) :]
         return self._name
 
-    def _reference_obj_key(self) -> str:
-        return make_object_key(self._namespace.domain.name, self._namespace.name, self._data_owner_name())
-
-    def _reference_ref_value(self) -> str:
-        return f"ref:{self._reference_obj_key()}"
+    def _encode_as_ref_value(self) -> str:
+        owner_name = self._data_owner_name()
+        obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, owner_name)
+        return f"ref:{obj_key}"
 
     def referrers(self) -> set[str]:
         """Return set of object names referencing this object's raw data."""
