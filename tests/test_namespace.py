@@ -1260,7 +1260,7 @@ class TestBindingResolution:
         result = ns._resolve_binding("x")
         assert result is not None
         assert result.binding_kind == "owner"
-        assert result.type == "scalar:int"
+        assert result.meta.type == "scalar:int"
 
     def test_resolve_malformed_ref_returns_none(self, ns):
         r = ns._redis()

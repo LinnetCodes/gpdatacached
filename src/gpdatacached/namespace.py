@@ -33,7 +33,6 @@ class BindingResolution(NamedTuple):
     binding_obj_key: str
     canonical_obj_key: str
     canonical_raw_key: str
-    type: str
     meta: ObjectMeta
 
 
@@ -145,7 +144,6 @@ class GPDCNamespace(MutableMapping):
                 binding_obj_key=obj_key,
                 canonical_obj_key=obj_key,
                 canonical_raw_key=raw_key,
-                type=meta.type,
                 meta=meta,
             )
         elif key_type == "string":
@@ -171,7 +169,6 @@ class GPDCNamespace(MutableMapping):
                 binding_obj_key=obj_key,
                 canonical_obj_key=canonical_obj_key,
                 canonical_raw_key=raw_key,
-                type=canonical_meta.type,
                 meta=canonical_meta,
             )
         return None
@@ -193,7 +190,7 @@ class GPDCNamespace(MutableMapping):
         r = self._redis()
         if existing.binding_kind == "reference":
             self._cleanup_alias_binding(key, existing)
-        elif existing.binding_kind == "owner" and existing.type.startswith("collection:"):
+        elif existing.binding_kind == "owner" and existing.meta.type.startswith("collection:"):
             ref_key = make_ref_key(self._domain.name, self._name, key)
             referrers = r.smembers(ref_key)
             if referrers:
@@ -326,7 +323,7 @@ class GPDCNamespace(MutableMapping):
         policy = None
 
         if existing:
-            if existing.binding_kind == "owner" and existing.type.startswith("collection:"):
+            if existing.binding_kind == "owner" and existing.meta.type.startswith("collection:"):
                 ref_key = make_ref_key(self._domain.name, self._name, key)
                 referrers = r.smembers(ref_key)
                 if referrers:
@@ -384,7 +381,7 @@ class GPDCNamespace(MutableMapping):
         if not resolution:
             raise KeyError(f"{key!r} not found in namespace {self._name!r}")
 
-        type_str = resolution.type
+        type_str = resolution.meta.type
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(type_str)
 
         canonical_name = resolution.canonical_name
@@ -442,7 +439,7 @@ class GPDCNamespace(MutableMapping):
                 self._cascade_delete_anonymous(canonical_name)
             return
 
-        obj_type = resolution.type
+        obj_type = resolution.meta.type
 
         if not obj_type.startswith("collection:"):
             r.delete(obj_key)
