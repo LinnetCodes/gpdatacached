@@ -123,10 +123,10 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         self._touch()
 
     def extend(self, values) -> None:
-        binding_owner = self._data_owner_name()
+        owner_name = self._data_owner_name()
         meta = self.meta
         policy = policy_from_meta(meta) if meta else None
-        encoded = [encode_element(v, self._namespace, binding_owner, policy) for v in values]
+        encoded = [encode_element(v, self._namespace, owner_name, policy) for v in values]
         if encoded:
             self._redis().rpush(self.raw_key, *encoded)
         self._touch()
@@ -188,10 +188,10 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         raw_items = r.lrange(self.raw_key, 0, -1)
         decoded = [decode_element(enc, self._namespace) for enc in raw_items]
         decoded.sort(key=key, reverse=reverse)
-        binding_owner = self._data_owner_name()
+        owner_name = self._data_owner_name()
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else None
-        encoded = [encode_element(v, self._namespace, binding_owner, policy) for v in decoded]
+        encoded = [encode_element(v, self._namespace, owner_name, policy) for v in decoded]
         pipe = r.pipeline()
         pipe.delete(self.raw_key)
         if encoded:

@@ -17,7 +17,21 @@ from .types import decode_element
 
 
 class GPDCContainerObject(GPDCDataObject, ABC):
-    """Abstract base class for all container GPDC objects."""
+    """Abstract base for container GPDC objects (lists, dicts, sets).
+
+    A container object stores its elements in a dedicated Redis key
+    (``raw_key``) and tracks which other objects reference its raw data via
+    a Redis set (``ref_key``). Subclasses implement ``MutableSequence``,
+    ``MutableMapping``, or ``MutableSet`` semantics on top of this shared
+    infrastructure.
+
+    Key attributes:
+        raw_key: Redis key holding the container's element data (e.g. a list
+            or hash).
+        ref_key: Redis set key recording the names of objects that own or
+            alias this container's raw data; used for ref-counting and
+            cascade-deletion of anonymous objects.
+    """
 
     def __init__(self, name: str, namespace: "GPDCNamespace", *, canonical_name: str | None = None) -> None:
         super().__init__(name, namespace, canonical_name=canonical_name)
@@ -26,25 +40,14 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         self.raw_key: str = make_raw_key(domain_name, ns_name, name)
         self.ref_key: str = make_ref_key(domain_name, ns_name, name)
 
-    def _propagate_sliding_ttl_upward(self, owner_name: str, r) -> None:
-        from .ttl import policy_from_meta, policy_for_sliding_touch
-        from .keys import make_object_key
-
-        while owner_name:
-            owner_obj_key = make_object_key(self.domain.name, self.namespace.name, owner_name)
-            owner_meta = ObjectMeta.load(r, owner_obj_key)
-            if owner_meta is None:
-                break
-            if owner_meta.owner == owner_name:
-                current = policy_from_meta(owner_meta)
-                new_policy = policy_for_sliding_touch(current)
-                if new_policy != current:
-                    owner_obj = self.namespace.get_object(owner_name)
-                    owner_obj.set_lifecycle(new_policy)
-                break
-            owner_name = owner_meta.owner
+    # ── Lifecycle: timestamps & sliding TTL ──────────────────────────
 
     def _touch(self) -> None:
+        """Update metadata timestamps and apply sliding TTL if configured.
+
+        When owned by a parent, the sliding refresh propagates upward
+        through the owner chain.
+        """
         from .ttl import policy_from_meta, policy_for_sliding_touch
         from .meta import ObjectMeta
         from .exceptions import ObjectGoneError
@@ -67,59 +70,36 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             self._propagate_sliding_ttl_upward(meta.owner, r)
 
     def _current_item_count(self) -> int:
+        """Return the current number of elements in this container."""
         return len(self)
 
-    def _remove_self_from_refset(self, target_name: str) -> None:
-        target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
-        self._redis().srem(target_ref_key, self._data_owner_name())
+    def _propagate_sliding_ttl_upward(self, owner_name: str, r) -> None:
+        """Propagate a sliding-window TTL refresh up the owner chain to the first self-owned ancestor."""
+        from .ttl import policy_from_meta, policy_for_sliding_touch
+        from .keys import make_object_key
 
-    def _gc_anonymous_if_orphaned(self, target_name: str) -> None:
-        if not target_name.startswith("~"):
-            return
-        target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
-        r = self._redis()
-        if r.smembers(target_ref_key):
-            return
-        target_obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, target_name)
-        target_meta = ObjectMeta.load(r, target_obj_key)
-        if target_meta is None or target_meta.owner == self._data_owner_name():
-            self._namespace._cascade_delete_anonymous(target_name)
+        while owner_name:
+            owner_obj_key = make_object_key(self.domain.name, self.namespace.name, owner_name)
+            owner_meta = ObjectMeta.load(r, owner_obj_key)
+            if owner_meta is None:
+                break
+            if owner_meta.owner == owner_name:
+                current = policy_from_meta(owner_meta)
+                new_policy = policy_for_sliding_touch(current)
+                if new_policy != current:
+                    owner_obj = self.namespace.get_object(owner_name)
+                    owner_obj.set_lifecycle(new_policy)
+                break
+            owner_name = owner_meta.owner
 
-    def _raw_still_contains(self, encoded: str) -> bool:
-        if not self.raw_key:
-            return False
-        r = self._redis()
-        redis_type = r.type(self.raw_key)
-        if redis_type == "list":
-            return encoded in r.lrange(self.raw_key, 0, -1)
-        if redis_type == "hash":
-            return encoded in r.hvals(self.raw_key)
-        return False
-
-    def _release_element_ref(self, old_encoded: str | None) -> None:
-        if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
-            return
-        if self._raw_still_contains(old_encoded):
-            return
-        target_name = parse_ref_encoded(old_encoded)
-        if target_name is None:
-            return
-        self._remove_self_from_refset(target_name)
-        self._gc_anonymous_if_orphaned(target_name)
-
-    def _reject_value_replacement(self) -> None:
-        raise TypeError("Container value replacement is not supported; use explicit mutating methods instead")
-
-    def _is_ref_encoded(self, encoded: str | None) -> bool:
-        return isinstance(encoded, str) and encoded.startswith("ref:")
-
-    def _decode_and_copy_value(self, encoded: str) -> object:
-        value = decode_element(encoded, self._namespace)
-        if self._is_ref_encoded(encoded) and hasattr(value, "deepcopy"):
-            return value.deepcopy()
-        return value
+    # ── Identity: data owner resolution & encoding ───────────────────
 
     def _data_owner_name(self) -> str:
+        """Return the canonical name that owns this container's raw data.
+
+        For references, returns ``canonical_name``; for owners, loads meta
+        to verify the raw_key mapping.
+        """
         if self._is_reference:
             return self._canonical_name
         meta = ObjectMeta.load(self._redis(), self._redis_key())
@@ -133,12 +113,81 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         return self._name
 
     def _encode_as_ref_value(self) -> str:
+        """Encode this container as a ``ref:`` string for storage in parent raw data."""
         owner_name = self._data_owner_name()
         obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, owner_name)
         return f"ref:{obj_key}"
 
+    # ── Element reference tracking ────────────────────────────────────
+
+    def _release_element_ref(self, old_encoded: str | None) -> None:
+        """Release the ref binding held by a removed or overwritten element.
+
+        If the old value was a ref pointer no longer present elsewhere in
+        this container, removes this container from the target's ref set and
+        cascade-deletes the target if it is an orphaned anonymous object.
+        """
+        if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
+            return
+        if self._raw_still_contains(old_encoded):
+            return
+        target_name = parse_ref_encoded(old_encoded)
+        if target_name is None:
+            return
+        self._remove_self_from_refset(target_name)
+        self._gc_anonymous_if_orphaned(target_name)
+
+    def _raw_still_contains(self, encoded: str) -> bool:
+        """Check whether ``encoded`` value still exists in this container's raw data."""
+        if not self.raw_key:
+            return False
+        r = self._redis()
+        redis_type = r.type(self.raw_key)
+        if redis_type == "list":
+            return encoded in r.lrange(self.raw_key, 0, -1)
+        if redis_type == "hash":
+            return encoded in r.hvals(self.raw_key)
+        return False
+
+    def _remove_self_from_refset(self, target_name: str) -> None:
+        """Remove this container's data-owner name from the target object's ref set."""
+        target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
+        self._redis().srem(target_ref_key, self._data_owner_name())
+
+    def _gc_anonymous_if_orphaned(self, target_name: str) -> None:
+        """Cascade-delete an anonymous object if it has no remaining referrers."""
+        if not target_name.startswith("~"):
+            return
+        target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
+        r = self._redis()
+        if r.smembers(target_ref_key):
+            return
+        target_obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, target_name)
+        target_meta = ObjectMeta.load(r, target_obj_key)
+        if target_meta is None or target_meta.owner == self._data_owner_name():
+            self._namespace._cascade_delete_anonymous(target_name)
+
+    # ── Value decode helpers ──────────────────────────────────────────
+
+    def _is_ref_encoded(self, encoded: str | None) -> bool:
+        """Check whether ``encoded`` value is a ``ref:`` pointer string."""
+        return isinstance(encoded, str) and encoded.startswith("ref:")
+
+    def _decode_and_copy_value(self, encoded: str) -> object:
+        """Decode an encoded element; deep-copy if it resolves to a container."""
+        value = decode_element(encoded, self._namespace)
+        if self._is_ref_encoded(encoded) and hasattr(value, "deepcopy"):
+            return value.deepcopy()
+        return value
+
+    def _reject_value_replacement(self) -> None:
+        """Always raise — containers require explicit mutation methods."""
+        raise TypeError("Container value replacement is not supported; use explicit mutating methods instead")
+
+    # ── Public inspection API ─────────────────────────────────────────
+
     def referrers(self) -> set[str]:
-        """Return set of object names referencing this object's raw data."""
+        """Return the set of object names referencing this container's raw data."""
         owner_name = self._data_owner_name()
         ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, owner_name)
         return self._redis().smembers(ref_key)

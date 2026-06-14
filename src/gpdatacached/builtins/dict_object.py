@@ -165,7 +165,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         if not pairs:
             return
         r = self._redis()
-        binding_owner = self._data_owner_name()
+        owner_name = self._data_owner_name()
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else None
         dirty = False
@@ -173,7 +173,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
             for k, v in pairs:
                 encoded_key = encode_key(k)
                 old_encoded = r.hget(self.raw_key, encoded_key)
-                encoded_val = encode_element(v, self._namespace, binding_owner, policy)
+                encoded_val = encode_element(v, self._namespace, owner_name, policy)
                 r.hset(self.raw_key, encoded_key, encoded_val)
                 self._release_element_ref(old_encoded)
                 dirty = True
