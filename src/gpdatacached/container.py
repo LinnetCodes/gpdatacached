@@ -26,7 +26,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         self.raw_key: str = make_raw_key(domain_name, ns_name, name)
         self.ref_key: str = make_ref_key(domain_name, ns_name, name)
 
-    def _propagate_sliding_touch_to_owners(self, owner_name: str, r) -> None:
+    def _propagate_sliding_ttl_upward(self, owner_name: str, r) -> None:
         from .ttl import policy_from_meta, policy_for_sliding_touch
         from .keys import make_object_key
 
@@ -64,16 +64,16 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             if new_policy != current:
                 self.set_lifecycle(new_policy)
         else:
-            self._propagate_sliding_touch_to_owners(meta.owner, r)
+            self._propagate_sliding_ttl_upward(meta.owner, r)
 
     def _current_item_count(self) -> int:
         return len(self)
 
-    def _remove_ref(self, target_name: str) -> None:
+    def _remove_self_from_refset(self, target_name: str) -> None:
         target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
         self._redis().srem(target_ref_key, self._binding_name())
 
-    def _try_gc_anonymous(self, target_name: str) -> None:
+    def _gc_anonymous_if_orphaned(self, target_name: str) -> None:
         if not target_name.startswith("~"):
             return
         target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
@@ -88,15 +88,15 @@ class GPDCContainerObject(GPDCDataObject, ABC):
     def _unbind_old_ref(self, old_encoded: str) -> None:
         if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
             return
-        if self._raw_contains_encoded(old_encoded):
+        if self._raw_still_contains(old_encoded):
             return
         target_name = parse_ref_encoded(old_encoded)
         if target_name is None:
             return
-        self._remove_ref(target_name)
-        self._try_gc_anonymous(target_name)
+        self._remove_self_from_refset(target_name)
+        self._gc_anonymous_if_orphaned(target_name)
 
-    def _raw_contains_encoded(self, encoded: str) -> bool:
+    def _raw_still_contains(self, encoded: str) -> bool:
         if not self.raw_key:
             return False
         r = self._redis()
@@ -114,12 +114,12 @@ class GPDCContainerObject(GPDCDataObject, ABC):
     def _reject_value_replacement(self) -> None:
         raise TypeError("Container value replacement is not supported; use explicit mutating methods instead")
 
-    def _is_container_ref(self, encoded: str | None) -> bool:
+    def _is_ref_encoded(self, encoded: str | None) -> bool:
         return isinstance(encoded, str) and encoded.startswith("ref:")
 
     def _materialize_decoded_value(self, encoded: str) -> object:
         value = decode_element(encoded, self._namespace)
-        if self._is_container_ref(encoded) and hasattr(value, "deepcopy"):
+        if self._is_ref_encoded(encoded) and hasattr(value, "deepcopy"):
             return value.deepcopy()
         return value
 
