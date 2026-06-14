@@ -147,7 +147,7 @@ class TestObjectsLifecycle:
             ttl=0,
             owner=parent_name,
         ).save(r, child_key)
-        r.sadd(make_ref_key(domain, ns, child_name), parent_name)
+        r.hset(make_ref_key(domain, ns, child_name), parent_name, "1")
 
         return parent_name, child_name
 
@@ -194,7 +194,7 @@ class TestObjectsLifecycle:
         ref_alias_key = make_object_key(d, n, ref_name)
         child_key = make_object_key(d, n, child_name)
         r.set(ref_alias_key, f"ref:{child_key}")
-        r.sadd(make_ref_key(d, n, child_name), ref_name)
+        r.hset(make_ref_key(d, n, child_name), ref_name, "1")
 
         ref_obj = ns.get_object(ref_name)
         assert ref_obj.is_reference

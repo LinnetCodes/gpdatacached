@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 from .keys import make_object_key, make_raw_key, make_ref_key, parse_ref_encoded
 from .objects import GPDCDataObject
+from .refset import add_referrer
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,7 @@ def _ref_existing_container(
     owner_name = container._data_owner_name()
     obj_key = make_object_key(namespace.domain.name, namespace.name, owner_name)
     ref_key = make_ref_key(namespace.domain.name, namespace.name, owner_name)
-    namespace._redis().sadd(ref_key, parent_name)
+    add_referrer(namespace._redis(), ref_key, parent_name)
     return f"ref:{obj_key}"
 
 
@@ -194,7 +195,7 @@ def _create_anonymous_object(
                 namespace, raw_key, python_value, anon_name, policy.cache_mode, policy.declared_ttl
             )
 
-    r.sadd(ref_key, parent_name)
+    add_referrer(r, ref_key, parent_name)
 
     apply_lifecycle(r, obj_key, raw_key, ref_key, entry.is_container, policy)
 

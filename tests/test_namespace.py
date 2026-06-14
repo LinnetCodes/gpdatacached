@@ -701,7 +701,7 @@ class TestListReferenceSharing:
         ns["a"] = [1, 2, 3]
         ns["b"] = ns["a"]
         ref_key = make_ref_key("testdomain", "testns", "a")
-        assert "b" in clean_redis.smembers(ref_key)
+        assert clean_redis.hexists(ref_key, "b")
 
     def test_referrers_method(self, ns):
         ns["a"] = [1, 2, 3]
@@ -736,7 +736,7 @@ class TestListCopySemantics:
         ns["a"] = [1, 2, 3]
         ns["c"] = ns["a"].copy()
         ref_key = make_ref_key("testdomain", "testns", "a")
-        assert "c" not in clean_redis.smembers(ref_key)
+        assert not clean_redis.hexists(ref_key, "c")
 
     def test_copy_creates_separate_raw_key(self, ns, clean_redis):
         ns["a"] = [1, 2, 3]
@@ -753,9 +753,9 @@ class TestListReassignment:
         ns["x"] = [1, 2, 3]
         ns["y"] = ns["x"]
         ref_x = make_ref_key("testdomain", "testns", "x")
-        assert "y" in clean_redis.smembers(ref_x)
+        assert clean_redis.hexists(ref_x, "y")
         ns["y"] = [4, 5, 6]
-        assert "y" not in clean_redis.smembers(ref_x)
+        assert not clean_redis.hexists(ref_x, "y")
 
     def test_reassign_creates_new_raw_key(self, ns, clean_redis):
         ns["x"] = [1, 2, 3]
@@ -793,7 +793,7 @@ class TestListDeletion:
         del ns["b"]
         assert not clean_redis.exists(make_object_key("testdomain", "testns", "b"))
         ref_a = make_ref_key("testdomain", "testns", "a")
-        assert "b" not in clean_redis.smembers(ref_a)
+        assert not clean_redis.hexists(ref_a, "b")
 
     def test_delete_referrer_leaves_raw_data_intact(self, ns, clean_redis):
         ns["a"] = [1, 2, 3]
@@ -870,7 +870,7 @@ class TestDictReferenceSharing:
         ns["a"] = {"x": 1}
         ns["b"] = ns["a"]
         ref_key = make_ref_key("testdomain", "testns", "a")
-        assert "b" in clean_redis.smembers(ref_key)
+        assert clean_redis.hexists(ref_key, "b")
 
     def test_shared_dict_modification_visible(self, ns):
         ns["a"] = {"x": 1}
@@ -980,7 +980,7 @@ class TestSetReferenceSharing:
         ns["a"] = {1, 2, 3}
         ns["b"] = ns["a"]
         ref_key_a = make_ref_key("testdomain", "testns", "a")
-        assert "b" in clean_redis.smembers(ref_key_a)
+        assert clean_redis.hexists(ref_key_a, "b")
 
     def test_del_referrer_preserves_raw(self, ns, clean_redis):
         ns["a"] = {1, 2, 3}
@@ -994,7 +994,7 @@ class TestSetReferenceSharing:
         ns["b"] = ns["a"]
         ns["b"] = {4, 5}
         ref_key_a = make_ref_key("testdomain", "testns", "a")
-        assert "b" not in clean_redis.smembers(ref_key_a)
+        assert not clean_redis.hexists(ref_key_a, "b")
 
 
 class TestAliasStorageModel:
@@ -1031,7 +1031,7 @@ class TestAliasStorageModel:
         ns["alias"] = ns["owner"]
         r = ns._redis()
         ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
-        assert r.smembers(ref_key) == {"alias"}
+        assert set(r.hkeys(ref_key)) == {"alias"}
 
 
 class TestAliasHandleProperties:
@@ -1174,7 +1174,7 @@ class TestOwnerDeletionBlocking:
         del ns["alias"]
         r = ns._redis()
         ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
-        assert r.smembers(ref_key) == set()
+        assert r.hlen(ref_key) == 0
 
     def test_delete_owner_after_all_aliases_removed(self, ns):
         ns["owner"] = [1, 2]
@@ -1225,7 +1225,7 @@ class TestSameRefNoOp:
         ns["alias"] = ns["owner"]
         r = ns._redis()
         ref_key = make_ref_key(ns.domain.name, ns.name, "owner")
-        assert r.smembers(ref_key) == {"alias"}
+        assert set(r.hkeys(ref_key)) == {"alias"}
 
     def test_self_assignment_of_owner_is_noop(self, ns):
         ns["x"] = [1, 2, 3]
@@ -1471,19 +1471,19 @@ class TestReassignmentRefCleanup:
         ns["x"] = {"a": 1}
         ns["y"] = ns["x"]
         ref_x = make_ref_key("testdomain", "testns", "x")
-        assert "y" in clean_redis.smembers(ref_x)
+        assert clean_redis.hexists(ref_x, "y")
 
         ns["y"] = "hello"
-        assert "y" not in clean_redis.smembers(ref_x)
+        assert not clean_redis.hexists(ref_x, "y")
 
     def test_reassign_set_to_scalar_cleans_ref(self, ns, clean_redis):
         ns["x"] = {1, 2, 3}
         ns["y"] = ns["x"]
         ref_x = make_ref_key("testdomain", "testns", "x")
-        assert "y" in clean_redis.smembers(ref_x)
+        assert clean_redis.hexists(ref_x, "y")
 
         ns["y"] = 99
-        assert "y" not in clean_redis.smembers(ref_x)
+        assert not clean_redis.hexists(ref_x, "y")
 
     def test_reassign_alias_to_new_container_cleans_ref(self, ns, clean_redis):
         ns["a"] = [1, 2]
@@ -1492,8 +1492,8 @@ class TestReassignmentRefCleanup:
         ns["b"] = ns["c"]
         ref_a = make_ref_key("testdomain", "testns", "a")
         ref_c = make_ref_key("testdomain", "testns", "c")
-        assert "b" not in clean_redis.smembers(ref_a)
-        assert "b" in clean_redis.smembers(ref_c)
+        assert not clean_redis.hexists(ref_a, "b")
+        assert clean_redis.hexists(ref_c, "b")
 
     def test_reassign_ref_to_existing_container_cleans_old_ref(self, ns, clean_redis):
         ns["x"] = [1, 2]
@@ -1503,8 +1503,8 @@ class TestReassignmentRefCleanup:
         ns["z"] = ns["y"]
         ref_x = make_ref_key("testdomain", "testns", "x")
         ref_y = make_ref_key("testdomain", "testns", "y")
-        assert "z" not in clean_redis.smembers(ref_x)
-        assert "z" in clean_redis.smembers(ref_y)
+        assert not clean_redis.hexists(ref_x, "z")
+        assert clean_redis.hexists(ref_y, "z")
 
 
 class TestMultipleRefs:
@@ -1513,7 +1513,7 @@ class TestMultipleRefs:
         ns["y"] = ns["x"]
         ns["z"] = ns["x"]
         ref_x = make_ref_key("testdomain", "testns", "x")
-        assert clean_redis.smembers(ref_x) == {"y", "z"}
+        assert set(clean_redis.hkeys(ref_x)) == {"y", "z"}
 
     def test_del_one_ref_preserves_data(self, ns, clean_redis):
         ns["x"] = [1, 2, 3]
@@ -1547,7 +1547,7 @@ class TestReassignToDifferentContainerType:
         ns["y"] = ns["x"]
         ns["y"] = {"a": 1}
         ref_x = make_ref_key("testdomain", "testns", "x")
-        assert "y" not in clean_redis.smembers(ref_x)
+        assert not clean_redis.hexists(ref_x, "y")
         obj_y = make_object_key("testdomain", "testns", "y")
         assert clean_redis.hget(obj_y, "type") == "collection:dict"
 
@@ -1556,7 +1556,7 @@ class TestReassignToDifferentContainerType:
         ns["y"] = ns["x"]
         ns["y"] = {1, 2}
         ref_x = make_ref_key("testdomain", "testns", "x")
-        assert "y" not in clean_redis.smembers(ref_x)
+        assert not clean_redis.hexists(ref_x, "y")
         obj_y = make_object_key("testdomain", "testns", "y")
         assert clean_redis.hget(obj_y, "type") == "collection:set"
 
@@ -1565,7 +1565,7 @@ class TestReassignToDifferentContainerType:
         ns["y"] = ns["x"]
         ns["y"] = [3, 4]
         ref_x = make_ref_key("testdomain", "testns", "x")
-        assert "y" not in clean_redis.smembers(ref_x)
+        assert not clean_redis.hexists(ref_x, "y")
         obj_y = make_object_key("testdomain", "testns", "y")
         assert clean_redis.hget(obj_y, "type") == "collection:list"
 

@@ -542,7 +542,7 @@ class TestPydanticContainerGC:
         items_obj = order_obj["items"]
         items_obj.append(ns["target"])
 
-        referrers = clean_redis.smembers(target_ref_key)
+        referrers = set(clean_redis.hkeys(target_ref_key))
         assert len(referrers) >= 1
         items_referrer = next(iter(referrers))
 
@@ -551,7 +551,7 @@ class TestPydanticContainerGC:
         clean_redis.rpush(items_raw_key, "str:fallback")
 
         run_gc_for_namespace(clean_redis, "testdomain", "testns")
-        assert items_referrer not in clean_redis.smembers(target_ref_key)
+        assert not clean_redis.hexists(target_ref_key, items_referrer)
 
 
 class TestPydanticContainerTTL:

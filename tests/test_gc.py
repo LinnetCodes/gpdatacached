@@ -32,7 +32,7 @@ class TestGCOrphanRef:
     def test_gc_removes_orphan_ref_key(self, ns, clean_redis):
         ns["x"] = [1, 2, 3]
         ref_x = make_ref_key(DOMAIN, NS, "x")
-        clean_redis.sadd(ref_x, "orphan_referrer")
+        clean_redis.hset(ref_x, "orphan_referrer", "1")
         clean_redis.delete(make_object_key(DOMAIN, NS, "x"))
         clean_redis.delete(make_raw_key(DOMAIN, NS, "x"))
 
@@ -138,7 +138,7 @@ class TestGCWithStringAliases:
 
         run_gc_for_namespace(clean_redis, DOMAIN, NS)
         ref_key = make_ref_key(DOMAIN, NS, "owner")
-        assert "alias" not in clean_redis.smembers(ref_key)
+        assert not clean_redis.hexists(ref_key, "alias")
 
 
 class TestGCStaleRefSetMembers:
@@ -151,11 +151,11 @@ class TestGCStaleRefSetMembers:
         owner_b_key = make_object_key(DOMAIN, NS, "owner_b")
         clean_redis.set(alias_key, f"ref:{owner_b_key}")
         ref_key_a = make_ref_key(DOMAIN, NS, "owner_a")
-        assert "alias" in clean_redis.smembers(ref_key_a)
+        assert clean_redis.hexists(ref_key_a, "alias")
 
         run_gc_for_namespace(clean_redis, DOMAIN, NS)
 
-        assert "alias" not in clean_redis.smembers(ref_key_a)
+        assert not clean_redis.hexists(ref_key_a, "alias")
 
     def test_gc_removes_container_member_no_longer_referencing(self, ns, clean_redis):
         ns["target"] = [100, 200]
@@ -165,13 +165,13 @@ class TestGCStaleRefSetMembers:
         ns["holder"].append(ns["target"])
 
         ref_key = make_ref_key(DOMAIN, NS, "target")
-        assert "holder" in clean_redis.smembers(ref_key)
+        assert clean_redis.hexists(ref_key, "holder")
 
         clean_redis.delete(holder_raw_key)
         clean_redis.rpush(holder_raw_key, "plain_value")
 
         run_gc_for_namespace(clean_redis, DOMAIN, NS)
-        assert "holder" not in clean_redis.smembers(ref_key)
+        assert not clean_redis.hexists(ref_key, "holder")
 
     def test_gc_preserves_container_member_still_referencing(self, ns, clean_redis):
         ns["target"] = [100, 200]
@@ -179,20 +179,20 @@ class TestGCStaleRefSetMembers:
         ns["holder"].append(ns["target"])
 
         ref_key = make_ref_key(DOMAIN, NS, "target")
-        assert "holder" in clean_redis.smembers(ref_key)
+        assert clean_redis.hexists(ref_key, "holder")
 
         run_gc_for_namespace(clean_redis, DOMAIN, NS)
-        assert "holder" in clean_redis.smembers(ref_key)
+        assert clean_redis.hexists(ref_key, "holder")
 
     def test_gc_removes_non_collection_hash_member_from_ref_set(self, ns, clean_redis):
         ns["target"] = [100, 200]
         ns["scalar"] = 42
         ref_key = make_ref_key(DOMAIN, NS, "target")
-        clean_redis.sadd(ref_key, "scalar")
-        assert "scalar" in clean_redis.smembers(ref_key)
+        clean_redis.hset(ref_key, "scalar", "1")
+        assert clean_redis.hexists(ref_key, "scalar")
 
         run_gc_for_namespace(clean_redis, DOMAIN, NS)
-        assert "scalar" not in clean_redis.smembers(ref_key)
+        assert not clean_redis.hexists(ref_key, "scalar")
 
 
 class TestGCSingleRoundCleanup:
@@ -385,10 +385,10 @@ class TestGCWithCustomContainerType:
             },
         )
         clean_redis.hset(custom_raw_key, mapping={"str:field1": ref_val})
-        clean_redis.sadd(custom_ref_key, "custom_obj")
-        clean_redis.sadd(target_ref_key, "custom_obj")
+        clean_redis.hset(custom_ref_key, "custom_obj", "1")
+        clean_redis.hset(target_ref_key, "custom_obj", "1")
 
-        assert "custom_obj" in clean_redis.smembers(target_ref_key)
+        assert clean_redis.hexists(target_ref_key, "custom_obj")
 
         run_gc_for_namespace(clean_redis, DOMAIN, NS)
-        assert "custom_obj" in clean_redis.smembers(target_ref_key)
+        assert clean_redis.hexists(target_ref_key, "custom_obj")

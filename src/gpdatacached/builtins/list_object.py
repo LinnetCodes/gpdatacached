@@ -186,12 +186,9 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def sort(self, *, key=None, reverse=False) -> None:
         r = self._redis()
         raw_items = r.lrange(self.raw_key, 0, -1)
-        decoded = [decode_element(enc, self._namespace) for enc in raw_items]
-        decoded.sort(key=key, reverse=reverse)
-        owner_name = self._data_owner_name()
-        meta = ObjectMeta.load(r, self._canonical_redis_key())
-        policy = policy_from_meta(meta) if meta else None
-        encoded = [encode_element(v, self._namespace, owner_name, policy) for v in decoded]
+        pairs = [(decode_element(enc, self._namespace), enc) for enc in raw_items]
+        pairs.sort(key=lambda p: key(p[0]) if key else p[0], reverse=reverse)
+        encoded = [enc for _, enc in pairs]
         pipe = r.pipeline()
         pipe.delete(self.raw_key)
         if encoded:

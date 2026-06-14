@@ -302,7 +302,7 @@ class TestListOps:
 
     def test_referrers_with_data(self, setup_list):
         obj, r, obj_key, raw_key, ref_key, ns = setup_list
-        r.sadd(ref_key, "other_obj")
+        r.hset(ref_key, "other_obj", "1")
         result = obj.referrers()
         assert result == {"other_obj"}
 

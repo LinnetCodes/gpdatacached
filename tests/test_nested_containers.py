@@ -75,7 +75,7 @@ class TestDictNestedList:
         ref_str = raw_data["str:a"]
         anon_name = ref_str.split(":obj:")[1]
         ref_key = make_ref_key(DOMAIN, NS, anon_name)
-        assert "mydict" in r.smembers(ref_key)
+        assert r.hexists(ref_key, "mydict")
 
     def test_anon_not_in_namespace_iteration(self, ns):
         ns["mydict"] = {"a": [1, 2, 3]}
@@ -573,7 +573,7 @@ class TestDictNestedSet:
         ref_str = raw_data["str:nums"]
         anon_name = ref_str.split(":obj:")[1]
         ref_key = make_ref_key(DOMAIN, NS, anon_name)
-        assert "mydict" in r.smembers(ref_key)
+        assert r.hexists(ref_key, "mydict")
 
 
 class TestListNestedSet:

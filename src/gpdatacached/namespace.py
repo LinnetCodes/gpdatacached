@@ -23,6 +23,7 @@ from .keys import (
     validate_object_name,
 )
 from .meta import ObjectMeta
+from .refset import add_referrer, release_ref, remove_referrer, get_referrers, has_referrers
 from .types import GPDCTypeRegistry
 
 
@@ -178,9 +179,9 @@ class GPDCNamespace(MutableMapping):
         r = self._redis()
         canonical_name = existing.canonical_name
         ref_key = make_ref_key(self._domain.name, self._name, canonical_name)
-        r.srem(ref_key, key)
+        release_ref(r, ref_key, key)
         r.delete(existing.binding_obj_key)
-        if canonical_name.startswith("~") and not r.smembers(ref_key):
+        if canonical_name.startswith("~") and not has_referrers(r, ref_key):
             self._cascade_delete_anonymous(canonical_name)
 
     def _cleanup_existing_for_overwrite(self, key: str, existing: BindingResolution) -> None:
@@ -192,7 +193,7 @@ class GPDCNamespace(MutableMapping):
             self._cleanup_alias_binding(key, existing)
         elif existing.binding_kind == "owner" and existing.meta.type.startswith("collection:"):
             ref_key = make_ref_key(self._domain.name, self._name, key)
-            referrers = r.smembers(ref_key)
+            referrers = get_referrers(r, ref_key)
             if referrers:
                 raise CanonicalObjectReferencedError(
                     canonical_name=key,
@@ -215,7 +216,7 @@ class GPDCNamespace(MutableMapping):
             nested_ref_names = collect_ref_names_from_raw(r, stored_raw_key, obj_type)
             for nested_name in nested_ref_names:
                 nested_ref_key = make_ref_key(self._domain.name, self._name, nested_name)
-                r.srem(nested_ref_key, key)
+                remove_referrer(r, nested_ref_key, key)
                 if nested_name.startswith("~"):
                     self._cascade_delete_anonymous(nested_name)
 
@@ -289,7 +290,7 @@ class GPDCNamespace(MutableMapping):
         r.set(alias_obj_key, f"ref:{canonical_obj_key}")
 
         ref_key = make_ref_key(self._domain.name, self._name, canonical_name)
-        r.sadd(ref_key, key)
+        add_referrer(r, ref_key, key)
 
     def __setitem__(self, key: str, value: object) -> None:
         validate_object_name(key)
@@ -325,7 +326,7 @@ class GPDCNamespace(MutableMapping):
         if existing:
             if existing.binding_kind == "owner" and existing.meta.type.startswith("collection:"):
                 ref_key = make_ref_key(self._domain.name, self._name, key)
-                referrers = r.smembers(ref_key)
+                referrers = get_referrers(r, ref_key)
                 if referrers:
                     raise CanonicalObjectReferencedError(
                         canonical_name=key,
@@ -433,9 +434,9 @@ class GPDCNamespace(MutableMapping):
         if resolution.binding_kind == "reference":
             canonical_name = resolution.canonical_name
             ref_key = make_ref_key(self._domain.name, self._name, canonical_name)
-            r.srem(ref_key, key)
+            release_ref(r, ref_key, key)
             r.delete(obj_key)
-            if canonical_name.startswith("~") and not r.smembers(ref_key):
+            if canonical_name.startswith("~") and not has_referrers(r, ref_key):
                 self._cascade_delete_anonymous(canonical_name)
             return
 
@@ -446,7 +447,7 @@ class GPDCNamespace(MutableMapping):
             return
 
         ref_key = make_ref_key(self._domain.name, self._name, key)
-        referrers = r.smembers(ref_key)
+        referrers = get_referrers(r, ref_key)
         if referrers:
             raise CanonicalObjectReferencedError(
                 canonical_name=key,
@@ -467,7 +468,7 @@ class GPDCNamespace(MutableMapping):
         raw_key = meta.value
         ref_key = make_ref_key(self._domain.name, self._name, anon_name)
 
-        referrers = r.smembers(ref_key)
+        referrers = get_referrers(r, ref_key)
         if referrers:
             return
 
@@ -477,7 +478,7 @@ class GPDCNamespace(MutableMapping):
 
             for nested in nested_ref_names:
                 nested_ref_key = make_ref_key(self._domain.name, self._name, nested)
-                r.srem(nested_ref_key, anon_name)
+                remove_referrer(r, nested_ref_key, anon_name)
                 if nested.startswith("~"):
                     self._cascade_delete_anonymous(nested)
 

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from .keys import make_object_key, make_raw_key, make_ref_key, parse_ref_encoded
 from .objects import GPDCDataObject
 from .meta import ObjectMeta
+from .refset import release_ref, get_referrers, has_referrers
 from .types import decode_element
 
 
@@ -21,16 +22,16 @@ class GPDCContainerObject(GPDCDataObject, ABC):
 
     A container object stores its elements in a dedicated Redis key
     (``raw_key``) and tracks which other objects reference its raw data via
-    a Redis set (``ref_key``). Subclasses implement ``MutableSequence``,
+    a Redis hash (``ref_key``). Subclasses implement ``MutableSequence``,
     ``MutableMapping``, or ``MutableSet`` semantics on top of this shared
     infrastructure.
 
     Key attributes:
         raw_key: Redis key holding the container's element data (e.g. a list
             or hash).
-        ref_key: Redis set key recording the names of objects that own or
-            alias this container's raw data; used for ref-counting and
-            cascade-deletion of anonymous objects.
+        ref_key: Redis hash key recording referrer names and their reference
+            counts; used for ref-counting and cascade-deletion of anonymous
+            objects.
     """
 
     def __init__(self, name: str, namespace: "GPDCNamespace", *, canonical_name: str | None = None) -> None:
@@ -123,36 +124,19 @@ class GPDCContainerObject(GPDCDataObject, ABC):
     def _release_element_ref(self, old_encoded: str | None) -> None:
         """Release the ref binding held by a removed or overwritten element.
 
-        If the old value was a ref pointer no longer present elsewhere in
-        this container, removes this container from the target's ref set and
-        cascade-deletes the target if it is an orphaned anonymous object.
+        Decrements the reference count in the target's ref hash. If the
+        count reaches zero, cascade-deletes the target if it is an
+        orphaned anonymous object.
         """
         if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
-            return
-        if self._raw_still_contains(old_encoded):
             return
         target_name = parse_ref_encoded(old_encoded)
         if target_name is None:
             return
-        self._remove_self_from_refset(target_name)
-        self._gc_anonymous_if_orphaned(target_name)
-
-    def _raw_still_contains(self, encoded: str) -> bool:
-        """Check whether ``encoded`` value still exists in this container's raw data."""
-        if not self.raw_key:
-            return False
-        r = self._redis()
-        redis_type = r.type(self.raw_key)
-        if redis_type == "list":
-            return encoded in r.lrange(self.raw_key, 0, -1)
-        if redis_type == "hash":
-            return encoded in r.hvals(self.raw_key)
-        return False
-
-    def _remove_self_from_refset(self, target_name: str) -> None:
-        """Remove this container's data-owner name from the target object's ref set."""
         target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
-        self._redis().srem(target_ref_key, self._data_owner_name())
+        fully_released = release_ref(self._redis(), target_ref_key, self._data_owner_name())
+        if fully_released:
+            self._gc_anonymous_if_orphaned(target_name)
 
     def _gc_anonymous_if_orphaned(self, target_name: str) -> None:
         """Cascade-delete an anonymous object if it has no remaining referrers."""
@@ -160,7 +144,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             return
         target_ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, target_name)
         r = self._redis()
-        if r.smembers(target_ref_key):
+        if has_referrers(r, target_ref_key):
             return
         target_obj_key = make_object_key(self._namespace.domain.name, self._namespace.name, target_name)
         target_meta = ObjectMeta.load(r, target_obj_key)
@@ -190,7 +174,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         """Return the set of object names referencing this container's raw data."""
         owner_name = self._data_owner_name()
         ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, owner_name)
-        return self._redis().smembers(ref_key)
+        return get_referrers(self._redis(), ref_key)
 
     def copy(self) -> object:
         """Shallow copy: return Python value with shared anon object refs."""

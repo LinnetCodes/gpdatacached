@@ -17,6 +17,7 @@ from .keys import (
     make_ref_key_prefix,
 )
 from .meta import ObjectMeta
+from .refset import remove_referrer, get_referrers
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ def _gc_scan_raw_keys(
                 continue
             name = raw_key[len(raw_prefix) :]
             ref_key = make_ref_key(domain, namespace, name)
-            referrers = r.smembers(ref_key)
+            referrers = get_referrers(r, ref_key)
             if not referrers:
                 r.delete(raw_key, ref_key)
                 deleted += 2
@@ -125,25 +126,25 @@ def _gc_scan_ref_keys(
                 r.delete(ref_key)
                 deleted += 1
                 continue
-            members = r.smembers(ref_key)
+            members = get_referrers(r, ref_key)
             for member in members:
                 member_obj_key = make_object_key(domain, namespace, member)
                 member_type = r.type(member_obj_key)
                 if member_type == "string":
                     member_ref = r.get(member_obj_key)
                     if not member_ref or not member_ref.startswith("ref:"):
-                        r.srem(ref_key, member)
+                        remove_referrer(r, ref_key, member)
                         continue
                     member_target = member_ref[len("ref:") :]
                     if member_target != obj_key:
-                        r.srem(ref_key, member)
+                        remove_referrer(r, ref_key, member)
                 elif member_type == "hash":
                     member_meta = ObjectMeta.load(r, member_obj_key)
                     if member_meta is None:
-                        r.srem(ref_key, member)
+                        remove_referrer(r, ref_key, member)
                         continue
                     if not member_meta.is_collection():
-                        r.srem(ref_key, member)
+                        remove_referrer(r, ref_key, member)
                         continue
                     expected_ref = f"ref:{obj_key}"
                     still_refs = False
@@ -160,9 +161,9 @@ def _gc_scan_ref_keys(
                                 still_refs = True
                                 break
                     if not still_refs:
-                        r.srem(ref_key, member)
+                        remove_referrer(r, ref_key, member)
                 else:
-                    r.srem(ref_key, member)
+                    remove_referrer(r, ref_key, member)
         if cursor == 0:
             break
     return deleted
