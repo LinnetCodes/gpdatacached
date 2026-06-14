@@ -85,17 +85,6 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         if target_meta is None or target_meta.owner == self._data_owner_name():
             self._namespace._cascade_delete_anonymous(target_name)
 
-    def _unbind_old_ref(self, old_encoded: str) -> None:
-        if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
-            return
-        if self._raw_still_contains(old_encoded):
-            return
-        target_name = parse_ref_encoded(old_encoded)
-        if target_name is None:
-            return
-        self._remove_self_from_refset(target_name)
-        self._gc_anonymous_if_orphaned(target_name)
-
     def _raw_still_contains(self, encoded: str) -> bool:
         if not self.raw_key:
             return False
@@ -107,9 +96,16 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             return encoded in r.hvals(self.raw_key)
         return False
 
-    def _cleanup_slot_overwrite(self, old_encoded: str | None) -> None:
-        if old_encoded is not None:
-            self._unbind_old_ref(old_encoded)
+    def _release_element_ref(self, old_encoded: str | None) -> None:
+        if not isinstance(old_encoded, str) or not old_encoded.startswith("ref:"):
+            return
+        if self._raw_still_contains(old_encoded):
+            return
+        target_name = parse_ref_encoded(old_encoded)
+        if target_name is None:
+            return
+        self._remove_self_from_refset(target_name)
+        self._gc_anonymous_if_orphaned(target_name)
 
     def _reject_value_replacement(self) -> None:
         raise TypeError("Container value replacement is not supported; use explicit mutating methods instead")

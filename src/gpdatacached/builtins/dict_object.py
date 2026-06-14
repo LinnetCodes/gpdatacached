@@ -79,7 +79,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         policy = policy_from_meta(meta) if meta else None
         encoded_val = encode_element(value, self._namespace, self._data_owner_name(), policy)
         r.hset(self.raw_key, encoded_key, encoded_val)
-        self._cleanup_slot_overwrite(old_encoded)
+        self._release_element_ref(old_encoded)
         self._touch()
 
     def __delitem__(self, key: object) -> None:
@@ -89,7 +89,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         if old_encoded is None:
             raise KeyError(key)
         r.hdel(self.raw_key, encoded_key)
-        self._unbind_old_ref(old_encoded)
+        self._release_element_ref(old_encoded)
         self._touch()
 
     def __contains__(self, key: object) -> bool:
@@ -175,7 +175,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
                 old_encoded = r.hget(self.raw_key, encoded_key)
                 encoded_val = encode_element(v, self._namespace, binding_owner, policy)
                 r.hset(self.raw_key, encoded_key, encoded_val)
-                self._cleanup_slot_overwrite(old_encoded)
+                self._release_element_ref(old_encoded)
                 dirty = True
         finally:
             if dirty:
@@ -185,7 +185,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         encoded_vals = self._redis().hvals(self.raw_key)
         self._redis().delete(self.raw_key)
         for encoded_val in encoded_vals:
-            self._unbind_old_ref(encoded_val)
+            self._release_element_ref(encoded_val)
         self._touch()
 
     def deepcopy(self):

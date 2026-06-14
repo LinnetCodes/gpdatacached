@@ -82,7 +82,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         policy = policy_from_meta(meta) if meta else None
         encoded = encode_element(value, self._namespace, self._data_owner_name(), policy)
         r.lset(self.raw_key, index, encoded)
-        self._cleanup_slot_overwrite(old_encoded)
+        self._release_element_ref(old_encoded)
         self._touch()
 
     def _delete_index(self, index: int) -> str:
@@ -94,7 +94,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         sentinel = f"__del_sentinel_{uuid.uuid4().hex}__"
         r.lset(self.raw_key, index, sentinel)
         r.lrem(self.raw_key, 1, sentinel)
-        self._unbind_old_ref(old_encoded)
+        self._release_element_ref(old_encoded)
         self._touch()
         return old_encoded
 
@@ -135,7 +135,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         items = self._redis().lrange(self.raw_key, 0, -1)
         self._redis().delete(self.raw_key)
         for item in items:
-            self._unbind_old_ref(item)
+            self._release_element_ref(item)
         self._touch()
 
     def pop(self, index: int = -1) -> object:
