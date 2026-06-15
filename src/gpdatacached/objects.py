@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from .domain import GPDCDomain
@@ -11,7 +11,15 @@ if TYPE_CHECKING:
 from .exceptions import LifecyclePermissionError, ObjectGoneError
 from .keys import make_object_key, make_uri
 from .meta import ObjectMeta
-from .lifecycle import _LifecycleContext
+
+
+class _LifecycleContext(NamedTuple):
+    r: object
+    key: str
+    meta: ObjectMeta
+    raw_key: str
+    ref_key: str
+    is_collection: bool
 
 
 class GPDCDataObject(ABC):
