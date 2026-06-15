@@ -11,7 +11,6 @@ from gpdatacached.lifecycle import (
     TTLPolicy,
     policy_from_defaults,
     policy_from_meta,
-    policy_for_sliding_touch,
     apply_ttl,
 )
 
@@ -85,26 +84,72 @@ class TestPolicyFromMeta:
         assert p.expire_seconds is None
 
 
-class TestPolicyForSlidingTouch:
-    def test_resets_expire_to_declared_ttl(self):
-        current = TTLPolicy(cache_mode="sliding", declared_ttl=60, expire_seconds=10)
-        p = policy_for_sliding_touch(current)
-        assert p.expire_seconds == 60
+class TestSlidingRefresh:
+    def test_scalar_sliding_refresh_resets_ttl(self, clean_redis):
+        from gpdatacached.config import GPDCDomainConfig
+        from gpdatacached.domain import GPDCDomain
+        from gpdatacached.keys import make_object_key
+        import time
 
-    def test_no_touch_when_zero_ttl(self):
-        current = TTLPolicy(cache_mode="sliding", declared_ttl=0, expire_seconds=None)
-        p = policy_for_sliding_touch(current)
-        assert p.expire_seconds is None
+        cfg = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            gc_enabled=False,
+        )
+        d = GPDCDomain("slide_scalar", cfg)
+        try:
+            ns = d.ensure_namespace("ns")
+            ns["s"] = 42
+            obj = ns.get_object("s")
+            obj.update_cache_mode_and_ttl("sliding", 10)
+            key = make_object_key("slide_scalar", "ns", "s")
 
-    def test_no_touch_for_ttl_mode(self):
-        current = TTLPolicy(cache_mode="ttl", declared_ttl=60, expire_seconds=10)
-        p = policy_for_sliding_touch(current)
-        assert p.expire_seconds == 10
+            time.sleep(1.5)
+            before = d.redis.ttl(key)
+            assert before < 10  # decayed
 
-    def test_no_touch_for_permanent_mode(self):
-        current = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
-        p = policy_for_sliding_touch(current)
-        assert p.expire_seconds is None
+            obj.value = 99  # mutation triggers sliding refresh
+            after = d.redis.ttl(key)
+            assert after > before, f"no refresh: before={before} after={after}"
+            assert after >= 9, f"not reset toward declared_ttl: after={after}"
+        finally:
+            d.close()
+
+    def test_self_owned_container_cascades_to_owned_children(self, clean_redis):
+        from gpdatacached.config import GPDCDomainConfig
+        from gpdatacached.domain import GPDCDomain
+        from gpdatacached.keys import make_raw_key
+        import time
+
+        cfg = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            gc_enabled=False,
+            default_cache_mode="sliding",
+            default_ttl_seconds=10,
+        )
+        d = GPDCDomain("slide_cascade", cfg)
+        try:
+            ns = d.ensure_namespace("ns")
+            ns["d"] = {"items": [1, 2, 3]}
+            # Reuse the existing module-level helper to find the anon child's name
+            anon_name = _extract_anon_name_from_dict(d.redis, "slide_cascade", "ns", "d", "items")
+            anon_raw = make_raw_key("slide_cascade", "ns", anon_name)
+
+            time.sleep(1.5)
+            before = d.redis.ttl(anon_raw)
+            assert before < 10
+
+            ns["d"]["b"] = "x"  # mutate parent -> _touch -> refresh_ttl cascades
+            after = d.redis.ttl(anon_raw)
+            assert after > before, f"no cascade refresh: before={before} after={after}"
+            assert after >= 9, f"not reset toward declared_ttl: after={after}"
+        finally:
+            d.close()
 
 
 class TestApplyTtl:

@@ -52,16 +52,6 @@ def policy_from_meta(meta: ObjectMeta) -> TTLPolicy:
     return TTLPolicy(cache_mode=meta.cache_mode, declared_ttl=meta.ttl, expire_seconds=None)
 
 
-def policy_for_sliding_touch(current: TTLPolicy) -> TTLPolicy:
-    if current.cache_mode == "sliding" and current.declared_ttl > 0:
-        return TTLPolicy(
-            cache_mode=current.cache_mode,
-            declared_ttl=current.declared_ttl,
-            expire_seconds=current.declared_ttl,
-        )
-    return current
-
-
 def apply_ttl(r, keys, policy: TTLPolicy) -> None:
     """Apply the policy's TTL to each non-empty key: PERSIST when no expiry, EXPIRE otherwise."""
     seconds = policy.expire_seconds
@@ -120,3 +110,40 @@ def propagate_lifecycle(r, domain: str, namespace: str, parent_name: str, policy
 
     for child_name, _, _ in updates:
         propagate_lifecycle(r, domain, namespace, child_name, policy, visited)
+
+
+def propagate_ttl_refresh(r, domain: str, namespace: str, parent_name: str) -> None:
+    """Refresh Redis TTL across an owned subtree (sliding-window refresh).
+
+    For each owned child, re-applies THAT child's own policy TTL to its keys
+    (no meta rewrite). Owned children whose policy declares no expiry are left
+    untouched, but still recursed into so deeper descendants are reached.
+    """
+    _propagate_ttl_refresh(r, domain, namespace, parent_name, set())
+
+
+def _propagate_ttl_refresh(r, domain: str, namespace: str, parent_name: str, visited: set[str]) -> None:
+    parent_obj_key = make_object_key(domain, namespace, parent_name)
+    parent_meta = ObjectMeta.load(r, parent_obj_key)
+    if parent_meta is None or not parent_meta.is_collection():
+        return
+
+    for child_name in dict.fromkeys(collect_ref_names_from_raw(r, parent_meta.value, parent_meta.type)):
+        if child_name in visited:
+            continue
+        visited.add(child_name)
+
+        child_obj_key = make_object_key(domain, namespace, child_name)
+        child_meta = ObjectMeta.load(r, child_obj_key)
+        if child_meta is None or child_meta.owner != parent_name:
+            continue
+
+        child_policy = policy_from_meta(child_meta)
+        if child_policy.expire_seconds is not None:
+            keys = [child_obj_key]
+            if child_meta.is_collection():
+                keys.append(child_meta.value)
+                keys.append(make_ref_key(domain, namespace, child_name))
+            apply_ttl(r, keys, child_policy)
+
+        _propagate_ttl_refresh(r, domain, namespace, child_name, visited)

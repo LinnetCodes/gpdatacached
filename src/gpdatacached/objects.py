@@ -141,6 +141,25 @@ class GPDCDataObject(ABC):
                 set(),
             )
 
+    def refresh_ttl(self) -> None:
+        """Re-apply this object's own TTL to its keys and cascade-refresh its owned subtree.
+
+        Used by the sliding-window refresh path on mutation. No-op for objects
+        whose policy declares no expiry (permanent / zero ttl).
+        """
+        from .lifecycle import apply_ttl, propagate_ttl_refresh, policy_from_meta
+
+        ctx = self._load_lifecycle_context()
+        policy = policy_from_meta(ctx.meta)
+        if policy.expire_seconds is None:
+            return
+        keys = [ctx.key]
+        if ctx.is_collection:
+            keys.append(ctx.raw_key)
+            keys.append(ctx.ref_key)
+        apply_ttl(ctx.r, keys, policy)
+        propagate_ttl_refresh(ctx.r, self.domain.name, self.namespace.name, self.canonical_name)
+
     def update_cache_mode_and_ttl(self, cache_mode: str, ttl: int) -> None:
         from .lifecycle import TTLPolicy
 

@@ -36,7 +36,7 @@ class GPDCScalarObject(GPDCDataObject):
     @value.setter
     def value(self, new_value: object) -> None:
         from .types import GPDCTypeRegistry
-        from .lifecycle import policy_from_meta, policy_for_sliding_touch
+        from .lifecycle import policy_from_meta
         from .meta import ObjectMeta
 
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(self.TYPE)
@@ -51,7 +51,6 @@ class GPDCScalarObject(GPDCDataObject):
         if meta is None:
             raise ObjectGoneError(self.canonical_uri)
         meta.with_updates(value=encoded, updated_at=now).save(r, key)
-        current = policy_from_meta(meta)
-        new_policy = policy_for_sliding_touch(current)
-        if new_policy != current:
-            self.set_lifecycle(new_policy)
+        policy = policy_from_meta(meta)
+        if policy.cache_mode == "sliding" and policy.declared_ttl > 0:
+            self.refresh_ttl()

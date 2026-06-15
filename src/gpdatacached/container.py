@@ -49,7 +49,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         When owned by a parent, the sliding refresh propagates upward
         through the owner chain.
         """
-        from .lifecycle import policy_from_meta, policy_for_sliding_touch
+        from .lifecycle import policy_from_meta
         from .meta import ObjectMeta
         from .exceptions import ObjectGoneError
 
@@ -63,10 +63,9 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         meta.touch(now, item_count=item_count).save(r, key)
 
         if meta.owner == self.canonical_name:
-            current = policy_from_meta(meta)
-            new_policy = policy_for_sliding_touch(current)
-            if new_policy != current:
-                self.set_lifecycle(new_policy)
+            policy = policy_from_meta(meta)
+            if policy.cache_mode == "sliding" and policy.declared_ttl > 0:
+                self.refresh_ttl()
         else:
             self._propagate_sliding_ttl_upward(meta.owner, r)
 
@@ -76,7 +75,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
 
     def _propagate_sliding_ttl_upward(self, owner_name: str, r) -> None:
         """Propagate a sliding-window TTL refresh up the owner chain to the first self-owned ancestor."""
-        from .lifecycle import policy_from_meta, policy_for_sliding_touch
+        from .lifecycle import policy_from_meta
         from .keys import make_object_key
 
         while owner_name:
@@ -85,11 +84,10 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             if owner_meta is None:
                 break
             if owner_meta.owner == owner_name:
-                current = policy_from_meta(owner_meta)
-                new_policy = policy_for_sliding_touch(current)
-                if new_policy != current:
+                policy = policy_from_meta(owner_meta)
+                if policy.cache_mode == "sliding" and policy.declared_ttl > 0:
                     owner_obj = self.namespace.get_object(owner_name)
-                    owner_obj.set_lifecycle(new_policy)
+                    owner_obj.refresh_ttl()
                 break
             owner_name = owner_meta.owner
 
