@@ -86,11 +86,6 @@ class TestPolicyFromMeta:
 
 class TestSlidingRefresh:
     def test_scalar_sliding_refresh_resets_ttl(self, clean_redis):
-        from gpdatacached.config import GPDCDomainConfig
-        from gpdatacached.domain import GPDCDomain
-        from gpdatacached.keys import make_object_key
-        import time
-
         cfg = GPDCDomainConfig(
             redis_host="127.0.0.1",
             redis_port=6379,
@@ -118,11 +113,6 @@ class TestSlidingRefresh:
             d.close()
 
     def test_self_owned_container_cascades_to_owned_children(self, clean_redis):
-        from gpdatacached.config import GPDCDomainConfig
-        from gpdatacached.domain import GPDCDomain
-        from gpdatacached.keys import make_raw_key
-        import time
-
         cfg = GPDCDomainConfig(
             redis_host="127.0.0.1",
             redis_port=6379,
@@ -148,6 +138,41 @@ class TestSlidingRefresh:
             after = d.redis.ttl(anon_raw)
             assert after > before, f"no cascade refresh: before={before} after={after}"
             assert after >= 9, f"not reset toward declared_ttl: after={after}"
+        finally:
+            d.close()
+
+    def test_owned_anon_mutation_propagates_upward(self, clean_redis):
+        cfg = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            gc_enabled=False,
+            default_cache_mode="sliding",
+            default_ttl_seconds=10,
+        )
+        d = GPDCDomain("slide_upward", cfg)
+        try:
+            r = d.redis
+            ns = d.ensure_namespace("ns")
+            ns["d"] = {"items": [1, 2, 3]}
+            anon_name = _extract_anon_name_from_dict(r, "slide_upward", "ns", "d", "items")
+            anon_raw = make_raw_key("slide_upward", "ns", anon_name)
+            d_obj_key = make_object_key("slide_upward", "ns", "d")
+
+            time.sleep(1.5)
+            before_anon = r.ttl(anon_raw)
+            before_d = r.ttl(d_obj_key)
+            assert before_anon < 10 and before_d < 10  # both decayed
+
+            inner = ns["d"]["items"]  # the owned anon list
+            inner.append(4)  # mutate anon -> its _touch -> upward to ancestor "d"
+
+            after_anon = r.ttl(anon_raw)
+            after_d = r.ttl(d_obj_key)
+            assert after_anon > before_anon, f"anon not refreshed: {before_anon} -> {after_anon}"
+            assert after_anon >= 9, f"anon not reset toward declared_ttl: {after_anon}"
+            assert after_d > before_d, f"ancestor not refreshed: {before_d} -> {after_d}"
         finally:
             d.close()
 
