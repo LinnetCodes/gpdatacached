@@ -163,7 +163,7 @@ def _create_anonymous_object(
     parent_name: str,
     policy,
 ) -> tuple[str, str]:
-    from .lifecycle import apply_lifecycle
+    from .lifecycle import apply_ttl
     from .meta import ObjectMeta
 
     entry = GPDCTypeRegistry.lookup_by_python_type(python_value)
@@ -197,7 +197,10 @@ def _create_anonymous_object(
 
     add_referrer(r, ref_key, parent_name)
 
-    apply_lifecycle(r, obj_key, raw_key, ref_key, entry.is_container, policy)
+    keys = [obj_key]
+    if entry.is_container:
+        keys.extend([raw_key, ref_key])
+    apply_ttl(r, keys, policy)
 
     ref_val = f"ref:{obj_key}"
     return anon_name, ref_val

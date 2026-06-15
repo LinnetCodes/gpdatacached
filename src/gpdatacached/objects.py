@@ -111,7 +111,7 @@ class GPDCDataObject(ABC):
         from .lifecycle import (
             _validate_policy,
             policy_from_meta,
-            apply_lifecycle,
+            apply_ttl,
             propagate_lifecycle,
         )
 
@@ -129,7 +129,7 @@ class GPDCDataObject(ABC):
         updated_meta.save(ctx.r, ctx.key)
 
         if changed:
-            apply_lifecycle(ctx.r, ctx.key, ctx.raw_key, ctx.ref_key, ctx.is_collection, policy)
+            apply_ttl(ctx.r, [ctx.key, ctx.raw_key, ctx.ref_key], policy)
 
         if changed and propagate:
             propagate_lifecycle(

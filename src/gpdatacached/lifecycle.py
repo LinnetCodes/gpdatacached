@@ -1,15 +1,13 @@
 """Data-object lifecycle management: cache-mode/TTL policy, Redis TTL application, and propagation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple
 
 from .keys import collect_ref_names_from_raw, make_object_key, make_ref_key
 from .meta import ObjectMeta
-
-if TYPE_CHECKING:
-    import redis
 
 
 class _LifecycleContext(NamedTuple):
@@ -64,20 +62,16 @@ def policy_for_sliding_touch(current: TTLPolicy) -> TTLPolicy:
     return current
 
 
-def apply_policy(r: "redis.Redis", obj_key: str, policy: TTLPolicy) -> None:
-    if policy.expire_seconds is None:
-        r.persist(obj_key)
-    else:
-        r.expire(obj_key, policy.expire_seconds)
-
-
-def apply_lifecycle(r, obj_key: str, raw_key: str, ref_key: str, is_collection: bool, policy) -> None:
-    apply_policy(r, obj_key, policy)
-    if is_collection:
-        if raw_key:
-            apply_policy(r, raw_key, policy)
-        if ref_key:
-            apply_policy(r, ref_key, policy)
+def apply_ttl(r, keys, policy: TTLPolicy) -> None:
+    """Apply the policy's TTL to each non-empty key: PERSIST when no expiry, EXPIRE otherwise."""
+    seconds = policy.expire_seconds
+    for k in keys:
+        if not k:
+            continue
+        if seconds is None:
+            r.persist(k)
+        else:
+            r.expire(k, seconds)
 
 
 def propagate_lifecycle(r, domain: str, namespace: str, parent_name: str, policy: TTLPolicy, visited: set[str]) -> None:
@@ -118,7 +112,10 @@ def propagate_lifecycle(r, domain: str, namespace: str, parent_name: str, policy
 
             child_raw_key = child_meta.value if child_meta.is_collection() else ""
             child_ref_key = make_ref_key(domain, namespace, child_name)
-            apply_lifecycle(pipe, child_obj_key, child_raw_key, child_ref_key, child_meta.is_collection(), policy)
+            keys = [child_obj_key]
+            if child_meta.is_collection():
+                keys.extend([child_raw_key, child_ref_key])
+            apply_ttl(pipe, keys, policy)
         pipe.execute()
 
     for child_name, _, _ in updates:

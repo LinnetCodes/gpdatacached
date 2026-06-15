@@ -12,7 +12,7 @@ from gpdatacached.lifecycle import (
     policy_from_defaults,
     policy_from_meta,
     policy_for_sliding_touch,
-    apply_policy,
+    apply_ttl,
 )
 
 
@@ -107,18 +107,18 @@ class TestPolicyForSlidingTouch:
         assert p.expire_seconds is None
 
 
-class TestApplyPolicy:
+class TestApplyTtl:
     def test_persist_called_when_expire_seconds_is_none(self):
         r = MagicMock()
         p = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
-        apply_policy(r, "testkey", p)
+        apply_ttl(r, ["testkey"], p)
         r.persist.assert_called_once_with("testkey")
         r.expire.assert_not_called()
 
     def test_expire_called_when_expire_seconds_set(self):
         r = MagicMock()
         p = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
-        apply_policy(r, "testkey", p)
+        apply_ttl(r, ["testkey"], p)
         r.expire.assert_called_once_with("testkey", 300)
         r.persist.assert_not_called()
 

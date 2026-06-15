@@ -235,7 +235,7 @@ class GPDCNamespace(MutableMapping):
         is_new: bool,
         obj_name: str = "",
     ) -> None:
-        from .lifecycle import apply_lifecycle
+        from .lifecycle import apply_ttl
 
         r = self._redis()
         meta = ObjectMeta(
@@ -248,7 +248,7 @@ class GPDCNamespace(MutableMapping):
             updated_at=now,
         )
         meta.save(r, obj_key)
-        apply_lifecycle(r, obj_key, "", "", False, policy)
+        apply_ttl(r, [obj_key], policy)
 
     def _write_container_meta(
         self,
@@ -365,10 +365,10 @@ class GPDCNamespace(MutableMapping):
                 if not is_new:
                     entry.codec_class.delete_raw(self, raw_key)
                 entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
-            from .lifecycle import apply_lifecycle
+            from .lifecycle import apply_ttl
 
             ref_key = make_ref_key(self._domain.name, self._name, key)
-            apply_lifecycle(r, obj_key, raw_key, ref_key, True, policy)
+            apply_ttl(r, [obj_key, raw_key, ref_key], policy)
         else:
             codec = entry.codec_class
             encoded = codec.encode_value(value)

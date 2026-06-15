@@ -194,22 +194,27 @@ class TestCollectRefNamesFromRaw:
 class TestParseRefEncoded:
     def test_valid_ref(self):
         from gpdatacached.keys import parse_ref_encoded
+
         result = parse_ref_encoded("ref:gpdc:domain:ns:obj:target_name")
         assert result == "target_name"
 
     def test_non_ref_returns_none(self):
         from gpdatacached.keys import parse_ref_encoded
+
         assert parse_ref_encoded("str:hello") is None
 
     def test_malformed_ref_returns_none(self):
         from gpdatacached.keys import parse_ref_encoded
+
         assert parse_ref_encoded("ref:nocolonshere") is None
 
     def test_anonymous_name(self):
         from gpdatacached.keys import parse_ref_encoded
+
         result = parse_ref_encoded("ref:gpdc:d:ns:obj:~anon:abc-123")
         assert result == "~anon:abc-123"
 
     def test_empty_string(self):
         from gpdatacached.keys import parse_ref_encoded
+
         assert parse_ref_encoded("") is None
