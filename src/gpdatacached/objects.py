@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 from .exceptions import LifecyclePermissionError, ObjectGoneError
 from .keys import make_object_key, make_uri
 from .meta import ObjectMeta
-from .ttl import _LifecycleContext
+from .lifecycle import _LifecycleContext
 
 
 class GPDCDataObject(ABC):
@@ -108,7 +108,7 @@ class GPDCDataObject(ABC):
             )
 
     def set_lifecycle(self, policy, *, propagate: bool = True) -> None:
-        from .ttl import (
+        from .lifecycle import (
             _validate_policy,
             policy_from_meta,
             apply_lifecycle,
@@ -142,7 +142,7 @@ class GPDCDataObject(ABC):
             )
 
     def update_cache_mode_and_ttl(self, cache_mode: str, ttl: int) -> None:
-        from .ttl import TTLPolicy
+        from .lifecycle import TTLPolicy
 
         if cache_mode not in ("permanent", "ttl", "sliding"):
             raise ValueError(f"Invalid cache_mode: {cache_mode!r}")
@@ -195,7 +195,7 @@ class GPDCDataObject(ABC):
         return meta.updated_at
 
     def expire_in(self, seconds: int) -> None:
-        from .ttl import TTLPolicy
+        from .lifecycle import TTLPolicy
 
         ctx = self._load_lifecycle_context()
         if ctx.meta.cache_mode != "ttl":
@@ -205,7 +205,7 @@ class GPDCDataObject(ABC):
         self.set_lifecycle(policy)
 
     def expire_at(self, when: datetime.datetime) -> None:
-        from .ttl import TTLPolicy
+        from .lifecycle import TTLPolicy
 
         ctx = self._load_lifecycle_context()
         if ctx.meta.cache_mode != "ttl":
@@ -219,7 +219,7 @@ class GPDCDataObject(ABC):
         self.set_lifecycle(policy)
 
     def persist(self) -> None:
-        from .ttl import TTLPolicy
+        from .lifecycle import TTLPolicy
 
         ctx = self._load_lifecycle_context()
         self._check_owner_permission(ctx.meta)

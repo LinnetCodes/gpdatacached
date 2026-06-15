@@ -6,7 +6,7 @@ from gpdatacached.exceptions import GPDCError, LifecyclePermissionError, ObjectG
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 from gpdatacached.meta import ObjectMeta
 from gpdatacached.objects import GPDCDataObject
-from gpdatacached.ttl import TTLPolicy
+from gpdatacached.lifecycle import TTLPolicy
 
 
 class TestModuleExports:

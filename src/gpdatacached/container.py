@@ -49,7 +49,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         When owned by a parent, the sliding refresh propagates upward
         through the owner chain.
         """
-        from .ttl import policy_from_meta, policy_for_sliding_touch
+        from .lifecycle import policy_from_meta, policy_for_sliding_touch
         from .meta import ObjectMeta
         from .exceptions import ObjectGoneError
 
@@ -76,7 +76,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
 
     def _propagate_sliding_ttl_upward(self, owner_name: str, r) -> None:
         """Propagate a sliding-window TTL refresh up the owner chain to the first self-owned ancestor."""
-        from .ttl import policy_from_meta, policy_for_sliding_touch
+        from .lifecycle import policy_from_meta, policy_for_sliding_touch
         from .keys import make_object_key
 
         while owner_name:

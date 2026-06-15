@@ -63,7 +63,7 @@ class PydanticModelContainerCodec(GPDCContainerCodec):
     @classmethod
     def create_raw(cls, namespace, raw_key: str, value: object, owner_name: str, cache_mode: str, ttl: int) -> None:
         from pydantic import BaseModel
-        from ..ttl import policy_from_defaults
+        from ..lifecycle import policy_from_defaults
 
         if not isinstance(value, BaseModel):
             raise TypeError(f"Expected BaseModel, got {type(value).__name__!r}")
@@ -134,7 +134,7 @@ class BaseModelContainerObject(GPDCContainerObject, collections.abc.MutableMappi
     def __setitem__(self, key: str, value: object) -> None:
         if key not in self._field_names:
             raise KeyError(f"Cannot set unknown field {key!r} on {self._model_class.__name__}")
-        from ..ttl import policy_from_meta
+        from ..lifecycle import policy_from_meta
         from ..meta import ObjectMeta
 
         r = self._redis()

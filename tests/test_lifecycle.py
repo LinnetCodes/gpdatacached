@@ -7,7 +7,7 @@ from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 from gpdatacached.meta import ObjectMeta
-from gpdatacached.ttl import (
+from gpdatacached.lifecycle import (
     TTLPolicy,
     policy_from_defaults,
     policy_from_meta,
@@ -147,41 +147,41 @@ class TestPolicyFromDefaultsRejectsInherited:
 
 
 def test_effective_policy_removed():
-    import gpdatacached.ttl as ttl_mod
+    import gpdatacached.lifecycle as ttl_mod
 
     assert not hasattr(ttl_mod, "effective_policy")
 
 
 def test_validate_policy_rejects_invalid():
-    from gpdatacached.ttl import _validate_policy, TTLPolicy
+    from gpdatacached.lifecycle import _validate_policy, TTLPolicy
 
     with pytest.raises(ValueError):
         _validate_policy(TTLPolicy(cache_mode="invalid", declared_ttl=0, expire_seconds=None))
 
 
 def test_validate_policy_rejects_negative_ttl():
-    from gpdatacached.ttl import _validate_policy, TTLPolicy
+    from gpdatacached.lifecycle import _validate_policy, TTLPolicy
 
     with pytest.raises(ValueError):
         _validate_policy(TTLPolicy(cache_mode="ttl", declared_ttl=-1, expire_seconds=1))
 
 
 def test_validate_policy_rejects_ttl_mode_with_zero_ttl():
-    from gpdatacached.ttl import _validate_policy, TTLPolicy
+    from gpdatacached.lifecycle import _validate_policy, TTLPolicy
 
     with pytest.raises(ValueError, match="requires declared_ttl > 0"):
         _validate_policy(TTLPolicy(cache_mode="ttl", declared_ttl=0, expire_seconds=None))
 
 
 def test_validate_policy_rejects_sliding_mode_with_zero_ttl():
-    from gpdatacached.ttl import _validate_policy, TTLPolicy
+    from gpdatacached.lifecycle import _validate_policy, TTLPolicy
 
     with pytest.raises(ValueError, match="requires declared_ttl > 0"):
         _validate_policy(TTLPolicy(cache_mode="sliding", declared_ttl=0, expire_seconds=None))
 
 
 def test_propagate_lifecycle_uses_owner_check(clean_redis):
-    from gpdatacached.ttl import propagate_lifecycle, TTLPolicy
+    from gpdatacached.lifecycle import propagate_lifecycle, TTLPolicy
 
     r = clean_redis
     parent_name = "parent"

@@ -1,4 +1,4 @@
-# src/gpdatacached/ttl.py
+"""Data-object lifecycle management: cache-mode/TTL policy, Redis TTL application, and propagation."""
 from __future__ import annotations
 
 from dataclasses import dataclass

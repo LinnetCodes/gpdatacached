@@ -235,7 +235,7 @@ class GPDCNamespace(MutableMapping):
         is_new: bool,
         obj_name: str = "",
     ) -> None:
-        from .ttl import apply_lifecycle
+        from .lifecycle import apply_lifecycle
 
         r = self._redis()
         meta = ObjectMeta(
@@ -339,12 +339,12 @@ class GPDCNamespace(MutableMapping):
                 self._cleanup_alias_binding(key, existing)
             elif existing.binding_kind == "owner":
                 is_new = False
-                from .ttl import policy_from_meta
+                from .lifecycle import policy_from_meta
 
                 policy = policy_from_meta(existing.meta)
 
         if policy is None:
-            from .ttl import policy_from_defaults
+            from .lifecycle import policy_from_defaults
 
             policy = policy_from_defaults(self._get_default_cache_mode(), self._get_default_ttl_seconds())
 
@@ -365,7 +365,7 @@ class GPDCNamespace(MutableMapping):
                 if not is_new:
                     entry.codec_class.delete_raw(self, raw_key)
                 entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
-            from .ttl import apply_lifecycle
+            from .lifecycle import apply_lifecycle
 
             ref_key = make_ref_key(self._domain.name, self._name, key)
             apply_lifecycle(r, obj_key, raw_key, ref_key, True, policy)

@@ -163,7 +163,7 @@ def _create_anonymous_object(
     parent_name: str,
     policy,
 ) -> tuple[str, str]:
-    from .ttl import apply_lifecycle
+    from .lifecycle import apply_lifecycle
     from .meta import ObjectMeta
 
     entry = GPDCTypeRegistry.lookup_by_python_type(python_value)

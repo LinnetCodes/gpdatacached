@@ -5,7 +5,7 @@ import collections.abc
 from ..codec import GPDCContainerCodec
 from ..container import GPDCContainerObject
 from ..meta import ObjectMeta
-from ..ttl import policy_from_meta
+from ..lifecycle import policy_from_meta
 from ..types import decode_element, decode_key, encode_element, encode_key
 
 
@@ -14,7 +14,7 @@ class DictCodec(GPDCContainerCodec):
 
     @classmethod
     def create_raw(cls, namespace, raw_key: str, value: dict, owner_name: str, cache_mode: str, ttl: int) -> None:
-        from ..ttl import policy_from_defaults
+        from ..lifecycle import policy_from_defaults
         from ..types import encode_element, encode_key
 
         if not value:

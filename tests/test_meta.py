@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from unittest.mock import MagicMock, call
 
-from gpdatacached.ttl import TTLPolicy, apply_lifecycle
+from gpdatacached.lifecycle import TTLPolicy, apply_lifecycle
 from gpdatacached.meta import ObjectMeta
 
 
