@@ -147,9 +147,9 @@ class TestPolicyFromDefaultsRejectsInherited:
 
 
 def test_effective_policy_removed():
-    import gpdatacached.lifecycle as ttl_mod
+    import gpdatacached.lifecycle as lifecycle_mod
 
-    assert not hasattr(ttl_mod, "effective_policy")
+    assert not hasattr(lifecycle_mod, "effective_policy")
 
 
 def test_validate_policy_rejects_invalid():
