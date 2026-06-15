@@ -257,7 +257,7 @@ class TestObjectMetaTouch:
         assert touched.item_count == 3
 
 
-class TestApplyLifecycle:
+class TestApplyTtl:
     def test_applies_ttl_to_obj_key(self):
         r = MagicMock()
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
