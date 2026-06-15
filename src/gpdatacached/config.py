@@ -5,7 +5,7 @@ from typing import ClassVar, Optional
 from gpconfig import GPConfig
 from pydantic import Field, field_validator, model_validator
 
-from .lifecycle import validate_cache_mode_and_ttl
+from .lifecycle import VALID_CACHE_MODES, validate_cache_mode_and_ttl
 
 
 class GPDCNamespaceConfig(GPConfig):
@@ -19,7 +19,7 @@ class GPDCNamespaceConfig(GPConfig):
     @field_validator("default_cache_mode")
     @classmethod
     def _validate_cache_mode(cls, v: str | None) -> str | None:
-        if v is not None and v not in ("permanent", "ttl", "sliding"):
+        if v is not None and v not in VALID_CACHE_MODES:
             raise ValueError(f"Invalid default_cache_mode: {v!r}")
         return v
 
@@ -58,7 +58,7 @@ class GPDCDomainConfig(GPConfig):
     @field_validator("default_cache_mode")
     @classmethod
     def _validate_cache_mode(cls, v: str) -> str:
-        if v not in ("permanent", "ttl", "sliding"):
+        if v not in VALID_CACHE_MODES:
             raise ValueError(f"Invalid default_cache_mode: {v!r}")
         return v
 

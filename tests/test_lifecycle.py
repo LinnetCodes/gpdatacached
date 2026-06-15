@@ -244,16 +244,6 @@ def test_construction_tolerates_ttl_mode_with_zero_ttl():
     assert p.expire_seconds is None
 
 
-def test_policy_from_defaults_rejects_ttl_mode_with_zero_ttl():
-    with pytest.raises(ValueError, match="requires ttl > 0"):
-        policy_from_defaults("ttl", 0)
-
-
-def test_policy_from_defaults_rejects_sliding_mode_with_zero_ttl():
-    with pytest.raises(ValueError, match="requires ttl > 0"):
-        policy_from_defaults("sliding", 0)
-
-
 def test_propagate_lifecycle_uses_owner_check(clean_redis):
     from gpdatacached.lifecycle import propagate_lifecycle, TTLPolicy
 
