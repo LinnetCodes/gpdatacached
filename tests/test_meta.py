@@ -260,13 +260,13 @@ class TestObjectMetaTouch:
 class TestApplyTtl:
     def test_applies_ttl_to_obj_key(self):
         r = MagicMock()
-        policy = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=300)
         apply_ttl(r, ["gpdc:d:ns:obj:x", "gpdc:d:ns:raw:x", "gpdc:d:ns:ref:x"], policy)
         r.expire.assert_any_call("gpdc:d:ns:obj:x", 300)
 
     def test_applies_ttl_to_raw_and_ref_for_container(self):
         r = MagicMock()
-        policy = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=300)
         apply_ttl(r, ["gpdc:d:ns:obj:x", "gpdc:d:ns:raw:x", "gpdc:d:ns:ref:x"], policy)
         assert call("gpdc:d:ns:obj:x", 300) in r.expire.call_args_list
         assert call("gpdc:d:ns:raw:x", 300) in r.expire.call_args_list
@@ -274,7 +274,7 @@ class TestApplyTtl:
 
     def test_persist_all_keys(self):
         r = MagicMock()
-        policy = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
+        policy = TTLPolicy(cache_mode="permanent", declared_ttl=0)
         apply_ttl(r, ["gpdc:d:ns:obj:x", "gpdc:d:ns:raw:x", "gpdc:d:ns:ref:x"], policy)
         r.persist.assert_any_call("gpdc:d:ns:obj:x")
         r.persist.assert_any_call("gpdc:d:ns:raw:x")
@@ -282,7 +282,7 @@ class TestApplyTtl:
 
     def test_scalar_skips_raw_and_ref(self):
         r = MagicMock()
-        policy = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=300)
         apply_ttl(r, ["gpdc:d:ns:obj:x"], policy)
         r.expire.assert_called_once_with("gpdc:d:ns:obj:x", 300)
 

@@ -18,13 +18,13 @@ class TestGPDCNamespaceConfig:
     def test_rejects_ttl_mode_with_zero_ttl(self):
         import pytest
 
-        with pytest.raises(ValueError, match="default_ttl_seconds > 0"):
+        with pytest.raises(ValueError, match="requires ttl > 0"):
             GPDCNamespaceConfig(default_cache_mode="ttl", default_ttl_seconds=0)
 
     def test_rejects_sliding_mode_with_zero_ttl(self):
         import pytest
 
-        with pytest.raises(ValueError, match="default_ttl_seconds > 0"):
+        with pytest.raises(ValueError, match="requires ttl > 0"):
             GPDCNamespaceConfig(default_cache_mode="sliding", default_ttl_seconds=0)
 
     def test_allows_ttl_mode_none_ttl(self):
@@ -72,13 +72,13 @@ class TestGPDCDomainConfig:
     def test_rejects_ttl_mode_with_zero_ttl(self):
         import pytest
 
-        with pytest.raises(ValueError, match="default_ttl_seconds > 0"):
+        with pytest.raises(ValueError, match="requires ttl > 0"):
             GPDCDomainConfig(default_cache_mode="ttl", default_ttl_seconds=0)
 
     def test_rejects_sliding_mode_with_zero_ttl(self):
         import pytest
 
-        with pytest.raises(ValueError, match="default_ttl_seconds > 0"):
+        with pytest.raises(ValueError, match="requires ttl > 0"):
             GPDCDomainConfig(default_cache_mode="sliding", default_ttl_seconds=0)
 
     def test_allows_permanent_mode_with_zero_ttl(self):

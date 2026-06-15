@@ -109,17 +109,15 @@ class GPDCDataObject(ABC):
 
     def set_lifecycle(self, policy, *, propagate: bool = True) -> None:
         from .lifecycle import (
-            _validate_policy,
             policy_from_meta,
             apply_ttl,
             propagate_lifecycle,
         )
 
         ctx = self._load_lifecycle_context()
-        _validate_policy(policy)
 
         current = policy_from_meta(ctx.meta)
-        changed = current.cache_mode != policy.cache_mode or current.expire_seconds != policy.expire_seconds
+        changed = current.cache_mode != policy.cache_mode or current.declared_ttl != policy.declared_ttl
 
         updated_meta = ctx.meta.with_updates(
             cache_mode=policy.cache_mode,
@@ -161,18 +159,11 @@ class GPDCDataObject(ABC):
         propagate_ttl_refresh(ctx.r, self.domain.name, self.namespace.name, self.canonical_name)
 
     def update_cache_mode_and_ttl(self, cache_mode: str, ttl: int) -> None:
-        from .lifecycle import TTLPolicy
+        from .lifecycle import policy_from_defaults
 
-        if cache_mode not in ("permanent", "ttl", "sliding"):
-            raise ValueError(f"Invalid cache_mode: {cache_mode!r}")
-        if ttl < 0:
-            raise ValueError(f"ttl must be >= 0: {ttl}")
-        if cache_mode in ("ttl", "sliding") and ttl <= 0:
-            raise ValueError(f"cache_mode='{cache_mode}' requires ttl > 0, got {ttl}")
+        policy = policy_from_defaults(cache_mode, ttl)
         ctx = self._load_lifecycle_context()
         self._check_owner_permission(ctx.meta)
-        expire_seconds = ttl if cache_mode in ("ttl", "sliding") else None
-        policy = TTLPolicy(cache_mode=cache_mode, declared_ttl=ttl, expire_seconds=expire_seconds)
         self.set_lifecycle(policy)
 
     def take_ownership(self) -> None:
@@ -220,7 +211,7 @@ class GPDCDataObject(ABC):
         if ctx.meta.cache_mode != "ttl":
             raise TypeError("expire_in() only applies to objects with cache_mode='ttl'")
         self._check_owner_permission(ctx.meta)
-        policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds)
         self.set_lifecycle(policy)
 
     def expire_at(self, when: datetime.datetime) -> None:
@@ -234,7 +225,7 @@ class GPDCDataObject(ABC):
         if seconds == 0:
             self._redis().delete(ctx.key)
             return
-        policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds, expire_seconds=seconds)
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds)
         self.set_lifecycle(policy)
 
     def persist(self) -> None:
@@ -242,7 +233,7 @@ class GPDCDataObject(ABC):
 
         ctx = self._load_lifecycle_context()
         self._check_owner_permission(ctx.meta)
-        policy = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
+        policy = TTLPolicy(cache_mode="permanent", declared_ttl=0)
         self.set_lifecycle(policy)
 
     def remaining_ttl(self) -> int:

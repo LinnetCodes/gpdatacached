@@ -19,37 +19,45 @@ class _LifecycleContext(NamedTuple):
     is_collection: bool
 
 
+VALID_CACHE_MODES = frozenset({"permanent", "ttl", "sliding"})
+
+
+def _validate_basic(cache_mode: str, ttl: int) -> None:
+    if cache_mode not in VALID_CACHE_MODES:
+        raise ValueError(f"Invalid cache_mode: {cache_mode!r}")
+    if ttl < 0:
+        raise ValueError(f"ttl must be >= 0: {ttl}")
+
+
+def validate_cache_mode_and_ttl(cache_mode: str, ttl: int) -> None:
+    """Strict validation for user-facing policy creation."""
+    _validate_basic(cache_mode, ttl)
+    if cache_mode in ("ttl", "sliding") and ttl <= 0:
+        raise ValueError(f"cache_mode={cache_mode!r} requires ttl > 0, got {ttl}")
+
+
 @dataclass(frozen=True)
 class TTLPolicy:
     cache_mode: str
     declared_ttl: int
-    expire_seconds: int | None
 
+    def __post_init__(self) -> None:
+        _validate_basic(self.cache_mode, self.declared_ttl)
 
-def _validate_policy(policy: TTLPolicy) -> None:
-    if policy.cache_mode not in ("permanent", "ttl", "sliding"):
-        raise ValueError(f"Invalid cache_mode: {policy.cache_mode!r}")
-    if policy.declared_ttl < 0:
-        raise ValueError(f"ttl must be >= 0: {policy.declared_ttl}")
-    if policy.cache_mode in ("ttl", "sliding") and policy.declared_ttl <= 0:
-        raise ValueError(f"cache_mode='{policy.cache_mode}' requires declared_ttl > 0, got {policy.declared_ttl}")
+    @property
+    def expire_seconds(self) -> int | None:
+        if self.cache_mode in ("ttl", "sliding") and self.declared_ttl > 0:
+            return self.declared_ttl
+        return None
 
 
 def policy_from_defaults(cache_mode: str, ttl: int) -> TTLPolicy:
-    if cache_mode not in ("permanent", "ttl", "sliding"):
-        raise ValueError(f"Invalid cache_mode: {cache_mode!r}")
-    if ttl < 0:
-        raise ValueError(f"ttl must be >= 0: {ttl}")
-    if cache_mode in ("ttl", "sliding") and ttl <= 0:
-        raise ValueError(f"cache_mode='{cache_mode}' requires ttl > 0, got {ttl}")
-    expire_seconds = ttl if cache_mode in ("ttl", "sliding") and ttl > 0 else None
-    return TTLPolicy(cache_mode=cache_mode, declared_ttl=ttl, expire_seconds=expire_seconds)
+    validate_cache_mode_and_ttl(cache_mode, ttl)
+    return TTLPolicy(cache_mode=cache_mode, declared_ttl=ttl)
 
 
 def policy_from_meta(meta: ObjectMeta) -> TTLPolicy:
-    if meta.cache_mode in ("ttl", "sliding") and meta.ttl > 0:
-        return TTLPolicy(cache_mode=meta.cache_mode, declared_ttl=meta.ttl, expire_seconds=meta.ttl)
-    return TTLPolicy(cache_mode=meta.cache_mode, declared_ttl=meta.ttl, expire_seconds=None)
+    return TTLPolicy(cache_mode=meta.cache_mode, declared_ttl=meta.ttl)
 
 
 def apply_ttl(r, keys, policy: TTLPolicy) -> None:

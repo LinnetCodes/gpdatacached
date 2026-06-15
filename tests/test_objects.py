@@ -154,7 +154,7 @@ class TestObjectsLifecycle:
     def test_set_lifecycle_updates_meta_and_redis(self, domain, ns):
         ns["obj"] = 42
         obj = ns.get_object("obj")
-        policy = TTLPolicy(cache_mode="ttl", declared_ttl=60, expire_seconds=60)
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=60)
         obj.set_lifecycle(policy)
         meta = obj.meta
         assert meta.cache_mode == "ttl"
@@ -169,7 +169,7 @@ class TestObjectsLifecycle:
         parent_name, child_name = self._setup_parent_and_child(r, d, n)
 
         parent_obj = ns.get_object(parent_name)
-        policy = TTLPolicy(cache_mode="ttl", declared_ttl=120, expire_seconds=120)
+        policy = TTLPolicy(cache_mode="ttl", declared_ttl=120)
         parent_obj.set_lifecycle(policy)
 
         child_key = make_object_key(d, n, child_name)

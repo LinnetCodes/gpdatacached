@@ -180,14 +180,14 @@ class TestSlidingRefresh:
 class TestApplyTtl:
     def test_persist_called_when_expire_seconds_is_none(self):
         r = MagicMock()
-        p = TTLPolicy(cache_mode="permanent", declared_ttl=0, expire_seconds=None)
+        p = TTLPolicy(cache_mode="permanent", declared_ttl=0)
         apply_ttl(r, ["testkey"], p)
         r.persist.assert_called_once_with("testkey")
         r.expire.assert_not_called()
 
     def test_expire_called_when_expire_seconds_set(self):
         r = MagicMock()
-        p = TTLPolicy(cache_mode="ttl", declared_ttl=300, expire_seconds=300)
+        p = TTLPolicy(cache_mode="ttl", declared_ttl=300)
         apply_ttl(r, ["testkey"], p)
         r.expire.assert_called_once_with("testkey", 300)
         r.persist.assert_not_called()
@@ -222,32 +222,36 @@ def test_effective_policy_removed():
     assert not hasattr(lifecycle_mod, "effective_policy")
 
 
-def test_validate_policy_rejects_invalid():
-    from gpdatacached.lifecycle import _validate_policy, TTLPolicy
+def test_construction_rejects_invalid_mode():
+    from gpdatacached.lifecycle import TTLPolicy
 
     with pytest.raises(ValueError):
-        _validate_policy(TTLPolicy(cache_mode="invalid", declared_ttl=0, expire_seconds=None))
+        TTLPolicy(cache_mode="invalid", declared_ttl=0)
 
 
-def test_validate_policy_rejects_negative_ttl():
-    from gpdatacached.lifecycle import _validate_policy, TTLPolicy
+def test_construction_rejects_negative_ttl():
+    from gpdatacached.lifecycle import TTLPolicy
 
     with pytest.raises(ValueError):
-        _validate_policy(TTLPolicy(cache_mode="ttl", declared_ttl=-1, expire_seconds=1))
+        TTLPolicy(cache_mode="permanent", declared_ttl=-1)
 
 
-def test_validate_policy_rejects_ttl_mode_with_zero_ttl():
-    from gpdatacached.lifecycle import _validate_policy, TTLPolicy
+def test_construction_tolerates_ttl_mode_with_zero_ttl():
+    # value object does basic validation only; strictness lives in policy_from_defaults
+    from gpdatacached.lifecycle import TTLPolicy
 
-    with pytest.raises(ValueError, match="requires declared_ttl > 0"):
-        _validate_policy(TTLPolicy(cache_mode="ttl", declared_ttl=0, expire_seconds=None))
+    p = TTLPolicy(cache_mode="ttl", declared_ttl=0)
+    assert p.expire_seconds is None
 
 
-def test_validate_policy_rejects_sliding_mode_with_zero_ttl():
-    from gpdatacached.lifecycle import _validate_policy, TTLPolicy
+def test_policy_from_defaults_rejects_ttl_mode_with_zero_ttl():
+    with pytest.raises(ValueError, match="requires ttl > 0"):
+        policy_from_defaults("ttl", 0)
 
-    with pytest.raises(ValueError, match="requires declared_ttl > 0"):
-        _validate_policy(TTLPolicy(cache_mode="sliding", declared_ttl=0, expire_seconds=None))
+
+def test_policy_from_defaults_rejects_sliding_mode_with_zero_ttl():
+    with pytest.raises(ValueError, match="requires ttl > 0"):
+        policy_from_defaults("sliding", 0)
 
 
 def test_propagate_lifecycle_uses_owner_check(clean_redis):
@@ -296,7 +300,7 @@ def test_propagate_lifecycle_uses_owner_check(clean_redis):
     )
     not_owned_meta.save(r, not_owned_key)
 
-    policy = TTLPolicy(cache_mode="ttl", declared_ttl=120, expire_seconds=120)
+    policy = TTLPolicy(cache_mode="ttl", declared_ttl=120)
     propagate_lifecycle(r, "d", "ns", parent_name, policy, set())
 
     updated_owned = ObjectMeta.load(r, owned_key)
