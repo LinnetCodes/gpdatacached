@@ -136,7 +136,6 @@ class GPDCDataObject(ABC):
                 self.namespace.name,
                 self.canonical_name,
                 policy,
-                set(),
             )
 
     def refresh_ttl(self) -> None:

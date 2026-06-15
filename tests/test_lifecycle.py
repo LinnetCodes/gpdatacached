@@ -291,7 +291,7 @@ def test_propagate_lifecycle_uses_owner_check(clean_redis):
     not_owned_meta.save(r, not_owned_key)
 
     policy = TTLPolicy(cache_mode="ttl", declared_ttl=120)
-    propagate_lifecycle(r, "d", "ns", parent_name, policy, set())
+    propagate_lifecycle(r, "d", "ns", parent_name, policy)
 
     updated_owned = ObjectMeta.load(r, owned_key)
     assert updated_owned.ttl == 120

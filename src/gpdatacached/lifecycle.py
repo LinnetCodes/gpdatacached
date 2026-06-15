@@ -72,7 +72,14 @@ def apply_ttl(r, keys, policy: TTLPolicy) -> None:
             r.expire(k, seconds)
 
 
-def propagate_lifecycle(r, domain: str, namespace: str, parent_name: str, policy: TTLPolicy, visited: set[str]) -> None:
+def propagate_lifecycle(r, domain: str, namespace: str, parent_name: str, policy: TTLPolicy) -> None:
+    """Propagate a policy change to an owned subtree (meta rewrite + TTL apply)."""
+    _propagate_lifecycle(r, domain, namespace, parent_name, policy, set())
+
+
+def _propagate_lifecycle(
+    r, domain: str, namespace: str, parent_name: str, policy: TTLPolicy, visited: set[str]
+) -> None:
     parent_obj_key = make_object_key(domain, namespace, parent_name)
     parent_meta = ObjectMeta.load(r, parent_obj_key)
     if parent_meta is None or not parent_meta.is_collection():
@@ -81,7 +88,7 @@ def propagate_lifecycle(r, domain: str, namespace: str, parent_name: str, policy
     child_names = collect_ref_names_from_raw(r, parent_meta.value, parent_meta.type)
 
     updates = []
-    for child_name in child_names:
+    for child_name in dict.fromkeys(child_names):
         if child_name in visited:
             continue
         visited.add(child_name)
@@ -117,7 +124,7 @@ def propagate_lifecycle(r, domain: str, namespace: str, parent_name: str, policy
         pipe.execute()
 
     for child_name, _, _ in updates:
-        propagate_lifecycle(r, domain, namespace, child_name, policy, visited)
+        _propagate_lifecycle(r, domain, namespace, child_name, policy, visited)
 
 
 def propagate_ttl_refresh(r, domain: str, namespace: str, parent_name: str) -> None:
