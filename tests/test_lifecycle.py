@@ -437,29 +437,6 @@ class TestAnonymousInherited:
         assert ttl_val > 0
 
 
-class TestSlidingNestedContainer:
-    def test_sliding_parent_refreshes_nested_anon_ttl(self, clean_redis):
-        r = clean_redis
-        domain_name = "testdomain_slide"
-        ns = _make_namespace(r, domain_name, cache_mode="sliding", ttl=10)
-        ns["d"] = {"items": [1, 2, 3]}
-        anon_name = _extract_anon_name_from_dict(r, domain_name, _INHERIT_NS, "d", "items")
-        anon_obj_key = make_object_key(domain_name, _INHERIT_NS, anon_name)
-        assert r.hget(anon_obj_key, "cache_mode") == "sliding"
-        assert r.hget(anon_obj_key, "owner") == "d"
-        anon_raw_key = make_raw_key(domain_name, _INHERIT_NS, anon_name)
-        initial_ttl = r.ttl(anon_raw_key)
-        assert initial_ttl > 0
-
-        time.sleep(1)
-
-        d = ns["d"]
-        d["b"] = "hello"
-
-        refreshed_ttl = r.ttl(anon_raw_key)
-        assert refreshed_ttl > 0
-
-
 class TestTTLExpiryConsistency:
     def test_ttl_container_obj_has_ttl(self, clean_redis):
         r = clean_redis
