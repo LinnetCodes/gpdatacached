@@ -411,6 +411,14 @@ class TestListSlice:
         with pytest.raises(TypeError, match="slice indexing"):
             del obj[1:3]
 
+    def test_slice_with_nested_container(self, ns):
+        ns["ml"] = [1, [2, 3], 4]
+        lst = ns["ml"]
+        result = lst[0:2]
+        assert isinstance(result, list)
+        assert result[0] == 1
+        assert list(result[1]) == [2, 3]
+
 
 class TestDictOps:
     def test_type(self, setup_dict):

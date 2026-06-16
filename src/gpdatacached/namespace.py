@@ -366,7 +366,7 @@ class GPDCNamespace(MutableMapping):
                     entry.codec_class.delete_raw(self, raw_key)
                 from .types import encode_session
 
-                with encode_session():
+                with encode_session(self):
                     entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
             from .lifecycle import apply_ttl
 

@@ -22,7 +22,7 @@ _encode_memo_var: contextvars.ContextVar[dict[int, tuple[str, str | None]] | Non
 
 
 @contextlib.contextmanager
-def encode_session():
+def encode_session(namespace: GPDCNamespace | None = None):
     """Establish an encode memo scope for cycle detection and aliasing.
 
     Must wrap any top-level encode operation that makes multiple sibling
@@ -30,13 +30,21 @@ def encode_session():
     ``ListObject.extend``, ``DictObject.update``). Single-call paths
     (``append``, ``__setitem__``) are handled by a fallback session inside
     ``encode_element`` itself.
+
+    If ``namespace`` is provided, any anonymous objects created during the
+    session are rolled back (deleted from Redis) when an exception propagates
+    out of the session.
     """
     memo: dict[int, tuple[str, str | None]] = {}
     token = _encode_memo_var.set(memo)
+    ok = False
     try:
         yield
+        ok = True
     finally:
         _encode_memo_var.reset(token)
+        if not ok and namespace is not None:
+            _rollback_encode_memo(namespace, memo)
 
 
 @dataclass(frozen=True)
@@ -112,7 +120,7 @@ def encode_element(
     entry = GPDCTypeRegistry.lookup_by_python_type(value)
     if entry.is_container:
         if _encode_memo_var.get() is None:
-            with encode_session():
+            with encode_session(namespace):
                 return _encode_container_value(value, namespace, owner_name, policy)
         return _encode_container_value(value, namespace, owner_name, policy)
     return entry.codec_class.encode_value(value)
@@ -152,6 +160,21 @@ def _add_alias_ref(namespace: GPDCNamespace, ref_val: str, owner_name: str) -> N
         return
     ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
     add_referrer(namespace._redis(), ref_key, owner_name)
+
+
+def _rollback_encode_memo(namespace: GPDCNamespace, memo: dict[int, tuple[str, str | None]]) -> None:
+    """Delete all anonymous objects created during a failed encode session."""
+    r = namespace._redis()
+    for state, ref_val in memo.values():
+        if state != "complete" or not ref_val:
+            continue
+        anon_name = parse_ref_encoded(ref_val)
+        if anon_name is None:
+            continue
+        obj_key = ref_val[len("ref:") :]
+        raw_key = make_raw_key(namespace.domain.name, namespace.name, anon_name)
+        ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
+        r.delete(obj_key, raw_key, ref_key)
 
 
 def _decode_scalar(encoded: str) -> object:

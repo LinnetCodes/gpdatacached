@@ -131,7 +131,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         owner_name = self._data_owner_name()
         meta = self.meta
         policy = policy_from_meta(meta) if meta else None
-        with encode_session():
+        with encode_session(self._namespace):
             encoded = [encode_element(v, self._namespace, owner_name, policy) for v in values]
         if encoded:
             self._redis().rpush(self.raw_key, *encoded)

@@ -75,6 +75,14 @@ class TestCycleDetection:
         anon_keys = raw_redis.keys("gpdc:testdomain:testns:obj:~anon:*")
         assert anon_keys == []
 
+    def test_no_orphaned_anon_with_preceding_sibling_on_cycle_error(self, ns, raw_redis):
+        d = {"a": [1, 2]}
+        d["self"] = d
+        with pytest.raises(CyclicReferenceError):
+            ns["x"] = d
+        anon_keys = raw_redis.keys("gpdc:testdomain:testns:obj:~anon:*")
+        assert anon_keys == []
+
     def test_non_cyclic_deep_nesting_still_works(self, ns):
         ns["x"] = {"a": {"b": {"c": {"d": [1, 2, 3]}}}}
         d = ns["x"]
@@ -127,6 +135,14 @@ class TestAliasingSingleCall:
 
         assert not raw_redis.exists(make_object_key("testdomain", "testns", anon_name))
         assert not raw_redis.exists(make_raw_key("testdomain", "testns", anon_name))
+
+    def test_scalar_aliasing_has_no_special_behavior(self, ns):
+        """Scalars are immutable — both occurrences are plain int values."""
+        x = 42
+        ns["k"] = {"a": x, "b": x}
+        d = ns["k"]
+        assert d["a"] == 42
+        assert d["b"] == 42
 
 
 class TestSiblingAliasing:

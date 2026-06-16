@@ -172,7 +172,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         policy = policy_from_meta(meta) if meta else None
         dirty = False
         try:
-            with encode_session():
+            with encode_session(self._namespace):
                 for k, v in pairs:
                     encoded_key = encode_key(k)
                     old_encoded = r.hget(self.raw_key, encoded_key)
