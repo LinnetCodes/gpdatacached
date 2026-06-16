@@ -364,7 +364,10 @@ class GPDCNamespace(MutableMapping):
             if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
                 if not is_new:
                     entry.codec_class.delete_raw(self, raw_key)
-                entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
+                from .types import encode_session
+
+                with encode_session():
+                    entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
             from .lifecycle import apply_ttl
 
             ref_key = make_ref_key(self._domain.name, self._name, key)

@@ -127,3 +127,51 @@ class TestAliasingSingleCall:
 
         assert not raw_redis.exists(make_object_key("testdomain", "testns", anon_name))
         assert not raw_redis.exists(make_raw_key("testdomain", "testns", anon_name))
+
+
+class TestSiblingAliasing:
+    def test_dict_sibling_alias_via_setitem(self, ns):
+        shared = [1, 2, 3]
+        ns["x"] = {"a": shared, "b": shared}
+        d = ns["x"]
+        assert d["a"].name == d["b"].name
+        assert _ref_count(ns, d["a"].name) == 2
+
+    def test_list_sibling_alias_via_extend(self, ns):
+        ns["lst"] = []
+        lst = ns["lst"]
+        shared = [1, 2]
+        lst.extend([shared, shared])
+        assert lst[0].name == lst[1].name
+        assert _ref_count(ns, lst[0].name) == 2
+
+    def test_dict_sibling_alias_via_update(self, ns):
+        ns["d"] = {}
+        d = ns["d"]
+        shared = [1, 2]
+        d.update({"a": shared, "b": shared})
+        assert d["a"].name == d["b"].name
+        assert _ref_count(ns, d["a"].name) == 2
+
+    def test_sibling_alias_mutation_visible(self, ns):
+        shared = [1, 2, 3]
+        ns["x"] = {"a": shared, "b": shared}
+        d = ns["x"]
+        d["a"].append(99)
+        assert list(d["b"]) == [1, 2, 3, 99]
+
+    def test_sibling_alias_gc_whole_parent(self, ns, raw_redis):
+        shared = [1, 2, 3]
+        ns["x"] = {"a": shared, "b": shared}
+        d = ns["x"]
+        anon_name = d["a"].name
+
+        del ns["x"]
+
+        assert not raw_redis.exists(make_object_key("testdomain", "testns", anon_name))
+        assert not raw_redis.exists(make_raw_key("testdomain", "testns", anon_name))
+
+    def test_non_aliased_siblings_create_distinct_anons(self, ns):
+        ns["x"] = {"a": [1, 2], "b": [1, 2]}
+        d = ns["x"]
+        assert d["a"].name != d["b"].name

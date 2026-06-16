@@ -155,6 +155,8 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         return self[key]
 
     def update(self, other=None, **kwargs):
+        from ..types import encode_session
+
         pairs = []
         if other is not None:
             if hasattr(other, "items"):
@@ -170,13 +172,14 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         policy = policy_from_meta(meta) if meta else None
         dirty = False
         try:
-            for k, v in pairs:
-                encoded_key = encode_key(k)
-                old_encoded = r.hget(self.raw_key, encoded_key)
-                encoded_val = encode_element(v, self._namespace, owner_name, policy)
-                r.hset(self.raw_key, encoded_key, encoded_val)
-                self._release_element_ref(old_encoded)
-                dirty = True
+            with encode_session():
+                for k, v in pairs:
+                    encoded_key = encode_key(k)
+                    old_encoded = r.hget(self.raw_key, encoded_key)
+                    encoded_val = encode_element(v, self._namespace, owner_name, policy)
+                    r.hset(self.raw_key, encoded_key, encoded_val)
+                    self._release_element_ref(old_encoded)
+                    dirty = True
         finally:
             if dirty:
                 self._touch()

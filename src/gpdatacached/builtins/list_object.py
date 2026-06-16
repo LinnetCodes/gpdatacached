@@ -126,10 +126,13 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         self._touch()
 
     def extend(self, values) -> None:
+        from ..types import encode_session
+
         owner_name = self._data_owner_name()
         meta = self.meta
         policy = policy_from_meta(meta) if meta else None
-        encoded = [encode_element(v, self._namespace, owner_name, policy) for v in values]
+        with encode_session():
+            encoded = [encode_element(v, self._namespace, owner_name, policy) for v in values]
         if encoded:
             self._redis().rpush(self.raw_key, *encoded)
         self._touch()
