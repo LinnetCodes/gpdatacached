@@ -39,3 +39,16 @@ class LifecyclePermissionError(GPDCError):
             f"owned by {owner_name!r}. "
             f"Call take_ownership() first to gain lifecycle management rights."
         )
+
+
+class CyclicReferenceError(GPDCError):
+    """Raised when a cyclic container reference is detected during encoding."""
+
+    def __init__(self, type_name: str) -> None:
+        self.type_name = type_name
+        super().__init__(
+            f"Cannot encode cyclic reference involving {type_name!r}: "
+            f"a container references itself directly or transitively. "
+            f"Break the cycle before storing, or store the shared container "
+            f"separately and reference it by name."
+        )

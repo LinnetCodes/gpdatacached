@@ -6,7 +6,11 @@ __version__ = "0.1.0"
 
 from .codec import GPDCCodec, GPDCContainerCodec, GPDCScalarCodec
 from .config import GPDCDomainConfig, GPDCNamespaceConfig
-from .exceptions import CanonicalObjectReferencedError, ObjectGoneError
+from .exceptions import (
+    CanonicalObjectReferencedError,
+    CyclicReferenceError,
+    ObjectGoneError,
+)
 from .domain import GPDCDomain
 from .keys import make_uri, uri_to_redis_key, validate_object_name
 from .namespace import GPDCNamespace
@@ -39,6 +43,7 @@ from .builtins.tuple_object import TupleCodec as TupleCodec  # noqa: F401
 __all__ = [
     "__version__",
     "CanonicalObjectReferencedError",
+    "CyclicReferenceError",
     "ObjectGoneError",
     "GPDCDomain",
     "GPDCNamespace",
