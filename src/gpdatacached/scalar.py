@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import datetime
 from .exceptions import GPDCError, ObjectGoneError
-from .objects import GPDCDataObject
+from .object import GPDCDataObject
 from .meta import ObjectMeta
 
 

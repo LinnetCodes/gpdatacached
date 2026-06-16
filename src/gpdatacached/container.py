@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
 from .keys import make_object_key, make_raw_key, make_ref_key, parse_ref_encoded
-from .objects import GPDCDataObject
+from .object import GPDCDataObject
 from .meta import ObjectMeta
 from .refset import release_ref, get_referrers, has_referrers
 from .types import decode_element

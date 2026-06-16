@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
 from .keys import make_object_key, make_raw_key, make_ref_key, parse_ref_encoded
-from .objects import GPDCDataObject
+from .object import GPDCDataObject
 from .refset import add_referrer
 
 

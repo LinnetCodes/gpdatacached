@@ -11,7 +11,7 @@ from .domain import GPDCDomain
 from .keys import make_uri, uri_to_redis_key, validate_object_name
 from .namespace import GPDCNamespace
 from .types import GPDCTypeRegistry
-from .objects import GPDCDataObject
+from .object import GPDCDataObject
 from .scalar import GPDCScalarObject
 from .container import GPDCContainerObject
 from .builtins.bool_object import BoolObject

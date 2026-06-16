@@ -5,7 +5,7 @@ import pytest
 from gpdatacached.exceptions import GPDCError, LifecyclePermissionError, ObjectGoneError
 from gpdatacached.keys import make_object_key, make_raw_key, make_ref_key
 from gpdatacached.meta import ObjectMeta
-from gpdatacached.objects import GPDCDataObject
+from gpdatacached.object import GPDCDataObject
 from gpdatacached.lifecycle import TTLPolicy
 
 
