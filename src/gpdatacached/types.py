@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import datetime
 import threading
 import uuid
@@ -12,6 +14,29 @@ if TYPE_CHECKING:
 from .keys import make_object_key, make_raw_key, make_ref_key, parse_ref_encoded
 from .object import GPDCDataObject
 from .refset import add_referrer
+
+
+_encode_memo_var: contextvars.ContextVar[dict[int, tuple[str, str | None]] | None] = contextvars.ContextVar(
+    "_encode_memo", default=None
+)
+
+
+@contextlib.contextmanager
+def encode_session():
+    """Establish an encode memo scope for cycle detection and aliasing.
+
+    Must wrap any top-level encode operation that makes multiple sibling
+    ``encode_element`` calls (e.g. container ``create_raw``,
+    ``ListObject.extend``, ``DictObject.update``). Single-call paths
+    (``append``, ``__setitem__``) are handled by a fallback session inside
+    ``encode_element`` itself.
+    """
+    memo: dict[int, tuple[str, str | None]] = {}
+    token = _encode_memo_var.set(memo)
+    try:
+        yield
+    finally:
+        _encode_memo_var.reset(token)
 
 
 @dataclass(frozen=True)
@@ -86,9 +111,47 @@ def encode_element(
         return _ref_existing_container(namespace, value, owner_name)
     entry = GPDCTypeRegistry.lookup_by_python_type(value)
     if entry.is_container:
-        _, ref_val = _create_anonymous_object(namespace, value, owner_name, policy)
-        return ref_val
+        if _encode_memo_var.get() is None:
+            with encode_session():
+                return _encode_container_value(value, namespace, owner_name, policy)
+        return _encode_container_value(value, namespace, owner_name, policy)
     return entry.codec_class.encode_value(value)
+
+
+def _encode_container_value(
+    value: object,
+    namespace: GPDCNamespace,
+    owner_name: str,
+    policy,
+) -> str:
+    from .exceptions import CyclicReferenceError
+
+    memo = _encode_memo_var.get()
+    assert memo is not None
+    vid = id(value)
+    if vid in memo:
+        state, ref_val = memo[vid]
+        if state == "in-progress":
+            raise CyclicReferenceError(type(value).__name__)
+        _add_alias_ref(namespace, ref_val, owner_name)
+        return ref_val
+    memo[vid] = ("in-progress", None)
+    try:
+        _, ref_val = _create_anonymous_object(namespace, value, owner_name, policy)
+        memo[vid] = ("complete", ref_val)
+    except BaseException:
+        memo.pop(vid, None)
+        raise
+    return ref_val
+
+
+def _add_alias_ref(namespace: GPDCNamespace, ref_val: str, owner_name: str) -> None:
+    """Bump the reference count for an aliased anonymous object."""
+    anon_name = parse_ref_encoded(ref_val)
+    if anon_name is None:
+        return
+    ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
+    add_referrer(namespace._redis(), ref_key, owner_name)
 
 
 def _decode_scalar(encoded: str) -> object:
@@ -191,9 +254,13 @@ def _create_anonymous_object(
         from .codec import GPDCContainerCodec
 
         if issubclass(entry.codec_class, GPDCContainerCodec):
-            entry.codec_class.create_raw(
-                namespace, raw_key, python_value, anon_name, policy.cache_mode, policy.declared_ttl
-            )
+            try:
+                entry.codec_class.create_raw(
+                    namespace, raw_key, python_value, anon_name, policy.cache_mode, policy.declared_ttl
+                )
+            except BaseException:
+                r.delete(obj_key, raw_key, ref_key)
+                raise
 
     add_referrer(r, ref_key, parent_name)
 
