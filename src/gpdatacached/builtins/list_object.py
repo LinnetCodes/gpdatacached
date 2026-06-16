@@ -66,10 +66,13 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
             raise IndexError(message)
         return index
 
-    def __getitem__(self, index: int) -> object:
-        r = self._redis()
+    def __getitem__(self, index: int | slice) -> object:
+        if isinstance(index, slice):
+            items = self._redis().lrange(self.raw_key, 0, -1)
+            sliced = items[index]
+            return [decode_element(enc, self._namespace) for enc in sliced]
         index = self._normalize_index(index)
-        encoded = r.lindex(self.raw_key, index)
+        encoded = self._redis().lindex(self.raw_key, index)
         if encoded is None:
             raise IndexError("list index out of range")
         return decode_element(encoded, self._namespace)

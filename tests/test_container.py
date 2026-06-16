@@ -166,10 +166,12 @@ class TestListOps:
         assert obj[-1] == 30
         assert obj[-2] == 20
 
-    def test_getitem_slice_raises_typeerror(self, setup_list):
+    def test_getitem_slice_returns_list(self, setup_list):
         obj, *_ = setup_list
-        with pytest.raises(TypeError, match="slice indexing"):
-            obj[1:3]
+        result = obj[1:3]
+        assert isinstance(result, list)
+        assert not isinstance(result, ListObject)
+        assert result == [20, 30]
 
     def test_setitem(self, setup_list):
         obj, *_ = setup_list
@@ -350,6 +352,64 @@ class TestListOps:
         ListCodec.create_raw(ns, raw_key, [10, 30, 20], "mylist", "permanent", 0)
         obj.sort(key=lambda x: -x, reverse=True)
         assert list(obj) == [10, 20, 30]
+
+
+class TestListSlice:
+    def test_basic_slice(self, setup_list):
+        obj, *_ = setup_list
+        assert obj[0:2] == [10, 20]
+
+    def test_slice_returns_native_list(self, setup_list):
+        obj, *_ = setup_list
+        result = obj[0:2]
+        assert isinstance(result, list)
+        assert not isinstance(result, ListObject)
+
+    def test_negative_slice(self, setup_list):
+        obj, *_ = setup_list
+        assert obj[-2:] == [20, 30]
+
+    def test_slice_with_step(self, setup_list):
+        obj, *_ = setup_list
+        assert obj[::2] == [10, 30]
+
+    def test_slice_reverse(self, setup_list):
+        obj, *_ = setup_list
+        assert obj[::-1] == [30, 20, 10]
+
+    def test_slice_out_of_range_clamps(self, setup_list):
+        obj, *_ = setup_list
+        assert obj[100:200] == []
+
+    def test_slice_empty_range(self, setup_list):
+        obj, *_ = setup_list
+        assert obj[5:10] == []
+
+    def test_slice_full_copy(self, setup_list):
+        obj, *_ = setup_list
+        assert obj[:] == [10, 20, 30]
+
+    def test_slice_no_redis_side_effects(self, setup_list):
+        obj, r, *_ = setup_list
+        keys_before = len(r.keys("gpdc:*"))
+        _ = obj[0:2]
+        keys_after = len(r.keys("gpdc:*"))
+        assert keys_before == keys_after
+
+    def test_int_getitem_still_works(self, setup_list):
+        obj, *_ = setup_list
+        assert obj[0] == 10
+        assert obj[-1] == 30
+
+    def test_setitem_slice_still_raises(self, setup_list):
+        obj, *_ = setup_list
+        with pytest.raises(TypeError, match="slice indexing"):
+            obj[1:3] = [99, 100]
+
+    def test_delitem_slice_still_raises(self, setup_list):
+        obj, *_ = setup_list
+        with pytest.raises(TypeError, match="slice indexing"):
+            del obj[1:3]
 
 
 class TestDictOps:
