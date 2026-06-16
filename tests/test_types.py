@@ -3,7 +3,8 @@ from decimal import Decimal
 
 import pytest
 
-from gpdatacached.codec import GPDCScalarCodec
+from gpdatacached.codec import GPDCContainerCodec, GPDCScalarCodec
+from gpdatacached.container import GPDCContainerObject
 from gpdatacached.scalar import GPDCScalarObject
 from gpdatacached.types import GPDCTypeRegistry
 
@@ -29,6 +30,72 @@ class DecimalCodec(GPDCScalarCodec):
 
 class DecimalObject(GPDCScalarObject):
     TYPE = "scalar:decimal"
+
+
+class LenlessContainer:
+    """A container-like type that deliberately lacks __len__."""
+
+    def __init__(self, items):
+        self._items = list(items)
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __eq__(self, other):
+        return isinstance(other, LenlessContainer) and self._items == other._items
+
+
+class LenlessCodec(GPDCContainerCodec):
+    @classmethod
+    def create_raw(cls, namespace, raw_key, value, owner_name, cache_mode, ttl):
+        from gpdatacached.lifecycle import policy_from_defaults
+        from gpdatacached.types import encode_element
+
+        if not value._items:
+            return
+        policy = policy_from_defaults(cache_mode, ttl)
+        encoded = [encode_element(v, namespace, owner_name, policy) for v in value._items]
+        namespace._redis().rpush(raw_key, *encoded)
+
+    @classmethod
+    def read_raw(cls, namespace, raw_key):
+        from gpdatacached.types import decode_element
+
+        items = namespace._redis().lrange(raw_key, 0, -1)
+        return LenlessContainer([decode_element(item, namespace) for item in items])
+
+    @classmethod
+    def delete_raw(cls, namespace, raw_key):
+        namespace._redis().delete(raw_key)
+
+
+class LenlessObject(GPDCContainerObject):
+    TYPE = "collection:lenless"
+
+    @property
+    def type(self):
+        return self.TYPE
+
+    @property
+    def value(self):
+        return LenlessCodec.read_raw(self._namespace, self.raw_key)
+
+    @value.setter
+    def value(self, new_value):
+        self._reject_value_replacement()
+
+    def __len__(self):
+        return self._redis().llen(self.raw_key)
+
+    def __iter__(self):
+        from gpdatacached.types import decode_element
+
+        items = self._redis().lrange(self.raw_key, 0, -1)
+        for item in items:
+            yield decode_element(item, self._namespace)
+
+    def deepcopy(self):
+        return self.value
 
 
 class TestTypeRegistryResolve:
@@ -289,3 +356,51 @@ class TestRegistryErrorPaths:
         obj = ns.get_object("x")
         with pytest.raises(ValueError, match="Invalid cache_mode"):
             obj.update_cache_mode_and_ttl("invalid", 0)
+
+
+class TestLenlessContainerGuard:
+    """H5: _create_anonymous_object must guard len() for containers without __len__."""
+
+    @pytest.fixture(autouse=True)
+    def register_lenless(self):
+        original_gpdc = dict(GPDCTypeRegistry._by_gpdc_type)
+        original_python = list(GPDCTypeRegistry._by_python_type)
+        original_lock = GPDCTypeRegistry._lock
+        try:
+            GPDCTypeRegistry._lock = threading.Lock()
+            GPDCTypeRegistry._by_gpdc_type = dict(original_gpdc)
+            GPDCTypeRegistry._by_python_type = list(original_python)
+
+            GPDCTypeRegistry.register(
+                python_type=LenlessContainer,
+                gpdc_type="collection:lenless",
+                object_class=LenlessObject,
+                codec_class=LenlessCodec,
+                priority=0,
+            )
+            yield
+        finally:
+            GPDCTypeRegistry._by_gpdc_type = original_gpdc
+            GPDCTypeRegistry._by_python_type = original_python
+            GPDCTypeRegistry._lock = original_lock
+
+    def test_nested_lenless_container_does_not_crash(self, ns):
+        ns["x"] = {"inner": LenlessContainer([1, 2, 3])}
+        d = ns["x"]
+        assert isinstance(d["inner"], LenlessObject)
+
+    def test_anon_meta_item_count_is_none(self, ns, raw_redis):
+        from gpdatacached.keys import make_object_key, make_raw_key, parse_ref_encoded
+
+        ns["x"] = {"inner": LenlessContainer([1, 2, 3])}
+        raw_data = raw_redis.hgetall(make_raw_key("testdomain", "testns", "x"))
+        ref_str = raw_data["str:inner"]
+        anon_name = parse_ref_encoded(ref_str)
+        anon_meta = raw_redis.hgetall(make_object_key("testdomain", "testns", anon_name))
+        assert anon_meta.get("item_count", "") == ""
+
+    def test_round_trip(self, ns):
+        ns["x"] = {"inner": LenlessContainer([1, 2, 3])}
+        d = ns["x"]
+        inner = d["inner"]
+        assert list(inner) == [1, 2, 3]

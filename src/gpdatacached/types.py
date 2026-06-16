@@ -183,7 +183,7 @@ def _create_anonymous_object(
         owner=parent_name,
         created_at=now,
         updated_at=now,
-        item_count=len(python_value) if entry.is_container else None,
+        item_count=(len(python_value) if entry.is_container and hasattr(python_value, "__len__") else None),
     )
     meta.save(r, obj_key)
 
