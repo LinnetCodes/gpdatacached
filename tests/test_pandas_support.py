@@ -92,8 +92,11 @@ class TestSeriesCodecRoundTrip:
         raw_key = "gpdc:testdomain:testns:raw:s2"
         try:
             SeriesCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
-            assert ns._redis().hget(raw_key, "data").startswith("ref:")
-            assert ns._redis().hget(raw_key, "index").startswith("ref:")
+            data_ref = ns._redis().hget(raw_key, "data")
+            index_ref = ns._redis().hget(raw_key, "index")
+            assert data_ref.startswith("ref:")
+            assert index_ref.startswith("ref:")
+            assert data_ref != index_ref
             assert ns._redis().hget(raw_key, "dtype") == "str:int64"
         finally:
             ns._redis().delete(raw_key)

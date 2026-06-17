@@ -131,13 +131,9 @@ class SeriesCodec(GPDCContainerCodec):
             raise UnsupportedSeriesDtypeError(str(index.dtype), is_index=True)
 
         policy = policy_from_defaults(cache_mode, ttl)
-        # Materialize lists before opening the encode session so each keeps a
-        # distinct id() for its full lifetime. The encode memo keys on id();
-        # inline temporaries can be GC'd between calls and have their ids
-        # reused, which would alias distinct lists onto one ref.
         data_values = _python_values(value)
         index_labels = _python_labels(index) if kind == "labels" else None
-        categories = list(value.cat.categories.tolist()) if family == "category" else None
+        categories = value.cat.categories.tolist() if family == "category" else None
         fields: dict[str, str] = {}
         with encode_session(namespace):
             fields["data"] = encode_element(data_values, namespace, owner_name, policy)
