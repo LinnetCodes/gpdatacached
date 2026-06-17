@@ -453,3 +453,102 @@ class TestExtend:
         ns["s"] = pd.Series([1], dtype="int64")
         obj = ns.get_object("s")
         assert obj.extend(pd.Series([2], dtype="int64")) is None
+
+
+class TestRejectedOperations:
+    def test_getitem_not_defined(self, ns):
+        ns["s"] = pd.Series([1, 2, 3])
+        obj = ns.get_object("s")
+        with pytest.raises(TypeError):
+            obj[0]
+
+    def test_setitem_not_defined(self, ns):
+        ns["s"] = pd.Series([1, 2, 3])
+        obj = ns.get_object("s")
+        with pytest.raises(TypeError):
+            obj[0] = 99
+
+    def test_delitem_not_defined(self, ns):
+        ns["s"] = pd.Series([1, 2, 3])
+        obj = ns.get_object("s")
+        with pytest.raises(TypeError):
+            del obj[0]
+
+    def test_iloc_setter_rejected(self, ns):
+        ns["s"] = pd.Series([1, 2, 3])
+        obj = ns.get_object("s")
+        with pytest.raises((TypeError, AttributeError)):
+            obj.iloc[0] = 99
+
+
+class TestNestingAndRefCounting:
+    def test_series_as_list_element_round_trips(self, ns):
+        ns["lst"] = [pd.Series([1, 2], dtype="int64"), pd.Series([3, 4], dtype="int64")]
+        lst = ns.get_object("lst")
+        # Nested access returns SeriesObject wrappers; go through .value for the plain Series.
+        assert list(lst[0].value.values) == [1, 2]
+        assert list(lst[1].value.values) == [3, 4]
+
+    def test_series_as_dict_value_round_trips(self, ns):
+        ns["d"] = {"a": pd.Series([1, 2], dtype="int64")}
+        d = ns.get_object("d")
+        assert list(d["a"].value.values) == [1, 2]
+
+    def test_object_dtype_element_nested_container(self, ns):
+        ns["s"] = pd.Series([{"k": 1}, {"k": 2}], dtype=object)
+        obj = ns.get_object("s")
+        # .iloc[0] returns a DictObject wrapper; go through .value for the plain dict.
+        assert obj.iloc[0].value == {"k": 1}
+
+    def test_delete_named_series_releases_children(self, ns, raw_redis):
+        from gpdatacached.keys import make_raw_key
+
+        ns["s"] = pd.Series([1, 2, 3], index=["a", "b", "c"], dtype="int64")
+        obj = ns.get_object("s")
+        data_child = obj._get_data_list()
+        index_child = obj._get_index_list()
+        assert raw_redis.exists(data_child.raw_key)
+        assert raw_redis.exists(index_child.raw_key)
+
+        del ns["s"]
+
+        assert not raw_redis.exists(data_child.raw_key)
+        assert not raw_redis.exists(index_child.raw_key)
+        assert not raw_redis.exists(make_raw_key("testdomain", "testns", "s"))
+
+    def test_sliding_ttl_propagates_to_children(self, ns, raw_redis):
+        ns["s"] = pd.Series([1, 2, 3], dtype="int64")
+        obj = ns.get_object("s")
+        obj.update_cache_mode_and_ttl("sliding", 300)
+        data_child = obj._get_data_list()
+        assert raw_redis.ttl(obj.raw_key) > 0
+        assert raw_redis.ttl(data_child.raw_key) > 0
+
+
+class TestPublicAPI:
+    def test_module_exports(self):
+        import gpdatacached.extensions.pandas_support as m
+
+        for name in ("SeriesObject", "SeriesCodec", "UnsupportedSeriesDtypeError", "register"):
+            assert hasattr(m, name), name
+
+    def test_register_is_idempotent(self):
+        from gpdatacached.extensions.pandas_support import register
+        from gpdatacached.types import GPDCTypeRegistry
+
+        register()
+        register()
+        assert GPDCTypeRegistry.lookup_by_gpdc_type("collection:pandas_series") is not None
+
+    def test_full_workflow(self, ns):
+        ns["temps"] = pd.Series([36.5, 37.0, 36.8], index=["mon", "tue", "wed"], name="temp")
+        obj = ns.get_object("temps")
+        assert obj.iloc[1] == 37.0
+        obj.extend([("thu", 36.9), ("fri", 37.1)])
+        result = obj.value
+        assert list(result.index) == ["mon", "tue", "wed", "thu", "fri"]
+        assert list(result.values) == [36.5, 37.0, 36.8, 36.9, 37.1]
+        assert result.name == "temp"
+        assert str(result.dtype) == "float64"
+        sub = obj.loc["tue"]
+        assert list(sub.values) == [37.0]
