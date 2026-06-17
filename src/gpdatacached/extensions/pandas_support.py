@@ -162,7 +162,11 @@ class SeriesCodec(GPDCContainerCodec):
         fields = namespace._redis().hgetall(raw_key)
         if not fields:
             return pd.Series([], dtype="object")
-        values = decode_element(fields["data"], namespace).value
+        data = decode_element(fields["data"], namespace)
+        # Fully materialize nested GPDC containers (dict/list) into plain Python
+        # values so object-dtype Series round-trip as native dict/list, not as
+        # DictObject/ListObject wrappers.
+        values = data.deepcopy() if hasattr(data, "deepcopy") else data.value
         index_obj = _build_index(fields, namespace)
         return _reconstruct(values, index_obj, fields, namespace)
 

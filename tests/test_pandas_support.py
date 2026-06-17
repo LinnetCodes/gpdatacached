@@ -100,3 +100,205 @@ class TestSeriesCodecRoundTrip:
             assert ns._redis().hget(raw_key, "dtype") == "str:int64"
         finally:
             ns._redis().delete(raw_key)
+
+
+class TestAllValueDtypes:
+    @pytest.mark.parametrize(
+        "series",
+        [
+            pd.Series([1, 2, 3]),  # int64
+            pd.Series([1, 2, 3], dtype="Int64"),  # nullable int
+            pd.Series([1.5, 2.5]),  # float64
+            pd.Series([1.5, 2.5], dtype="Float64"),  # nullable float
+            pd.Series([True, False, True]),  # bool
+            pd.Series([True, False], dtype="boolean"),  # nullable bool
+            pd.Series(["a", "b"]),  # object str
+            pd.Series(["a", "b"], dtype="string"),  # string dtype
+            pd.Series(pd.to_datetime(["2020-01-01", "2021-01-01"])),  # datetime naive
+            pd.Series(pd.to_datetime(["2020-01-01", "2021-01-01"], utc=True)),  # datetime tz-aware
+            pd.Series(["x", "y", "x"], dtype="category"),  # category
+            pd.Series([{"k": 1}, [1, 2], "s"]),  # object mixed
+        ],
+    )
+    def test_round_trip_preserves_dtype_values_index(self, ns, series):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        raw_key = f"gpdc:testdomain:testns:raw:rt-{id(series)}"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+
+        assert str(result.dtype) == str(series.dtype)
+        assert list(result.values) == list(series.values)
+        assert list(result.index) == list(series.index)
+
+    def test_category_preserves_categories_and_ordered(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series(["b", "a", "c"], dtype=pd.CategoricalDtype(["a", "b", "c"], ordered=True))
+        raw_key = "gpdc:testdomain:testns:raw:cat"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+
+        assert list(result.cat.categories) == ["a", "b", "c"]
+        assert result.cat.ordered is True
+
+    def test_tz_aware_preserves_timezone(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series(pd.to_datetime(["2020-01-01", "2021-01-01"], utc=True))
+        raw_key = "gpdc:testdomain:testns:raw:tz"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        # pandas 3.x defaults tz-aware datetimes to microsecond resolution
+        # (datetime64[us, UTC]) instead of nanosecond; assert tz is preserved
+        # rather than hardcoding the resolution string.
+        assert result.dtype == series.dtype
+        assert str(result.dtype.tz) == "UTC"
+
+
+class TestMissingValues:
+    def test_float_nan_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series([1.0, float("nan"), 3.0])
+        raw_key = "gpdc:testdomain:testns:raw:nan"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert pd.isna(result.iloc[1])
+        assert result.iloc[0] == 1.0 and result.iloc[2] == 3.0
+
+    def test_nullable_int_na_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series([1, None, 3], dtype="Int64")
+        raw_key = "gpdc:testdomain:testns:raw:intna"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert str(result.dtype) == "Int64"
+        assert pd.isna(result.iloc[1])
+
+    def test_datetime_nat_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series(pd.to_datetime(["2020-01-01", None]))
+        raw_key = "gpdc:testdomain:testns:raw:nat"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert pd.isna(result.iloc[1])
+
+    def test_object_none_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series(["a", None, "c"], dtype=object)
+        raw_key = "gpdc:testdomain:testns:raw:none"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert result.iloc[1] is None
+
+
+class TestRangeIndex:
+    def test_range_index_omits_index_child(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series([10, 20, 30])  # default RangeIndex 0..3 step 1
+        raw_key = "gpdc:testdomain:testns:raw:rng"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            assert ns._redis().hget(raw_key, "index") is None
+            assert ns._redis().hget(raw_key, "index_kind") == "str:range"
+        finally:
+            ns._redis().delete(raw_key)
+
+    def test_range_index_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series([10, 20, 30], name="n")
+        raw_key = "gpdc:testdomain:testns:raw:rng2"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result.index) == [0, 1, 2]
+        assert list(result.values) == [10, 20, 30]
+
+    def test_custom_step_range_index_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series([10, 20, 30], index=range(5, 20, 5))
+        raw_key = "gpdc:testdomain:testns:raw:rng3"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result.index) == [5, 10, 15]
+
+
+class TestIndexVariety:
+    def test_duplicate_labels_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series([1, 2, 3], index=["a", "a", "b"])
+        raw_key = "gpdc:testdomain:testns:raw:dup"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result.index) == ["a", "a", "b"]
+        assert list(result.values) == [1, 2, 3]
+
+    def test_integer_label_index_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        series = pd.Series([10, 20], index=[100, 200])
+        raw_key = "gpdc:testdomain:testns:raw:iidx"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result.index) == [100, 200]
+
+    def test_datetime_label_index_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        idx = pd.to_datetime(["2020-01-01", "2020-01-02"])
+        series = pd.Series([1.0, 2.0], index=idx)
+        raw_key = "gpdc:testdomain:testns:raw:didx"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result.index) == list(idx)
+
+    def test_multiindex_is_unsupported(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec, UnsupportedSeriesDtypeError
+
+        series = pd.Series([1, 2], index=pd.MultiIndex.from_tuples([("a", 1), ("a", 2)]))
+        raw_key = "gpdc:testdomain:testns:raw:mi"
+        with pytest.raises(UnsupportedSeriesDtypeError):
+            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
