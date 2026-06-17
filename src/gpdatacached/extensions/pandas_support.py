@@ -175,6 +175,23 @@ class SeriesCodec(GPDCContainerCodec):
 _UNLOADED = object()
 
 
+class _ILocIndexer:
+    def __init__(self, owner: "SeriesObject") -> None:
+        self._owner = owner
+
+    def __getitem__(self, key):
+        owner = self._owner
+        data = owner._get_data_list()
+        if data is None:
+            raise IndexError("SeriesObject has no data")
+        if isinstance(key, int):
+            return data[key]
+        if isinstance(key, slice):
+            values = data[key]
+            return owner._build_series_from(values, owner._positional_index_slice(key))
+        raise TypeError(f"iloc expects int or slice, got {type(key).__name__!r}")
+
+
 class SeriesObject(GPDCContainerObject):
     TYPE = "collection:pandas_series"
 
@@ -232,3 +249,25 @@ class SeriesObject(GPDCContainerObject):
 
     def _current_item_count(self) -> int:
         return len(self)
+
+    @property
+    def iloc(self) -> "_ILocIndexer":
+        return _ILocIndexer(self)
+
+    def _positional_index_slice(self, sl: slice):
+        """Return the pd.Index for a positional slice, honoring RangeIndex."""
+        fields = self._raw_fields()
+        index_kind = _decode_scalar(fields["index_kind"])
+        index_name = _decode_scalar(fields["index_name"])
+        if index_kind == "range":
+            start = _decode_scalar(fields["range_start"])
+            stop = _decode_scalar(fields["range_stop"])
+            step = _decode_scalar(fields["range_step"])
+            full = pd.RangeIndex(start, stop, step, name=index_name)
+            return full[sl]
+        index_list = self._get_index_list()
+        labels = index_list[sl] if index_list is not None else []
+        return pd.Index(labels, name=index_name)
+
+    def _build_series_from(self, values: list, index_obj) -> pd.Series:
+        return _reconstruct(values, index_obj, self._raw_fields(), self._namespace)

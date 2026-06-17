@@ -333,3 +333,28 @@ class TestSeriesObjectCore:
         obj = ns.get_object("s")
         with pytest.raises(TypeError):
             obj.value = pd.Series([9, 9])
+
+
+class TestILoc:
+    def test_iloc_int_returns_scalar(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=["a", "b", "c"])
+        obj = ns.get_object("s")
+        assert obj.iloc[0] == 10
+        assert obj.iloc[-1] == 30
+
+    def test_iloc_slice_returns_series(self, ns):
+        ns["s"] = pd.Series([10, 20, 30, 40], index=["a", "b", "c", "d"], name="n")
+        obj = ns.get_object("s")
+        sub = obj.iloc[1:3]
+        assert isinstance(sub, pd.Series)
+        assert list(sub.values) == [20, 30]
+        assert list(sub.index) == ["b", "c"]
+        assert sub.name == "n"
+
+    def test_iloc_on_range_index_series(self, ns):
+        ns["s"] = pd.Series([10, 20, 30])
+        obj = ns.get_object("s")
+        assert obj.iloc[2] == 30
+        sub = obj.iloc[0:2]
+        assert list(sub.index) == [0, 1]
+        assert list(sub.values) == [10, 20]
