@@ -394,3 +394,62 @@ class TestLoc:
         obj = ns.get_object("s")
         with pytest.raises(TypeError):
             obj.loc[1]
+
+
+class TestExtend:
+    def test_extend_with_series(self, ns):
+        ns["s"] = pd.Series([1, 2], index=["a", "b"], name="n", dtype="int64")
+        obj = ns.get_object("s")
+        obj.extend(pd.Series([3, 4], index=["c", "d"], dtype="int64"))
+        result = obj.value
+        assert list(result.values) == [1, 2, 3, 4]
+        assert list(result.index) == ["a", "b", "c", "d"]
+
+    def test_extend_with_tuple_list(self, ns):
+        ns["s"] = pd.Series([1], index=["a"], dtype="int64")
+        obj = ns.get_object("s")
+        obj.extend([("b", 2), ("c", 3)])
+        result = obj.value
+        assert list(result.values) == [1, 2, 3]
+        assert list(result.index) == ["a", "b", "c"]
+
+    def test_extend_with_list_of_series(self, ns):
+        ns["s"] = pd.Series([1], index=["a"], dtype="int64")
+        obj = ns.get_object("s")
+        obj.extend([pd.Series([2], index=["b"], dtype="int64"), pd.Series([3], index=["c"], dtype="int64")])
+        assert list(obj.value.index) == ["a", "b", "c"]
+
+    def test_extend_creates_duplicate_labels(self, ns):
+        ns["s"] = pd.Series([1], index=["a"], dtype="int64")
+        obj = ns.get_object("s")
+        obj.extend([("a", 2)])
+        result = obj.value
+        assert list(result.index) == ["a", "a"]
+        assert list(result.values) == [1, 2]
+
+    def test_extend_range_index_series_extends_range(self, ns):
+        ns["s"] = pd.Series([1, 2, 3])  # RangeIndex 0..3
+        obj = ns.get_object("s")
+        obj.extend(pd.Series([4, 5]))  # also RangeIndex
+        result = obj.value
+        assert list(result.index) == [0, 1, 2, 3, 4]
+        assert list(result.values) == [1, 2, 3, 4, 5]
+
+    def test_extend_range_index_with_labeled_promotes(self, ns):
+        ns["s"] = pd.Series([1, 2, 3])  # RangeIndex
+        obj = ns.get_object("s")
+        obj.extend([("x", 4)])
+        result = obj.value
+        assert list(result.index) == [0, 1, 2, "x"]
+        assert list(result.values) == [1, 2, 3, 4]
+
+    def test_extend_incompatible_dtype_raises(self, ns):
+        ns["s"] = pd.Series([1, 2], dtype="int64")
+        obj = ns.get_object("s")
+        with pytest.raises((ValueError, TypeError)):
+            obj.extend([("a", "not_an_int")])
+
+    def test_extend_returns_none(self, ns):
+        ns["s"] = pd.Series([1], dtype="int64")
+        obj = ns.get_object("s")
+        assert obj.extend(pd.Series([2], dtype="int64")) is None

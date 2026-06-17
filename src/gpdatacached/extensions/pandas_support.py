@@ -5,7 +5,8 @@ import pandas as pd
 
 from ..container import GPDCContainerObject
 from ..codec import GPDCContainerCodec
-from ..meta import _encode_extra_value
+from ..lifecycle import policy_from_meta
+from ..meta import ObjectMeta, _encode_extra_value
 from ..types import (
     GPDCTypeRegistry,
     _decode_scalar,
@@ -105,6 +106,32 @@ def _build_index(fields: dict, namespace) -> "pd.Index":
         return pd.RangeIndex(start, stop, step, name=index_name)
     labels = decode_element(fields["index"], namespace).value
     return pd.Index(labels, name=index_name)
+
+
+def _normalize_extend_input(other) -> tuple[list, list]:
+    """Return (index_values, data_values) as Python-native lists from extend input.
+
+    Accepts a pd.Series, a list of pd.Series, or an iterable of (index, value) tuples.
+    """
+    if isinstance(other, pd.Series):
+        return list(other.index), _python_values(other)
+    if isinstance(other, (list, tuple)) and len(other) > 0 and isinstance(other[0], pd.Series):
+        idx: list = []
+        vals: list = []
+        for s in other:
+            idx.extend(list(s.index))
+            vals.extend(_python_values(s))
+        return idx, vals
+    pairs = list(other)
+    bad = [p for p in pairs if not (isinstance(p, tuple) and len(p) == 2)]
+    if bad:
+        raise TypeError("extend input must be a Series, a list of Series, or (index, value) tuples")
+    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+
+def _is_continuation_range(other, current_len: int) -> bool:
+    """True when `other` is a Series with a default RangeIndex (so a range Series can stay a range)."""
+    return isinstance(other, pd.Series) and isinstance(other.index, pd.RangeIndex)
 
 
 def register() -> None:
@@ -295,3 +322,76 @@ class SeriesObject(GPDCContainerObject):
 
     def _build_series_from(self, values: list, index_obj) -> pd.Series:
         return _reconstruct(values, index_obj, self._raw_fields(), self._namespace)
+
+    def extend(self, other) -> None:
+        """Append rows in place. Accepts a Series, a list of Series, or (index, value) tuples.
+
+        Mutates the cached object in Redis and returns None. (Differs from
+        pandas pd.concat, which is non-mutating and returns a new Series.)
+        """
+        from ..lifecycle import policy_from_defaults
+        from ..types import encode_element, encode_session
+
+        index_values, data_values = _normalize_extend_input(other)
+
+        fields = self._raw_fields()
+        dtype_str = _decode_scalar(fields["dtype"])
+        try:
+            casted = pd.Series(data_values, dtype=dtype_str)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Cannot extend Series of dtype {dtype_str!r} with given values: {exc}") from exc
+        new_data = _python_values(casted)
+
+        r = self._redis()
+        meta = ObjectMeta.load(r, self._canonical_redis_key())
+        policy = policy_from_meta(meta) if meta else policy_from_defaults("permanent", 0)
+        owner_name = self._data_owner_name()
+
+        index_kind = _decode_scalar(fields["index_kind"])
+        if index_kind == "range":
+            needs_promote = not _is_continuation_range(other, len(self))
+            if needs_promote:
+                self._promote_range_to_labels(fields, owner_name, policy)
+                index_kind = "labels"
+
+        data_list = self._get_data_list()
+        index_list = self._get_index_list()
+
+        pipe = r.pipeline(transaction=True)
+        with encode_session(self._namespace):
+            encoded_data = [encode_element(v, self._namespace, owner_name, policy) for v in new_data]
+        if encoded_data:
+            pipe.rpush(data_list.raw_key, *encoded_data)
+        if index_kind == "labels":
+            with encode_session(self._namespace):
+                encoded_idx = [encode_element(v, self._namespace, owner_name, policy) for v in index_values]
+            if encoded_idx:
+                pipe.rpush(index_list.raw_key, *encoded_idx)
+        else:
+            new_stop = _decode_scalar(fields["range_stop"]) + len(new_data)
+            pipe.hset(self.raw_key, "range_stop", _encode_extra_value(new_stop))
+        pipe.execute()
+        self._data_list_cache = _UNLOADED
+        self._index_list_cache = _UNLOADED
+        self._touch()
+
+    def _promote_range_to_labels(self, fields: dict, owner_name, policy) -> None:
+        from ..types import encode_element, encode_session
+
+        start = _decode_scalar(fields["range_start"])
+        stop = _decode_scalar(fields["range_stop"])
+        step = _decode_scalar(fields["range_step"])
+        labels = list(pd.RangeIndex(start, stop, step))
+        with encode_session(self._namespace):
+            ref = encode_element(labels, self._namespace, owner_name, policy)
+        r = self._redis()
+        mapping = {
+            "index": ref,
+            "index_kind": _encode_extra_value("labels"),
+            "index_dtype": _encode_extra_value("int64"),
+        }
+        for k in ("range_start", "range_stop", "range_step"):
+            if k in fields:
+                r.hdel(self.raw_key, k)
+        r.hset(self.raw_key, mapping=mapping)
+        self._index_list_cache = _UNLOADED
