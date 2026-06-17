@@ -186,7 +186,7 @@ class _ILocIndexer:
         if data is None:
             raise IndexError("SeriesObject has no data")
         if isinstance(key, (int, np.integer)):
-            return data[key]
+            return data[int(key)]
         if isinstance(key, slice):
             values = data[key]
             return owner._build_series_from(values, owner._positional_index_slice(key))
