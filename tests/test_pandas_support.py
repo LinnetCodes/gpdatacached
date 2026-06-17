@@ -65,3 +65,35 @@ class TestDtypeClassification:
         msg = str(exc_info.value)
         assert "timedelta64[ns]" in msg
         assert "GPDCTypeRegistry.register" in msg
+
+
+class TestSeriesCodecRoundTrip:
+    def test_int64_labeled_index_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        original = pd.Series([10, 20, 30], index=["a", "b", "c"], name="scores")
+        raw_key = "gpdc:testdomain:testns:raw:s1"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+
+        assert isinstance(result, pd.Series)
+        assert list(result.values) == [10, 20, 30]
+        assert list(result.index) == ["a", "b", "c"]
+        assert result.name == "scores"
+        assert str(result.dtype) == "int64"
+
+    def test_raw_hash_contains_data_and_index_refs(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        original = pd.Series([1, 2], index=["x", "y"])
+        raw_key = "gpdc:testdomain:testns:raw:s2"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            assert ns._redis().hget(raw_key, "data").startswith("ref:")
+            assert ns._redis().hget(raw_key, "index").startswith("ref:")
+            assert ns._redis().hget(raw_key, "dtype") == "str:int64"
+        finally:
+            ns._redis().delete(raw_key)

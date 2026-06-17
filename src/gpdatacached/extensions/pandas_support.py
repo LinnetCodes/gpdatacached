@@ -4,13 +4,13 @@ import pandas as pd
 
 from ..container import GPDCContainerObject
 from ..codec import GPDCContainerCodec
-from ..meta import _encode_extra_value  # noqa: F401  (used in later tasks)
+from ..meta import _encode_extra_value
 from ..types import (
     GPDCTypeRegistry,
-    _decode_scalar,  # noqa: F401  (used in later tasks)
-    decode_element,  # noqa: F401  (used in later tasks)
-    encode_element,  # noqa: F401  (used in later tasks)
-    encode_session,  # noqa: F401  (used in later tasks)
+    _decode_scalar,
+    decode_element,
+    encode_element,
+    encode_session,
 )
 
 __all__ = [
@@ -67,6 +67,45 @@ def _index_kind(index) -> str | None:
     return "labels" if _value_dtype_family(index.dtype) is not None else None
 
 
+def _python_values(series: pd.Series) -> list:
+    """Materialize Series values as Python natives with NA -> None."""
+    is_na = pd.isna(series)
+    return [None if na else x for x, na in zip(series.tolist(), list(is_na))]
+
+
+def _python_labels(index) -> list:
+    """Materialize Index labels as Python natives with NA -> None."""
+    is_na = pd.isna(index)
+    return [None if na else x for x, na in zip(index.tolist(), list(is_na))]
+
+
+def _reconstruct(values: list, index_obj, fields: dict, namespace) -> pd.Series:
+    """Build a pd.Series from decoded values + index + raw-hash scalar fields."""
+    dtype_str = _decode_scalar(fields["dtype"])
+    name = _decode_scalar(fields["name"])
+    family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
+    if family == "category":
+        cats = decode_element(fields["categories"], namespace).value
+        ordered = _decode_scalar(fields["ordered"])
+        cat = pd.Categorical(values, categories=cats, ordered=ordered)
+        return pd.Series(cat, index=index_obj, name=name)
+    if family == "datetime":
+        return pd.Series(values, index=index_obj, name=name).astype(dtype_str)
+    return pd.Series(values, index=index_obj, dtype=dtype_str, name=name)
+
+
+def _build_index(fields: dict, namespace) -> "pd.Index":
+    index_kind = _decode_scalar(fields["index_kind"])
+    index_name = _decode_scalar(fields["index_name"])
+    if index_kind == "range":
+        start = _decode_scalar(fields["range_start"])
+        stop = _decode_scalar(fields["range_stop"])
+        step = _decode_scalar(fields["range_step"])
+        return pd.RangeIndex(start, stop, step, name=index_name)
+    labels = decode_element(fields["index"], namespace).value
+    return pd.Index(labels, name=index_name)
+
+
 def register() -> None:
     """Register the pandas Series type with GPDCTypeRegistry (idempotent)."""
     GPDCTypeRegistry.register(
@@ -78,20 +117,64 @@ def register() -> None:
     )
 
 
-# Forward-declared placeholders; implemented in later tasks.
 class SeriesCodec(GPDCContainerCodec):
     @classmethod
-    def create_raw(cls, namespace, raw_key, value, owner_name, cache_mode, ttl):  # pragma: no cover
-        raise NotImplementedError
+    def create_raw(cls, namespace, raw_key, value: pd.Series, owner_name, cache_mode, ttl) -> None:
+        from ..lifecycle import policy_from_defaults
+
+        family = _value_dtype_family(value.dtype)
+        if family is None:
+            raise UnsupportedSeriesDtypeError(str(value.dtype), is_index=False)
+        index = value.index
+        kind = _index_kind(index)
+        if kind is None:
+            raise UnsupportedSeriesDtypeError(str(index.dtype), is_index=True)
+
+        policy = policy_from_defaults(cache_mode, ttl)
+        # Materialize lists before opening the encode session so each keeps a
+        # distinct id() for its full lifetime. The encode memo keys on id();
+        # inline temporaries can be GC'd between calls and have their ids
+        # reused, which would alias distinct lists onto one ref.
+        data_values = _python_values(value)
+        index_labels = _python_labels(index) if kind == "labels" else None
+        categories = list(value.cat.categories.tolist()) if family == "category" else None
+        fields: dict[str, str] = {}
+        with encode_session(namespace):
+            fields["data"] = encode_element(data_values, namespace, owner_name, policy)
+            if kind == "labels":
+                fields["index"] = encode_element(index_labels, namespace, owner_name, policy)
+            if family == "category":
+                fields["categories"] = encode_element(categories, namespace, owner_name, policy)
+
+        fields["dtype"] = _encode_extra_value(str(value.dtype))
+        fields["name"] = _encode_extra_value(value.name)
+        fields["index_kind"] = _encode_extra_value(kind)
+        fields["index_name"] = _encode_extra_value(index.name)
+        if kind == "labels":
+            fields["index_dtype"] = _encode_extra_value(str(index.dtype))
+        if family == "category":
+            fields["ordered"] = _encode_extra_value(bool(value.cat.ordered))
+        if kind == "range":
+            fields["range_start"] = _encode_extra_value(int(index.start))
+            fields["range_stop"] = _encode_extra_value(int(index.stop))
+            fields["range_step"] = _encode_extra_value(int(index.step))
+
+        namespace._redis().hset(raw_key, mapping=fields)
 
     @classmethod
-    def read_raw(cls, namespace, raw_key):  # pragma: no cover
-        raise NotImplementedError
+    def read_raw(cls, namespace, raw_key) -> pd.Series:
+        fields = namespace._redis().hgetall(raw_key)
+        if not fields:
+            return pd.Series([], dtype="object")
+        values = decode_element(fields["data"], namespace).value
+        index_obj = _build_index(fields, namespace)
+        return _reconstruct(values, index_obj, fields, namespace)
 
     @classmethod
-    def delete_raw(cls, namespace, raw_key):  # pragma: no cover
-        raise NotImplementedError
+    def delete_raw(cls, namespace, raw_key) -> None:
+        namespace._redis().delete(raw_key)
 
 
+# Forward-declared placeholder; implemented in later tasks.
 class SeriesObject(GPDCContainerObject):
     TYPE = "collection:pandas_series"
