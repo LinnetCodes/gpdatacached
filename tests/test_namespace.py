@@ -331,7 +331,7 @@ class TestCacheModeAndTTL:
         obj.update_cache_mode_and_ttl("ttl", 300)
         key = make_object_key("testdomain", "testns", "x")
 
-        time.sleep(1)
+        time.sleep(2)
         remaining_before = clean_redis.ttl(key)
         assert remaining_before < 300
 
@@ -349,7 +349,7 @@ class TestCacheModeAndTTL:
         obj.update_cache_mode_and_ttl("ttl", 300)
         key = make_object_key("testdomain", "testns", "x")
 
-        time.sleep(1)
+        time.sleep(2)
         remaining_before = clean_redis.ttl(key)
         assert remaining_before < 300
 
