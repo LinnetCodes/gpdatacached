@@ -129,8 +129,8 @@ def _normalize_extend_input(other) -> tuple[list, list]:
     return [p[0] for p in pairs], [p[1] for p in pairs]
 
 
-def _is_continuation_range(other, current_len: int) -> bool:
-    """True when `other` is a Series with a default RangeIndex (so a range Series can stay a range)."""
+def _is_range_indexed_series(other) -> bool:
+    """True when `other` is a Series with a RangeIndex (so a range Series can stay a range)."""
     return isinstance(other, pd.Series) and isinstance(other.index, pd.RangeIndex)
 
 
@@ -330,7 +330,6 @@ class SeriesObject(GPDCContainerObject):
         pandas pd.concat, which is non-mutating and returns a new Series.)
         """
         from ..lifecycle import policy_from_defaults
-        from ..types import encode_element, encode_session
 
         index_values, data_values = _normalize_extend_input(other)
 
@@ -349,7 +348,7 @@ class SeriesObject(GPDCContainerObject):
 
         index_kind = _decode_scalar(fields["index_kind"])
         if index_kind == "range":
-            needs_promote = not _is_continuation_range(other, len(self))
+            needs_promote = not _is_range_indexed_series(other)
             if needs_promote:
                 self._promote_range_to_labels(fields, owner_name, policy)
                 index_kind = "labels"
@@ -376,8 +375,6 @@ class SeriesObject(GPDCContainerObject):
         self._touch()
 
     def _promote_range_to_labels(self, fields: dict, owner_name, policy) -> None:
-        from ..types import encode_element, encode_session
-
         start = _decode_scalar(fields["range_start"])
         stop = _decode_scalar(fields["range_stop"])
         step = _decode_scalar(fields["range_step"])
