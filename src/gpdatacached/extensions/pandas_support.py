@@ -193,6 +193,25 @@ class _ILocIndexer:
         raise TypeError(f"iloc expects int or slice, got {type(key).__name__!r}")
 
 
+class _LocIndexer:
+    def __init__(self, owner: "SeriesObject") -> None:
+        self._owner = owner
+
+    def __getitem__(self, label):
+        owner = self._owner
+        index_list = owner._get_index_list()
+        if index_list is None:
+            raise TypeError(".loc is not supported on a RangeIndex Series; use .iloc")
+        labels = index_list.value
+        positions = [i for i, lbl in enumerate(labels) if lbl == label]
+        if not positions:
+            raise KeyError(label)
+        data = owner._get_data_list()
+        values = [data[p] for p in positions]
+        index_name = owner.index_name
+        return owner._build_series_from(values, pd.Index([labels[p] for p in positions], name=index_name))
+
+
 class SeriesObject(GPDCContainerObject):
     TYPE = "collection:pandas_series"
 
@@ -254,6 +273,10 @@ class SeriesObject(GPDCContainerObject):
     @property
     def iloc(self) -> "_ILocIndexer":
         return _ILocIndexer(self)
+
+    @property
+    def loc(self) -> "_LocIndexer":
+        return _LocIndexer(self)
 
     def _positional_index_slice(self, sl: slice):
         """Return the pd.Index for a positional slice, honoring RangeIndex."""

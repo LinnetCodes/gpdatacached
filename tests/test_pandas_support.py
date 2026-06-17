@@ -366,3 +366,31 @@ class TestILoc:
         sub = obj.iloc[0:2]
         assert list(sub.index) == [0, 1]
         assert list(sub.values) == [10, 20]
+
+
+class TestLoc:
+    def test_loc_returns_single_match(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=["a", "b", "c"])
+        obj = ns.get_object("s")
+        result = obj.loc["b"]
+        assert list(result.values) == [20]
+        assert list(result.index) == ["b"]
+
+    def test_loc_duplicate_labels_returns_all(self, ns):
+        ns["s"] = pd.Series([1, 2, 3], index=["a", "a", "b"])
+        obj = ns.get_object("s")
+        result = obj.loc["a"]
+        assert list(result.values) == [1, 2]
+        assert list(result.index) == ["a", "a"]
+
+    def test_loc_missing_label_raises(self, ns):
+        ns["s"] = pd.Series([1, 2], index=["a", "b"])
+        obj = ns.get_object("s")
+        with pytest.raises(KeyError):
+            obj.loc["z"]
+
+    def test_loc_on_range_index_raises(self, ns):
+        ns["s"] = pd.Series([1, 2, 3])
+        obj = ns.get_object("s")
+        with pytest.raises(TypeError):
+            obj.loc[1]
