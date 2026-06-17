@@ -331,10 +331,15 @@ class SeriesObject(GPDCContainerObject):
         """
         from ..lifecycle import policy_from_defaults
 
-        index_values, data_values = _normalize_extend_input(other)
-
         fields = self._raw_fields()
         dtype_str = _decode_scalar(fields["dtype"])
+        if isinstance(pd.api.types.pandas_dtype(dtype_str), pd.CategoricalDtype):
+            raise TypeError(
+                "Extending a categorical-dtype Series is not supported; "
+                "create a new Series with the desired categories instead."
+            )
+        index_values, data_values = _normalize_extend_input(other)
+
         try:
             casted = pd.Series(data_values, dtype=dtype_str)
         except (ValueError, TypeError) as exc:

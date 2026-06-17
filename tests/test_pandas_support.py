@@ -454,6 +454,12 @@ class TestExtend:
         obj = ns.get_object("s")
         assert obj.extend(pd.Series([2], dtype="int64")) is None
 
+    def test_extend_categorical_raises(self, ns):
+        ns["s"] = pd.Series(["a", "b"], dtype=pd.CategoricalDtype(["a", "b"]))
+        obj = ns.get_object("s")
+        with pytest.raises(TypeError, match="categor"):
+            obj.extend([("x", "c")])
+
 
 class TestRejectedOperations:
     def test_getitem_not_defined(self, ns):
