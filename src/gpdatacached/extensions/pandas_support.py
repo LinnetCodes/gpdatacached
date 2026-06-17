@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from ..container import GPDCContainerObject
@@ -184,7 +185,7 @@ class _ILocIndexer:
         data = owner._get_data_list()
         if data is None:
             raise IndexError("SeriesObject has no data")
-        if isinstance(key, int):
+        if isinstance(key, (int, np.integer)):
             return data[key]
         if isinstance(key, slice):
             values = data[key]

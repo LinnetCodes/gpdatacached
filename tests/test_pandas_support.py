@@ -342,6 +342,14 @@ class TestILoc:
         assert obj.iloc[0] == 10
         assert obj.iloc[-1] == 30
 
+    def test_iloc_numpy_integer_accepted(self, ns):
+        import numpy as np
+
+        ns["s"] = pd.Series([10, 20, 30], index=["a", "b", "c"])
+        obj = ns.get_object("s")
+        assert obj.iloc[np.int64(1)] == 20
+        assert obj.iloc[np.intp(2)] == 30
+
     def test_iloc_slice_returns_series(self, ns):
         ns["s"] = pd.Series([10, 20, 30, 40], index=["a", "b", "c", "d"], name="n")
         obj = ns.get_object("s")
