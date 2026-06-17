@@ -173,5 +173,63 @@ class SeriesCodec(GPDCContainerCodec):
 
 
 # Forward-declared placeholder; implemented in later tasks.
+_UNLOADED = object()
+
+
 class SeriesObject(GPDCContainerObject):
     TYPE = "collection:pandas_series"
+
+    def __init__(self, name, namespace, *, canonical_name=None) -> None:
+        super().__init__(name, namespace, canonical_name=canonical_name)
+        self._data_list_cache = _UNLOADED
+        self._index_list_cache = _UNLOADED
+
+    @property
+    def type(self) -> str:
+        return self.TYPE
+
+    @property
+    def value(self) -> pd.Series:
+        return SeriesCodec.read_raw(self._namespace, self.raw_key)
+
+    @value.setter
+    def value(self, new_value) -> None:
+        self._reject_value_replacement()
+
+    def _get_data_list(self):
+        if self._data_list_cache is _UNLOADED:
+            ref = self._redis().hget(self.raw_key, "data")
+            self._data_list_cache = decode_element(ref, self._namespace) if ref else None
+        return self._data_list_cache
+
+    def _get_index_list(self):
+        """Return the index child ListObject, or None when index_kind is 'range'."""
+        if self._index_list_cache is _UNLOADED:
+            ref = self._redis().hget(self.raw_key, "index")
+            self._index_list_cache = decode_element(ref, self._namespace) if ref else None
+        return self._index_list_cache
+
+    def _raw_fields(self) -> dict:
+        return self._redis().hgetall(self.raw_key)
+
+    def __len__(self) -> int:
+        data = self._get_data_list()
+        return len(data) if data is not None else 0
+
+    @property
+    def dtype(self) -> str:
+        return _decode_scalar(self._redis().hget(self.raw_key, "dtype"))
+
+    @property
+    def name(self):
+        return _decode_scalar(self._redis().hget(self.raw_key, "name"))
+
+    @property
+    def index_name(self):
+        return _decode_scalar(self._redis().hget(self.raw_key, "index_name"))
+
+    def deepcopy(self) -> pd.Series:
+        return self.value.copy(deep=True)
+
+    def _current_item_count(self) -> int:
+        return len(self)

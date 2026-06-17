@@ -302,3 +302,34 @@ class TestIndexVariety:
         raw_key = "gpdc:testdomain:testns:raw:mi"
         with pytest.raises(UnsupportedSeriesDtypeError):
             SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+
+
+class TestSeriesObjectCore:
+    def test_store_and_get_value(self, ns):
+        series = pd.Series([1, 2, 3], index=["a", "b", "c"], name="n")
+        ns["s"] = series
+        obj = ns.get_object("s")
+        assert obj.type == "collection:pandas_series"
+        assert list(obj.value.values) == [1, 2, 3]
+        assert list(obj.value.index) == ["a", "b", "c"]
+
+    def test_len_dtype_name_index_name(self, ns):
+        ns["s"] = pd.Series([1, 2, 3], index=["a", "b", "c"], name="vals")
+        obj = ns.get_object("s")
+        assert len(obj) == 3
+        assert obj.dtype == "int64"
+        assert obj.name == "vals"
+        assert obj.index_name is None
+
+    def test_deepcopy_returns_plain_series(self, ns):
+        ns["s"] = pd.Series([1, 2], index=["a", "b"], name="n")
+        obj = ns.get_object("s")
+        cp = obj.deepcopy()
+        assert isinstance(cp, pd.Series)
+        assert list(cp.values) == [1, 2]
+
+    def test_value_setter_rejected(self, ns):
+        ns["s"] = pd.Series([1, 2])
+        obj = ns.get_object("s")
+        with pytest.raises(TypeError):
+            obj.value = pd.Series([9, 9])
