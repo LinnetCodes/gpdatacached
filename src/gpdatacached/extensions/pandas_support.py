@@ -172,7 +172,6 @@ class SeriesCodec(GPDCContainerCodec):
         namespace._redis().delete(raw_key)
 
 
-# Forward-declared placeholder; implemented in later tasks.
 _UNLOADED = object()
 
 
