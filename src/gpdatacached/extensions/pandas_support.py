@@ -349,6 +349,48 @@ class DataFrameObject(GPDCContainerObject):
     def _current_item_count(self) -> int:
         return len(self)
 
+    # ── public read API ──────────────────────────────────────────────
+
+    def __len__(self) -> int:
+        if self._index_kind() == "range":
+            fields = self._raw_fields()
+            return _decode_scalar(fields["~range_stop"]) - _decode_scalar(fields["~range_start"])
+        idx = self._get_index_list()
+        return len(idx) if idx is not None else 0
+
+    @property
+    def columns(self) -> tuple:
+        return self._column_names()
+
+    @property
+    def index_name(self):
+        return _decode_scalar(self._redis().hget(self.raw_key, "~index_name"))
+
+    def __contains__(self, col) -> bool:
+        try:
+            encoded = encode_key(col)
+        except TypeError:
+            return False
+        return bool(self._redis().hexists(self.raw_key, encoded))
+
+    def __iter__(self):
+        return iter(self._column_names())
+
+    def __getitem__(self, col) -> pd.Series:
+        columns = self._column_names()
+        if col not in columns:
+            raise KeyError(col)
+        col_key = encode_key(col)
+        data_list = self._get_column_list(col)
+        values = data_list.deepcopy() if data_list is not None else []
+        fields = self._raw_fields()
+        dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
+        family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
+        cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
+        ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
+        index_obj = _build_index(fields, self._namespace, prefix="~")
+        return _reconstruct_series(values, index_obj, dtype_str, col, self._namespace, cats_ref, ordered)
+
 
 def register() -> None:
     """Register the pandas Series + DataFrame types with GPDCTypeRegistry (idempotent)."""

@@ -254,3 +254,65 @@ class TestDataFrameObjectCore:
 
         for name in ("DataFrameObject", "DataFrameCodec", "UnsupportedDataFrameError", "register"):
             assert hasattr(m, name), name
+
+
+class TestReadApi:
+    def test_len_returns_row_count_range(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+        obj = ns.get_object("df")
+        assert len(obj) == 3
+
+    def test_len_returns_row_count_labels(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2]}, index=["x", "y"])
+        obj = ns.get_object("df")
+        assert len(obj) == 2
+
+    def test_columns_returns_tuple(self, ns):
+        ns["df"] = pd.DataFrame({"z": [1], "a": [2]})
+        obj = ns.get_object("df")
+        assert obj.columns == ("z", "a")
+
+    def test_index_name(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]}, index=pd.Index(["x"], name="rows"))
+        obj = ns.get_object("df")
+        assert obj.index_name == "rows"
+
+    def test_contains_column(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1], "b": [2]})
+        obj = ns.get_object("df")
+        assert "a" in obj
+        assert "c" not in obj
+
+    def test_contains_unsupported_type_returns_false(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]})
+        obj = ns.get_object("df")
+        # encode_key raises TypeError for container types; __contains__ must catch it
+        assert ([1, 2] in obj) is False
+        assert ({"k": 1} in obj) is False
+
+    def test_iter_yields_column_names(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1], "b": [2]})
+        obj = ns.get_object("df")
+        assert list(iter(obj)) == ["a", "b"]
+
+    def test_getitem_returns_column_series(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3]}, index=["r1", "r2", "r3"])
+        obj = ns.get_object("df")
+        col = obj["a"]
+        assert isinstance(col, pd.Series)
+        assert list(col.values) == [1, 2, 3]
+        assert list(col.index) == ["r1", "r2", "r3"]
+        assert str(col.dtype) == "int64"
+
+    def test_getitem_category_column(self, ns):
+        ns["df"] = pd.DataFrame({"c": pd.Series(["a", "b"], dtype=pd.CategoricalDtype(["a", "b"], ordered=True))})
+        obj = ns.get_object("df")
+        col = obj["c"]
+        assert list(col.cat.categories) == ["a", "b"]
+        assert col.cat.ordered is True
+
+    def test_getitem_unknown_column_raises(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]})
+        obj = ns.get_object("df")
+        with pytest.raises(KeyError):
+            obj["zzz"]
