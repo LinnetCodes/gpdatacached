@@ -326,7 +326,7 @@ class DataFrameCodec(GPDCContainerCodec):
             cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
             ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
             data_dict[col] = _reconstruct_series(values, index_obj, dtype_str, col, namespace, cats_ref, ordered)
-        return pd.DataFrame(data_dict, columns=list(column_names))
+        return pd.DataFrame(data_dict, columns=list(column_names), index=index_obj)
 
     @classmethod
     def delete_raw(cls, namespace, raw_key) -> None:
@@ -617,6 +617,92 @@ class DataFrameObject(GPDCContainerObject):
         ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
         index_obj = _build_index(fields, self._namespace, prefix="~")
         return _reconstruct_series(values, index_obj, dtype_str, col, self._namespace, cats_ref, ordered)
+
+    def __setitem__(self, col, values) -> None:
+        """Add or replace a column. ``len(values)`` must equal the current row count."""
+        from ..lifecycle import policy_from_meta, policy_from_defaults
+
+        r = self._redis()
+        fields = self._raw_fields()
+        columns = list(_decode_scalar(fields["~columns"]))
+        owner_name = self._data_owner_name()
+        meta = ObjectMeta.load(r, self._canonical_redis_key())
+        policy = policy_from_meta(meta) if meta else policy_from_defaults("permanent", 0)
+
+        expected = self.__len__()
+        if expected == 0 and len(values) > 0:
+            raise ValueError(
+                "cannot introduce rows by adding a column to an empty DataFrame; create the DataFrame with initial data"
+            )
+        if len(values) != expected:
+            raise ValueError(f"column length {len(values)} does not match row count {expected}")
+
+        inferred = pd.Series(values)
+        family = _value_dtype_family(inferred.dtype)
+        if family is None:
+            raise UnsupportedDataFrameError(
+                f"Column {col!r} has dtype {inferred.dtype!r} which is not supported by DataFrameObject."
+            )
+        col_key = encode_key(col)
+        replacing = col in columns
+        old_family = None
+        if replacing:
+            old_ref = r.hget(self.raw_key, col_key)
+            self._release_element_ref(old_ref)
+            old_dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
+            old_family = _value_dtype_family(pd.api.types.pandas_dtype(old_dtype_str))
+            if old_family == "category":
+                self._release_element_ref(r.hget(self.raw_key, f"~cat:{col_key}"))
+
+        data_values = _python_values(inferred)
+        with encode_session(self._namespace):
+            mapping = {
+                col_key: encode_element(data_values, self._namespace, owner_name, policy),
+                f"~dt:{col_key}": _encode_extra_value(str(inferred.dtype)),
+            }
+            if family == "category":
+                mapping[f"~cat:{col_key}"] = encode_element(
+                    inferred.cat.categories.tolist(), self._namespace, owner_name, policy
+                )
+                mapping[f"~ord:{col_key}"] = _encode_extra_value(bool(inferred.cat.ordered))
+
+        if replacing and old_family == "category" and family != "category":
+            r.hdel(self.raw_key, f"~cat:{col_key}", f"~ord:{col_key}")
+        r.hset(self.raw_key, mapping=mapping)
+
+        if not replacing:
+            columns.append(col)
+            r.hset(self.raw_key, "~columns", _encode_extra_value(tuple(columns)))
+
+        self._invalidate_caches()
+        self._touch()
+
+    def __delitem__(self, col) -> None:
+        """Drop a column. The shared index is retained (even for the last column)."""
+        r = self._redis()
+        fields = self._raw_fields()
+        columns = list(_decode_scalar(fields["~columns"]))
+        if col not in columns:
+            raise KeyError(col)
+        col_key = encode_key(col)
+        old_ref = r.hget(self.raw_key, col_key)
+        dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
+        family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
+        old_cat_ref = r.hget(self.raw_key, f"~cat:{col_key}") if family == "category" else None
+
+        fields_to_del = [col_key, f"~dt:{col_key}"]
+        if family == "category":
+            fields_to_del.extend([f"~cat:{col_key}", f"~ord:{col_key}"])
+        r.hdel(self.raw_key, *fields_to_del)
+        self._release_element_ref(old_ref)
+        if old_cat_ref:
+            self._release_element_ref(old_cat_ref)
+
+        columns.remove(col)
+        r.hset(self.raw_key, "~columns", _encode_extra_value(tuple(columns)))
+
+        self._invalidate_caches()
+        self._touch()
 
     @property
     def iloc(self) -> "_DfILocIndexer":

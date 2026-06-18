@@ -496,3 +496,144 @@ class TestDfExtend:
         assert list(result["c"][:2]) == ["a", "b"]
         assert list(result["c"][2:3]) == ["a"]
         assert pd.isna(result["c"].iloc[3])
+
+
+class TestColumnMutation:
+    def test_setitem_new_column(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3]})
+        obj = ns.get_object("df")
+        obj["b"] = [4, 5, 6]
+        result = obj.value
+        assert list(result.columns) == ["a", "b"]
+        assert list(result["b"]) == [4, 5, 6]
+
+    def test_setitem_replace_column_same_dtype(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        obj["a"] = [9, 8]
+        assert list(obj.value["a"]) == [9, 8]
+
+    def test_setitem_replace_column_dtype_change_cleans_stale_cat_fields(self, ns):
+        ns["df"] = pd.DataFrame({"c": pd.Series(["a", "b"], dtype=pd.CategoricalDtype(["a", "b"], ordered=True))})
+        obj = ns.get_object("df")
+        from gpdatacached.types import encode_key
+
+        ck = encode_key("c")
+        assert ns._redis().hexists(obj.raw_key, "~cat:" + ck)
+        obj["c"] = [1, 2]  # category -> int64
+        assert not ns._redis().hexists(obj.raw_key, "~cat:" + ck)
+        assert not ns._redis().hexists(obj.raw_key, "~ord:" + ck)
+        assert str(obj.value["c"].dtype) == "int64"
+
+    def test_setitem_wrong_length_raises(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3]})
+        obj = ns.get_object("df")
+        with pytest.raises(ValueError, match="length"):
+            obj["b"] = [1, 2]
+
+    def test_setitem_unsupported_dtype_raises(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        from gpdatacached.extensions.pandas_support import UnsupportedDataFrameError
+
+        with pytest.raises(UnsupportedDataFrameError):
+            obj["b"] = pd.Series([1, 2], dtype="timedelta64[ns]")
+
+    def test_setitem_bootstrap_empty_df_rejected(self, ns):
+        ns["df"] = pd.DataFrame({"a": []})
+        obj = ns.get_object("df")
+        with pytest.raises(ValueError, match="empty"):
+            obj["b"] = [1, 2, 3]
+
+    def test_setitem_category_column(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        obj["c"] = pd.Series(["x", "y"], dtype=pd.CategoricalDtype(["x", "y"], ordered=True))
+        col = obj.value["c"]
+        assert list(col.cat.categories) == ["x", "y"]
+        assert col.cat.ordered is True
+
+    def test_delitem_drops_column(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        obj = ns.get_object("df")
+        del obj["a"]
+        result = obj.value
+        assert list(result.columns) == ["b"]
+        assert list(result["b"]) == [3, 4]
+
+    def test_delitem_missing_raises_keyerror(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]})
+        obj = ns.get_object("df")
+        with pytest.raises(KeyError):
+            del obj["zzz"]
+
+    def test_delitem_last_column_retains_index(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3]}, index=["r1", "r2", "r3"])
+        obj = ns.get_object("df")
+        del obj["a"]
+        result = obj.value
+        assert list(result.columns) == []
+        assert list(result.index) == ["r1", "r2", "r3"]
+
+    def test_delitem_releases_values_ref(self, ns, raw_redis):
+        ns["df"] = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        obj = ns.get_object("df")
+        a_list = obj._get_column_list("a")
+        assert raw_redis.exists(a_list.raw_key)
+        del obj["a"]
+        assert not raw_redis.exists(a_list.raw_key)
+
+    def test_setitem_replace_category_with_category_releases_old_cats_ref(self, ns, raw_redis):
+        # category -> category replace (different categories): old cats-ref released,
+        # new ~cat:/~ord: overwritten (no HDEL needed).
+        ns["df"] = pd.DataFrame({"c": pd.Series(["a", "b"], dtype=pd.CategoricalDtype(["a", "b"], ordered=True))})
+        obj = ns.get_object("df")
+        from gpdatacached.keys import parse_ref_encoded, make_raw_key
+        from gpdatacached.types import encode_key
+
+        ck = encode_key("c")
+        old_cat_ref = raw_redis.hget(obj.raw_key, "~cat:" + ck)
+        old_cat_name = parse_ref_encoded(old_cat_ref)
+        old_cat_raw_key = make_raw_key("testdomain", "testns", old_cat_name)
+        assert raw_redis.exists(old_cat_raw_key)
+        # Replace with a new category set (different categories, unordered).
+        obj["c"] = pd.Series(["x", "y"], dtype=pd.CategoricalDtype(["x", "y"], ordered=False))
+        new_cat_ref = raw_redis.hget(obj.raw_key, "~cat:" + ck)
+        assert new_cat_ref is not None
+        assert new_cat_ref != old_cat_ref
+        # The old categories ListObject should be gone (released + orphaned -> cascade-deleted).
+        assert not raw_redis.exists(old_cat_raw_key)
+        col = obj.value["c"]
+        assert list(col.cat.categories) == ["x", "y"]
+        assert col.cat.ordered is False
+
+    def test_setitem_replace_non_category_with_category_writes_cat_fields(self, ns, raw_redis):
+        # non-category -> category replace: ~cat:/~ord: get written on the replace path.
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        from gpdatacached.types import encode_key
+
+        ck = encode_key("a")
+        assert not raw_redis.hexists(obj.raw_key, "~cat:" + ck)
+        obj["a"] = pd.Series(["x", "y"], dtype=pd.CategoricalDtype(["x", "y"], ordered=True))
+        assert raw_redis.hexists(obj.raw_key, "~cat:" + ck)
+        assert raw_redis.hexists(obj.raw_key, "~ord:" + ck)
+        col = obj.value["a"]
+        assert list(col.cat.categories) == ["x", "y"]
+        assert col.cat.ordered is True
+
+    def test_delitem_category_column_releases_cats_ref(self, ns, raw_redis):
+        # dropping a category column: ~cat: ref-release branch in __delitem__.
+        ns["df"] = pd.DataFrame({"c": pd.Series(["a", "b"], dtype=pd.CategoricalDtype(["a", "b"], ordered=True))})
+        obj = ns.get_object("df")
+        from gpdatacached.types import encode_key, decode_element
+
+        ck = encode_key("c")
+        cat_ref = raw_redis.hget(obj.raw_key, "~cat:" + ck)
+        cat_list = decode_element(cat_ref, ns)
+        assert raw_redis.exists(cat_list.raw_key)
+        del obj["c"]
+        # The categories ListObject must be gone (released + orphaned -> cascade-deleted).
+        assert not raw_redis.exists(cat_list.raw_key)
+        assert not raw_redis.hexists(obj.raw_key, "~cat:" + ck)
+        assert not raw_redis.hexists(obj.raw_key, "~ord:" + ck)
