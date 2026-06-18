@@ -637,3 +637,59 @@ class TestColumnMutation:
         assert not raw_redis.exists(cat_list.raw_key)
         assert not raw_redis.hexists(obj.raw_key, "~cat:" + ck)
         assert not raw_redis.hexists(obj.raw_key, "~ord:" + ck)
+
+
+class TestNestingAndRefCounting:
+    def test_dataframe_as_list_element(self, ns):
+        ns["lst"] = [pd.DataFrame({"a": [1, 2]}), pd.DataFrame({"a": [3, 4]})]
+        lst = ns.get_object("lst")
+        assert list(lst[0].value["a"]) == [1, 2]
+        assert list(lst[1].value["a"]) == [3, 4]
+
+    def test_dataframe_as_dict_value(self, ns):
+        ns["d"] = {"df": pd.DataFrame({"a": [1, 2]})}
+        d = ns.get_object("d")
+        assert list(d["df"].value["a"]) == [1, 2]
+
+    def test_object_dtype_column_nested_container(self, ns):
+        ns["df"] = pd.DataFrame({"o": [{"k": 1}, {"k": 2}]})
+        obj = ns.get_object("df")
+        # iloc[i] returns live container objects for nested cells; use .value
+        assert obj.value["o"].iloc[0] == {"k": 1}
+
+    def test_delete_named_dataframe_releases_all_children(self, ns, raw_redis):
+        from gpdatacached.keys import make_raw_key
+
+        ns["df"] = pd.DataFrame(
+            {"a": [1, 2], "c": pd.Series(["x", "y"], dtype=pd.CategoricalDtype(["x", "y"]))},
+            index=["r1", "r2"],
+        )
+        obj = ns.get_object("df")
+        a_list = obj._get_column_list("a")
+        c_list = obj._get_column_list("c")
+        index_list = obj._get_index_list()
+        # find the categories child by scanning the raw hash
+        from gpdatacached.types import encode_key
+        from gpdatacached.types import decode_element
+
+        cat_ref = raw_redis.hget(obj.raw_key, "~cat:" + encode_key("c"))
+        cat_list = decode_element(cat_ref, ns)
+        for child in (a_list, c_list, index_list, cat_list):
+            assert raw_redis.exists(child.raw_key)
+
+        del ns["df"]
+
+        for child in (a_list, c_list, index_list, cat_list):
+            assert not raw_redis.exists(child.raw_key)
+        assert not raw_redis.exists(make_raw_key("testdomain", "testns", "df"))
+
+    def test_sliding_ttl_propagates_to_children(self, ns, raw_redis):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+        obj = ns.get_object("df")
+        obj.update_cache_mode_and_ttl("sliding", 300)
+        a_list = obj._get_column_list("a")
+        index_is_range = obj._index_kind() == "range"
+        assert raw_redis.ttl(obj.raw_key) > 0
+        assert raw_redis.ttl(a_list.raw_key) > 0
+        if not index_is_range:
+            assert raw_redis.ttl(obj._get_index_list().raw_key) > 0
