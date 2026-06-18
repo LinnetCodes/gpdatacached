@@ -693,3 +693,75 @@ class TestNestingAndRefCounting:
         assert raw_redis.ttl(a_list.raw_key) > 0
         if not index_is_range:
             assert raw_redis.ttl(obj._get_index_list().raw_key) > 0
+
+
+class TestRejectedOperations:
+    def test_value_setter_rejected(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]})
+        obj = ns.get_object("df")
+        with pytest.raises(TypeError):
+            obj.value = pd.DataFrame({"a": [9]})
+
+    def test_iloc_setter_rejected(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        with pytest.raises((TypeError, AttributeError)):
+            obj.iloc[0] = {"a": 9}
+
+    def test_loc_setter_rejected(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]}, index=["r1"])
+        obj = ns.get_object("df")
+        with pytest.raises((TypeError, AttributeError)):
+            obj.loc["r1"] = {"a": 9}
+
+
+class TestPublicAPI:
+    def test_register_is_idempotent(self):
+        from gpdatacached.extensions.pandas_support import register
+        from gpdatacached.types import GPDCTypeRegistry
+
+        register()
+        register()
+        assert GPDCTypeRegistry.lookup_by_gpdc_type("collection:pandas_dataframe") is not None
+        assert GPDCTypeRegistry.lookup_by_gpdc_type("collection:pandas_series") is not None
+
+
+class TestFullWorkflow:
+    def test_full_workflow(self, ns):
+        ns["sales"] = pd.DataFrame(
+            {"item": ["a", "b"], "qty": [1, 2], "price": [9.5, 3.0]},
+            index=["mon", "tue"],
+        )
+        obj = ns.get_object("sales")
+
+        # read whole
+        assert list(obj.value.index) == ["mon", "tue"]
+
+        # column access
+        assert list(obj["qty"]) == [1, 2]
+
+        # iloc row
+        assert obj.iloc[0]["item"] == "a"
+
+        # loc row
+        assert obj.loc["tue"]["qty"] == 2
+
+        # append rows
+        obj.extend(pd.DataFrame({"item": ["c"], "qty": [3], "price": [1.0]}, index=["wed"]))
+        assert list(obj.value.index) == ["mon", "tue", "wed"]
+
+        # add column
+        obj["discount"] = [0.1, 0.2, 0.0]
+        assert list(obj.value.columns) == ["item", "qty", "price", "discount"]
+
+        # drop column
+        del obj["discount"]
+        assert list(obj.value.columns) == ["item", "qty", "price"]
+
+        # len
+        assert len(obj) == 3
+
+        # deepcopy
+        cp = obj.deepcopy()
+        assert isinstance(cp, pd.DataFrame)
+        assert list(cp.index) == ["mon", "tue", "wed"]
