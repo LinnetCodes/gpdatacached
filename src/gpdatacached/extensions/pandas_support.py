@@ -40,6 +40,24 @@ class UnsupportedSeriesDtypeError(TypeError):
         )
 
 
+class UnsupportedDataFrameError(TypeError):
+    """Raised when a DataFrame cannot be stored element-wise by DataFrameObject.
+
+    The message disambiguates the cause (per-column dtype, row index, or
+    duplicate column names) and guides the user to register a custom codec.
+    """
+
+    _GUIDANCE = (
+        "\nSupported dtypes: int64/Int64, float64/Float64, bool/boolean, "
+        "str/string, object, datetime64 (naive & tz-aware), category.\n"
+        "To cache this, write a custom codec and register it via "
+        "GPDCTypeRegistry.register(...)."
+    )
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message + self._GUIDANCE)
+
+
 def _value_dtype_family(dtype) -> str | None:
     """Classify a pandas value dtype into a reconstruction family, or None if unsupported."""
     if isinstance(dtype, pd.CategoricalDtype):
@@ -67,6 +85,36 @@ def _index_kind(index) -> str | None:
     if isinstance(index, pd.RangeIndex):
         return "range"
     return "labels" if _value_dtype_family(index.dtype) is not None else None
+
+
+def _validate_dataframe(value: pd.DataFrame) -> tuple[list, str]:
+    """Validate a DataFrame for storage.
+
+    Returns ``(column_names, index_kind)``. Raises ``UnsupportedDataFrameError``
+    on duplicate column names, a MultiIndex row index, an unsupported per-column
+    dtype, or an unsupported row-index dtype.
+    """
+    names = list(value.columns)
+    seen: set = set()
+    for n in names:
+        if n in seen:
+            raise UnsupportedDataFrameError(f"Duplicate column names are not supported by DataFrameObject: {names!r}.")
+        seen.add(n)
+    if isinstance(value.index, pd.MultiIndex):
+        raise UnsupportedDataFrameError(
+            "DataFrame row index is a MultiIndex, which is not supported by DataFrameObject."
+        )
+    for col in names:
+        if _value_dtype_family(value[col].dtype) is None:
+            raise UnsupportedDataFrameError(
+                f"Column {col!r} has dtype {value[col].dtype} which is not supported by DataFrameObject."
+            )
+    kind = _index_kind(value.index)
+    if kind is None:
+        raise UnsupportedDataFrameError(
+            f"DataFrame row index dtype {value.index.dtype} is not supported by DataFrameObject."
+        )
+    return names, kind
 
 
 def _python_values(series: pd.Series) -> list:
