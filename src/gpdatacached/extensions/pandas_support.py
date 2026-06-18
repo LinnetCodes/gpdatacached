@@ -20,6 +20,9 @@ __all__ = [
     "SeriesObject",
     "SeriesCodec",
     "UnsupportedSeriesDtypeError",
+    "DataFrameObject",
+    "DataFrameCodec",
+    "UnsupportedDataFrameError",
     "register",
 ]
 
@@ -287,13 +290,80 @@ class DataFrameCodec(GPDCContainerCodec):
         namespace._redis().delete(raw_key)
 
 
+class DataFrameObject(GPDCContainerObject):
+    """Redis-backed pandas DataFrame object.
+
+    raw_key is a Redis HASH: column value-refs under ``encode_key(col)``, the
+    shared index under ``~index``, and scalar metadata under ``~``-prefixed
+    fields. See the design spec for the full layout.
+    """
+
+    TYPE = "collection:pandas_dataframe"
+
+    def __init__(self, name, namespace, *, canonical_name=None) -> None:
+        super().__init__(name, namespace, canonical_name=canonical_name)
+        self._index_list_cache = _UNLOADED
+        self._column_lists_cache: dict = {}
+
+    @property
+    def type(self) -> str:
+        return self.TYPE
+
+    @property
+    def value(self) -> pd.DataFrame:
+        return DataFrameCodec.read_raw(self._namespace, self.raw_key)
+
+    @value.setter
+    def value(self, new_value) -> None:
+        self._reject_value_replacement()
+
+    # ── internal helpers ─────────────────────────────────────────────
+
+    def _raw_fields(self) -> dict:
+        return self._redis().hgetall(self.raw_key)
+
+    def _column_names(self) -> tuple:
+        return _decode_scalar(self._redis().hget(self.raw_key, "~columns"))
+
+    def _index_kind(self) -> str:
+        return _decode_scalar(self._redis().hget(self.raw_key, "~index_kind"))
+
+    def _get_index_list(self):
+        """Return the shared index ListObject wrapper, or None when RangeIndex."""
+        if self._index_list_cache is _UNLOADED:
+            ref = self._redis().hget(self.raw_key, "~index")
+            self._index_list_cache = decode_element(ref, self._namespace) if ref else None
+        return self._index_list_cache
+
+    def _get_column_list(self, col):
+        """Return a column's value ListObject wrapper (cached)."""
+        if col not in self._column_lists_cache:
+            ref = self._redis().hget(self.raw_key, encode_key(col))
+            self._column_lists_cache[col] = decode_element(ref, self._namespace) if ref else None
+        return self._column_lists_cache[col]
+
+    def _invalidate_caches(self) -> None:
+        self._index_list_cache = _UNLOADED
+        self._column_lists_cache = {}
+
+    def _current_item_count(self) -> int:
+        return len(self)
+
+
 def register() -> None:
-    """Register the pandas Series type with GPDCTypeRegistry (idempotent)."""
+    """Register the pandas Series + DataFrame types with GPDCTypeRegistry (idempotent)."""
     GPDCTypeRegistry.register(
         python_type=pd.Series,
         gpdc_type="collection:pandas_series",
         object_class=SeriesObject,
         codec_class=SeriesCodec,
+        priority=0,
+    )
+    GPDCTypeRegistry.register(
+        python_type=pd.DataFrame,
+        gpdc_type="collection:pandas_dataframe",
+        object_class=DataFrameObject,
+        codec_class=DataFrameCodec,
         priority=0,
     )
 

@@ -223,3 +223,34 @@ class TestDataFrameRoundTrip:
         finally:
             ns._redis().delete(raw_key)
         assert list(result.columns) == [("g", "a"), ("g", "b")]
+
+
+class TestDataFrameObjectCore:
+    def test_store_and_get_value(self, ns):
+        df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]}, index=["r1", "r2", "r3"])
+        ns["df"] = df
+        obj = ns.get_object("df")
+        assert obj.type == "collection:pandas_dataframe"
+        assert list(obj.value.columns) == ["a", "b"]
+        assert list(obj.value.index) == ["r1", "r2", "r3"]
+        assert list(obj.value["a"]) == [1, 2, 3]
+
+    def test_value_setter_rejected(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]})
+        obj = ns.get_object("df")
+        with pytest.raises(TypeError):
+            obj.value = pd.DataFrame({"a": [9]})
+
+    def test_register_registers_both_series_and_dataframe(self):
+        from gpdatacached.extensions.pandas_support import register
+        from gpdatacached.types import GPDCTypeRegistry
+
+        register()  # idempotent; fixture already registered, confirm both stay present
+        assert GPDCTypeRegistry.lookup_by_gpdc_type("collection:pandas_series") is not None
+        assert GPDCTypeRegistry.lookup_by_gpdc_type("collection:pandas_dataframe") is not None
+
+    def test_module_exports(self):
+        import gpdatacached.extensions.pandas_support as m
+
+        for name in ("DataFrameObject", "DataFrameCodec", "UnsupportedDataFrameError", "register"):
+            assert hasattr(m, name), name
