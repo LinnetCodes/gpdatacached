@@ -168,15 +168,20 @@ def _reconstruct(values: list, index_obj, fields: dict, namespace) -> pd.Series:
     )
 
 
-def _build_index(fields: dict, namespace) -> "pd.Index":
-    index_kind = _decode_scalar(fields["index_kind"])
-    index_name = _decode_scalar(fields["index_name"])
+def _build_index(fields: dict, namespace, prefix: str = "") -> "pd.Index":
+    """Build a pd.Index from raw-hash scalar/index fields.
+
+    ``prefix`` is "" for Series raw-hash field names (``index_kind``) and "~"
+    for DataFrame raw-hash field names (``~index_kind``).
+    """
+    index_kind = _decode_scalar(fields[f"{prefix}index_kind"])
+    index_name = _decode_scalar(fields[f"{prefix}index_name"])
     if index_kind == "range":
-        start = _decode_scalar(fields["range_start"])
-        stop = _decode_scalar(fields["range_stop"])
-        step = _decode_scalar(fields["range_step"])
+        start = _decode_scalar(fields[f"{prefix}range_start"])
+        stop = _decode_scalar(fields[f"{prefix}range_stop"])
+        step = _decode_scalar(fields[f"{prefix}range_step"])
         return pd.RangeIndex(start, stop, step, name=index_name)
-    labels = decode_element(fields["index"], namespace).value
+    labels = decode_element(fields[f"{prefix}index"], namespace).value
     return pd.Index(labels, name=index_name)
 
 
@@ -261,7 +266,21 @@ class DataFrameCodec(GPDCContainerCodec):
 
     @classmethod
     def read_raw(cls, namespace, raw_key) -> pd.DataFrame:
-        raise NotImplementedError  # implemented in Task 4
+        fields = namespace._redis().hgetall(raw_key)
+        if not fields:
+            return pd.DataFrame()
+        column_names = _decode_scalar(fields["~columns"])
+        index_obj = _build_index(fields, namespace, prefix="~")
+        data_dict = {}
+        for col in column_names:
+            col_key = encode_key(col)
+            values = decode_element(fields[col_key], namespace).deepcopy()
+            dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
+            family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
+            cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
+            ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
+            data_dict[col] = _reconstruct_series(values, index_obj, dtype_str, col, namespace, cats_ref, ordered)
+        return pd.DataFrame(data_dict, columns=list(column_names))
 
     @classmethod
     def delete_raw(cls, namespace, raw_key) -> None:

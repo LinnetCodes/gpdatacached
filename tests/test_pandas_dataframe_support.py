@@ -154,3 +154,72 @@ class TestCreateRawHashLayout:
         raw_key = "gpdc:testdomain:testns:raw:df5"
         with pytest.raises(UnsupportedDataFrameError):
             DataFrameCodec.create_raw(ns, raw_key, df, "owner", "permanent", 0)
+
+
+class TestDataFrameRoundTrip:
+    @pytest.mark.parametrize(
+        "df",
+        [
+            pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]}),  # int columns, RangeIndex
+            pd.DataFrame({"a": [1.5, 2.5], "b": ["x", "y"]}, index=["r1", "r2"]),  # labeled
+            pd.DataFrame({"a": [True, False], "b": [1, 2]}),  # bool + int
+            pd.DataFrame({"s": pd.Series([1, None, 3], dtype="Int64")}),  # nullable + NA
+            pd.DataFrame({"d": pd.to_datetime(["2020-01-01", "2021-01-01"])}),  # datetime naive
+            pd.DataFrame({"d": pd.to_datetime(["2020-01-01", "2021-01-01"], utc=True)}),  # datetime tz
+            pd.DataFrame({"c": pd.Series(["a", "b", "a"], dtype="category")}),  # category
+            pd.DataFrame({"o": [{"k": 1}, [1, 2], "s"]}),  # object with nested containers
+        ],
+    )
+    def test_round_trip_preserves_all(self, ns, df):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        raw_key = f"gpdc:testdomain:testns:raw:rt-{id(df)}"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, df, "owner", "permanent", 0)
+            result = DataFrameCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+
+        assert list(result.columns) == list(df.columns)
+        assert list(result.index) == list(df.index)
+        assert list(result.dtypes.astype(str)) == list(df.dtypes.astype(str))
+        for col in df.columns:
+            assert list(result[col].tolist()) == list(df[col].tolist())
+
+    def test_round_trip_preserves_category_categories_and_ordered(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        df = pd.DataFrame({"c": pd.Series(["b", "a"], dtype=pd.CategoricalDtype(["a", "b", "c"], ordered=True))})
+        raw_key = "gpdc:testdomain:testns:raw:catrt"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, df, "owner", "permanent", 0)
+            result = DataFrameCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result["c"].cat.categories) == ["a", "b", "c"]
+        assert result["c"].cat.ordered is True
+
+    def test_round_trip_empty_dataframe(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        df = pd.DataFrame({"a": [], "b": []})
+        raw_key = "gpdc:testdomain:testns:raw:empty"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, df, "owner", "permanent", 0)
+            result = DataFrameCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result.columns) == ["a", "b"]
+        assert len(result) == 0
+
+    def test_tuple_column_names_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        df = pd.DataFrame({("g", "a"): [1, 2], ("g", "b"): [3, 4]})
+        raw_key = "gpdc:testdomain:testns:raw:tuplecols"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, df, "owner", "permanent", 0)
+            result = DataFrameCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result.columns) == [("g", "a"), ("g", "b")]
