@@ -158,6 +158,33 @@ def _reconstruct_series(
     return pd.Series(values, index=index_obj, dtype=dtype_str, name=name)
 
 
+def _reconstruct_column(values, index_obj, fields, col, namespace) -> pd.Series:
+    """Reconstruct one DataFrame column from decoded values + raw-hash metadata.
+
+    Shared by DataFrameCodec.read_raw, DataFrameObject.__getitem__,
+    _positional_row_slice, and _DfLocIndexer. Reads the per-column
+    ``~dt:``/``~cat:``/``~ord:`` metadata from ``fields`` and delegates to
+    _reconstruct_series. ``values`` is the already-decoded list of cell values
+    (caller-supplied, since each read path fetches values differently).
+    """
+    col_key = encode_key(col)
+    dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
+    family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
+    cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
+    ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
+    return _reconstruct_series(values, index_obj, dtype_str, col, namespace, cats_ref, ordered)
+
+
+def _snap(value):
+    """Return a snapshot of a decoded cell: deep-copy containers, pass scalars through.
+
+    Used by the .iloc/.loc row read paths so object-dtype nested-container cells
+    come back as plain Python values (matching .value/df[col] snapshot semantics),
+    not live GPDC container references that could mutate the cache.
+    """
+    return value.deepcopy() if hasattr(value, "deepcopy") else value
+
+
 def _reconstruct(values: list, index_obj, fields: dict, namespace) -> pd.Series:
     """Series-specific wrapper over _reconstruct_series (reads Series raw-hash fields)."""
     return _reconstruct_series(
@@ -321,11 +348,7 @@ class DataFrameCodec(GPDCContainerCodec):
         for col in column_names:
             col_key = encode_key(col)
             values = decode_element(fields[col_key], namespace).deepcopy()
-            dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
-            family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
-            cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
-            ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
-            data_dict[col] = _reconstruct_series(values, index_obj, dtype_str, col, namespace, cats_ref, ordered)
+            data_dict[col] = _reconstruct_column(values, index_obj, fields, col, namespace)
         return pd.DataFrame(data_dict, columns=list(column_names), index=index_obj)
 
     @classmethod
@@ -340,8 +363,6 @@ class _DfILocIndexer:
         self._owner = owner
 
     def __getitem__(self, key):
-        import numpy as np
-
         owner = self._owner
         if isinstance(key, (int, np.integer)):
             columns = owner._column_names()
@@ -350,7 +371,7 @@ class _DfILocIndexer:
                 col_list = owner._get_column_list(col)
                 if col_list is None:
                     raise IndexError("DataFrame has no rows")
-                row[col] = col_list[int(key)]
+                row[col] = _snap(col_list[int(key)])
             fields = owner._raw_fields()
             index_obj = _build_index(fields, owner._namespace, prefix="~")
             return pd.Series(row, name=index_obj[int(key)])
@@ -368,8 +389,6 @@ class _DfLocIndexer:
     def __getitem__(self, label):
         owner = self._owner
         fields = owner._raw_fields()
-        if _decode_scalar(fields["~index_kind"]) == "range":
-            raise TypeError(".loc is not supported on a RangeIndex DataFrame; use .iloc")
         index_list = owner._get_index_list()
         if index_list is None:
             raise TypeError(".loc is not supported on a RangeIndex DataFrame; use .iloc")
@@ -382,16 +401,9 @@ class _DfLocIndexer:
         sliced_index = pd.Index([labels[p] for p in positions], name=full_index.name)
         data_dict = {}
         for col in columns:
-            col_key = encode_key(col)
             col_list = owner._get_column_list(col)
-            values = [col_list[p] for p in positions]
-            dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
-            family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
-            cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
-            ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
-            data_dict[col] = _reconstruct_series(
-                values, sliced_index, dtype_str, col, owner._namespace, cats_ref, ordered
-            )
+            values = [_snap(col_list[p]) for p in positions]
+            data_dict[col] = _reconstruct_column(values, sliced_index, fields, col, owner._namespace)
         result = pd.DataFrame(data_dict, columns=list(columns))
         if len(result) == 1:
             return result.iloc[0]
@@ -607,16 +619,11 @@ class DataFrameObject(GPDCContainerObject):
         columns = self._column_names()
         if col not in columns:
             raise KeyError(col)
-        col_key = encode_key(col)
         data_list = self._get_column_list(col)
         values = data_list.deepcopy() if data_list is not None else []
         fields = self._raw_fields()
-        dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
-        family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
-        cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
-        ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
         index_obj = _build_index(fields, self._namespace, prefix="~")
-        return _reconstruct_series(values, index_obj, dtype_str, col, self._namespace, cats_ref, ordered)
+        return _reconstruct_column(values, index_obj, fields, col, self._namespace)
 
     def __setitem__(self, col, values) -> None:
         """Add or replace a column. ``len(values)`` must equal the current row count."""
@@ -719,16 +726,10 @@ class DataFrameObject(GPDCContainerObject):
         sliced_index = index_obj[sl]
         data_dict = {}
         for col in columns:
-            col_key = encode_key(col)
             col_list = self._get_column_list(col)
-            values = col_list[sl] if col_list is not None else []
-            dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
-            family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
-            cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
-            ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
-            data_dict[col] = _reconstruct_series(
-                values, sliced_index, dtype_str, col, self._namespace, cats_ref, ordered
-            )
+            raw = col_list[sl] if col_list is not None else []
+            values = [_snap(v) for v in raw]
+            data_dict[col] = _reconstruct_column(values, sliced_index, fields, col, self._namespace)
         return pd.DataFrame(data_dict, columns=list(columns))
 
 

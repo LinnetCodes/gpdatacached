@@ -363,6 +363,15 @@ class TestDfILoc:
         with pytest.raises(TypeError):
             obj.iloc["a"]
 
+    def test_iloc_object_dtype_column_returns_plain_snapshot(self, ns):
+        # .iloc on an object-dtype column returns a plain snapshot (not a live GPDC container),
+        # consistent with .value / df[col] snapshot semantics.
+        ns["df"] = pd.DataFrame({"o": [{"k": 1}, {"k": 2}]})
+        obj = ns.get_object("df")
+        val = obj.iloc[0]["o"]
+        assert val == {"k": 1}
+        assert type(val) is dict
+
 
 class TestDfLoc:
     def test_loc_single_match_returns_series(self, ns):
@@ -693,6 +702,14 @@ class TestNestingAndRefCounting:
         assert raw_redis.ttl(a_list.raw_key) > 0
         if not index_is_range:
             assert raw_redis.ttl(obj._get_index_list().raw_key) > 0
+
+    def test_sliding_ttl_propagates_to_labeled_index_children(self, ns, raw_redis):
+        ns["df"] = pd.DataFrame({"a": [1, 2]}, index=["r1", "r2"])
+        obj = ns.get_object("df")
+        obj.update_cache_mode_and_ttl("sliding", 300)
+        index_list = obj._get_index_list()
+        assert raw_redis.ttl(obj.raw_key) > 0
+        assert raw_redis.ttl(index_list.raw_key) > 0
 
 
 class TestRejectedOperations:
