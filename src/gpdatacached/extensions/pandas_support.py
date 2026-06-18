@@ -214,6 +214,49 @@ def _is_range_indexed_series(other) -> bool:
     return isinstance(other, pd.Series) and isinstance(other.index, pd.RangeIndex)
 
 
+def _normalize_df_extend_input(other, columns: list) -> tuple[dict, list]:
+    """Normalize extend input for a DataFrame into ({col: python_values}, index_labels).
+
+    ``index_labels`` is the list of row labels carried by ``other``. For dict /
+    list-of-dict inputs (which have no index), positional labels ``0..n-1`` are
+    synthesized (range-compatible). Raises ValueError on column-set mismatch or
+    TypeError on a malformed input.
+    """
+    if isinstance(other, pd.DataFrame):
+        other_cols = list(other.columns)
+        if set(other_cols) != set(columns):
+            raise ValueError(f"extend input columns {other_cols!r} do not match {columns!r}")
+        per_col = {c: _python_values(other[c]) for c in columns}
+        return per_col, list(other.index)
+    if isinstance(other, dict):
+        if set(other.keys()) != set(columns):
+            raise ValueError(f"extend input columns {list(other.keys())!r} do not match {columns!r}")
+        per_col = {}
+        for c in columns:
+            vals = other[c]
+            per_col[c] = _python_values(vals) if isinstance(vals, pd.Series) else list(vals)
+        lengths = {len(v) for v in per_col.values()}
+        if len(lengths) > 1:
+            raise ValueError(
+                f"extend dict-of-lists columns have mismatched lengths: { {c: len(per_col[c]) for c in columns} }"
+            )
+        n = next(iter(lengths)) if lengths else 0
+        return per_col, list(range(n))
+    if isinstance(other, (list, tuple)):
+        rows = list(other)
+        bad = [r for r in rows if not isinstance(r, dict)]
+        if bad:
+            raise TypeError("extend input must be a DataFrame, dict, or list of dict rows")
+        per_col = {c: [] for c in columns}
+        for r in rows:
+            if set(r.keys()) != set(columns):
+                raise ValueError(f"extend row columns {list(r.keys())!r} do not match {columns!r}")
+            for c in columns:
+                per_col[c].append(r[c])
+        return per_col, list(range(len(rows)))
+    raise TypeError("extend input must be a DataFrame, dict, or list of dict rows")
+
+
 class DataFrameCodec(GPDCContainerCodec):
     """Codec for pandas DataFrame values stored as a Redis hash of column refs."""
 
@@ -410,6 +453,125 @@ class DataFrameObject(GPDCContainerObject):
     def _invalidate_caches(self) -> None:
         self._index_list_cache = _UNLOADED
         self._column_lists_cache = {}
+
+    def _promote_df_range_to_labels(self, fields: dict, owner_name, policy) -> None:
+        """Materialize a RangeIndex into a labels ~index child in-place.
+
+        Note: commits outside the extend pipeline. If the subsequent append
+        pipeline fails, the index stays promoted (range→labels) with no rows
+        added — semantically valid but representationally changed. Mirrors
+        SeriesObject.extend's promote path.
+        """
+        start = _decode_scalar(fields["~range_start"])
+        stop = _decode_scalar(fields["~range_stop"])
+        step = _decode_scalar(fields["~range_step"])
+        labels = list(pd.RangeIndex(start, stop, step))
+        with encode_session(self._namespace):
+            ref = encode_element(labels, self._namespace, owner_name, policy)
+        r = self._redis()
+        mapping = {
+            "~index": ref,
+            "~index_kind": _encode_extra_value("labels"),
+            "~index_dtype": _encode_extra_value("int64"),
+        }
+        r.hdel(self.raw_key, "~range_start", "~range_stop", "~range_step")
+        r.hset(self.raw_key, mapping=mapping)
+        self._index_list_cache = _UNLOADED
+
+    def extend(self, other) -> None:
+        """Append rows in place. Accepts a DataFrame, a dict of lists, or a list of dicts.
+
+        Mutates the cached object in Redis and returns None.
+        """
+        from ..lifecycle import policy_from_meta, policy_from_defaults
+
+        r = self._redis()
+        fields = self._raw_fields()
+        columns = list(_decode_scalar(fields["~columns"]))
+        index_kind = _decode_scalar(fields["~index_kind"])
+
+        per_col, appended_labels = _normalize_df_extend_input(other, columns)
+        n = len(appended_labels)
+
+        # Range-compatible iff the appended input carries positional labels
+        # (a DataFrame with a RangeIndex, or a dict / list-of-dicts which
+        # synthesize 0..n-1). Mirrors Series's _is_range_indexed_series.
+        if isinstance(other, pd.DataFrame):
+            appended_is_range = isinstance(other.index, pd.RangeIndex)
+        else:
+            appended_is_range = True
+
+        meta = ObjectMeta.load(r, self._canonical_redis_key())
+        policy = policy_from_meta(meta) if meta else policy_from_defaults("permanent", 0)
+        owner_name = self._data_owner_name()
+
+        # RangeIndex: continue the range, or promote to labels.
+        if index_kind == "range":
+            range_step = _decode_scalar(fields["~range_step"])
+            if range_step == 1 and appended_is_range:
+                pass  # range-compatible; bump range_stop below
+            else:
+                self._promote_df_range_to_labels(fields, owner_name, policy)
+                index_kind = "labels"
+                fields = self._raw_fields()
+
+        # Per-column validate/cast. Bind all casted python_values to a dict
+        # before the encode loop so each stays referenced for the whole
+        # encode_session (mirrors the create_raw id-aliasing fix).
+        python_values_by_col: dict[str, list] = {}
+        for col in columns:
+            col_key = encode_key(col)
+            dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
+            family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
+            raw_values = per_col[col]
+            if family == "category":
+                existing_cats = decode_element(fields[f"~cat:{col_key}"], self._namespace).value
+                for v in raw_values:
+                    if not pd.isna(v) and v not in existing_cats:
+                        raise ValueError(
+                            f"Cannot extend category column {col!r}: value {v!r} is not in "
+                            f"existing categories {existing_cats!r}."
+                        )
+                # Normalize NA sentinels (pd.NA / np.nan / None) to None so
+                # encode_element can store them; the non-category branch gets
+                # this for free via _python_values, but category skips that cast.
+                python_values_by_col[col] = [None if pd.isna(v) else v for v in raw_values]
+            else:
+                try:
+                    casted = pd.Series(raw_values, dtype=dtype_str)
+                except (ValueError, TypeError) as exc:
+                    raise ValueError(f"Cannot extend column {col!r} with dtype {dtype_str!r}: {exc}") from exc
+                python_values_by_col[col] = _python_values(casted)
+
+        # One MULTI/EXEC pipeline: RPUSH each column + shared index lockstep.
+        pipe = r.pipeline(transaction=True)
+        with encode_session(self._namespace):
+            encoded_per_col: dict[str, list[str]] = {}
+            for col in columns:
+                encoded_per_col[col] = [
+                    encode_element(v, self._namespace, owner_name, policy) for v in python_values_by_col[col]
+                ]
+            if index_kind == "labels":
+                encoded_idx = [encode_element(lbl, self._namespace, owner_name, policy) for lbl in appended_labels]
+            else:
+                encoded_idx = None
+        for col in columns:
+            enc = encoded_per_col[col]
+            if enc:
+                pipe.rpush(self._get_column_list(col).raw_key, *enc)
+        if index_kind == "labels":
+            if encoded_idx:
+                pipe.rpush(self._get_index_list().raw_key, *encoded_idx)
+        else:
+            new_stop = _decode_scalar(fields["~range_stop"]) + n
+            pipe.hset(self.raw_key, "~range_stop", _encode_extra_value(new_stop))
+        pipe.execute()
+
+        self._invalidate_caches()
+        self._touch()
+
+    def deepcopy(self) -> pd.DataFrame:
+        return self.value.copy(deep=True)
 
     def _current_item_count(self) -> int:
         return len(self)

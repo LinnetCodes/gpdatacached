@@ -392,3 +392,107 @@ class TestDfLoc:
         obj = ns.get_object("df")
         with pytest.raises(TypeError):
             obj.loc[0]
+
+
+class TestDfExtend:
+    def test_extend_with_dataframe(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"a": [5, 6], "b": [7, 8]}))
+        result = obj.value
+        assert list(result.index) == [0, 1, 2, 3]
+        assert list(result["a"]) == [1, 2, 5, 6]
+        assert list(result["b"]) == [3, 4, 7, 8]
+
+    def test_extend_with_dict_of_lists(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1], "b": [2]})
+        obj = ns.get_object("df")
+        obj.extend({"a": [3, 4], "b": [5, 6]})
+        assert list(obj.value["a"]) == [1, 3, 4]
+        assert list(obj.value["b"]) == [2, 5, 6]
+
+    def test_extend_with_list_of_dicts(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1], "b": [2]})
+        obj = ns.get_object("df")
+        obj.extend([{"a": 3, "b": 4}, {"a": 5, "b": 6}])
+        assert list(obj.value["a"]) == [1, 3, 5]
+
+    def test_extend_column_set_mismatch_raises(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1], "b": [2]})
+        obj = ns.get_object("df")
+        with pytest.raises(ValueError):
+            obj.extend(pd.DataFrame({"a": [3]}))
+
+    def test_extend_range_index_with_range_df_extends_range(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3]})
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"a": [4, 5]}))
+        result = obj.value
+        assert list(result.index) == [0, 1, 2, 3, 4]
+        assert ns.get_object("df")._index_kind() == "range"
+
+    def test_extend_range_index_with_labeled_promotes(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3]})
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"a": [4]}, index=["x"]))
+        result = obj.value
+        assert list(result.index) == [0, 1, 2, "x"]
+        assert ns.get_object("df")._index_kind() == "labels"
+
+    def test_extend_category_column_valid_values(self, ns):
+        ns["df"] = pd.DataFrame({"c": pd.Series(["a", "b"], dtype=pd.CategoricalDtype(["a", "b"]))})
+        obj = ns.get_object("df")
+        obj.extend({"c": ["a", "b"]})
+        assert list(obj.value["c"]) == ["a", "b", "a", "b"]
+
+    def test_extend_category_column_out_of_category_raises(self, ns):
+        ns["df"] = pd.DataFrame({"c": pd.Series(["a", "b"], dtype=pd.CategoricalDtype(["a", "b"]))})
+        obj = ns.get_object("df")
+        with pytest.raises(ValueError, match="categor"):
+            obj.extend({"c": ["z"]})
+
+    def test_extend_incompatible_dtype_raises(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        with pytest.raises(ValueError):
+            obj.extend({"a": ["not_an_int"]})
+
+    def test_extend_returns_none(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]})
+        obj = ns.get_object("df")
+        assert obj.extend(pd.DataFrame({"a": [2]})) is None
+
+    def test_extend_lockstep_all_columns_and_index_aligned(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1], "b": [2]}, index=["r1"])
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"a": [3, 4], "b": [5, 6]}, index=["r2", "r3"]))
+        result = obj.value
+        assert len(result) == 3
+        assert len(result.index) == len(result["a"]) == len(result["b"]) == 3
+
+    def test_deepcopy_returns_plain_dataframe(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        cp = obj.deepcopy()
+        assert isinstance(cp, pd.DataFrame)
+        assert list(cp["a"]) == [1, 2]
+
+    def test_extend_ragged_dict_raises(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1], "b": [2]})
+        obj = ns.get_object("df")
+        with pytest.raises(ValueError, match="mismatched lengths"):
+            obj.extend({"a": [3, 4], "b": [5]})
+
+    def test_extend_category_column_with_na_via_dict(self, ns):
+        # pd.NA in a category column via dict input must extend (NA allowed),
+        # not crash on the membership guard (regression for the pd.NA bool-ambiguity bug:
+        # the old `v is not None and ...` guard evaluated `pd.NA == cat` -> pd.NA, and
+        # bool(pd.NA) raised TypeError). Uses pd.NA (not None) because None short-circuits
+        # the old guard via `v is not None` and would NOT reproduce the crash.
+        ns["df"] = pd.DataFrame({"c": pd.Series(["a", "b"], dtype=pd.CategoricalDtype(["a", "b"]))})
+        obj = ns.get_object("df")
+        obj.extend({"c": ["a", pd.NA]})  # pd.NA is NA; must be accepted, not crash
+        result = obj.value
+        assert list(result["c"][:2]) == ["a", "b"]
+        assert list(result["c"][2:3]) == ["a"]
+        assert pd.isna(result["c"].iloc[3])
