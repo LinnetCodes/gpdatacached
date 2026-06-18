@@ -362,3 +362,33 @@ class TestDfILoc:
         obj = ns.get_object("df")
         with pytest.raises(TypeError):
             obj.iloc["a"]
+
+
+class TestDfLoc:
+    def test_loc_single_match_returns_series(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]}, index=["r1", "r2", "r3"])
+        obj = ns.get_object("df")
+        row = obj.loc["r2"]
+        assert isinstance(row, pd.Series)
+        assert row["a"] == 2
+        assert row.name == "r2"
+
+    def test_loc_duplicate_labels_returns_dataframe(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3]}, index=["r1", "r1", "r3"])
+        obj = ns.get_object("df")
+        result = obj.loc["r1"]
+        assert isinstance(result, pd.DataFrame)
+        assert list(result.index) == ["r1", "r1"]
+        assert list(result["a"]) == [1, 2]
+
+    def test_loc_missing_label_raises(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]}, index=["r1"])
+        obj = ns.get_object("df")
+        with pytest.raises(KeyError):
+            obj.loc["zzz"]
+
+    def test_loc_on_range_index_raises(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        with pytest.raises(TypeError):
+            obj.loc[0]

@@ -316,6 +316,45 @@ class _DfILocIndexer:
         raise TypeError(f"iloc expects int or slice, got {type(key).__name__!r}")
 
 
+class _DfLocIndexer:
+    """Label-based row indexer for DataFrameObject (read-only)."""
+
+    def __init__(self, owner: "DataFrameObject") -> None:
+        self._owner = owner
+
+    def __getitem__(self, label):
+        owner = self._owner
+        fields = owner._raw_fields()
+        if _decode_scalar(fields["~index_kind"]) == "range":
+            raise TypeError(".loc is not supported on a RangeIndex DataFrame; use .iloc")
+        index_list = owner._get_index_list()
+        if index_list is None:
+            raise TypeError(".loc is not supported on a RangeIndex DataFrame; use .iloc")
+        labels = index_list.value
+        positions = [i for i, lbl in enumerate(labels) if lbl == label]
+        if not positions:
+            raise KeyError(label)
+        columns = owner._column_names()
+        full_index = _build_index(fields, owner._namespace, prefix="~")
+        sliced_index = pd.Index([labels[p] for p in positions], name=full_index.name)
+        data_dict = {}
+        for col in columns:
+            col_key = encode_key(col)
+            col_list = owner._get_column_list(col)
+            values = [col_list[p] for p in positions]
+            dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
+            family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
+            cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
+            ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
+            data_dict[col] = _reconstruct_series(
+                values, sliced_index, dtype_str, col, owner._namespace, cats_ref, ordered
+            )
+        result = pd.DataFrame(data_dict, columns=list(columns))
+        if len(result) == 1:
+            return result.iloc[0]
+        return result
+
+
 class DataFrameObject(GPDCContainerObject):
     """Redis-backed pandas DataFrame object.
 
@@ -420,6 +459,10 @@ class DataFrameObject(GPDCContainerObject):
     @property
     def iloc(self) -> "_DfILocIndexer":
         return _DfILocIndexer(self)
+
+    @property
+    def loc(self) -> "_DfLocIndexer":
+        return _DfLocIndexer(self)
 
     def _positional_row_slice(self, sl: slice) -> pd.DataFrame:
         columns = self._column_names()
