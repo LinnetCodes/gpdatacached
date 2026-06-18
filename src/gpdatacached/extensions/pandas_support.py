@@ -12,6 +12,7 @@ from ..types import (
     _decode_scalar,
     decode_element,
     encode_element,
+    encode_key,
     encode_session,
 )
 
@@ -203,6 +204,59 @@ def _normalize_extend_input(other) -> tuple[list, list]:
 def _is_range_indexed_series(other) -> bool:
     """True when `other` is a Series with a RangeIndex (so a range Series can stay a range)."""
     return isinstance(other, pd.Series) and isinstance(other.index, pd.RangeIndex)
+
+
+class DataFrameCodec(GPDCContainerCodec):
+    """Codec for pandas DataFrame values stored as a Redis hash of column refs."""
+
+    @classmethod
+    def create_raw(cls, namespace, raw_key, value: pd.DataFrame, owner_name, cache_mode, ttl) -> None:
+        from ..lifecycle import policy_from_defaults
+
+        column_names, kind = _validate_dataframe(value)
+        policy = policy_from_defaults(cache_mode, ttl)
+        index = value.index
+
+        fields: dict[str, str] = {}
+        with encode_session(namespace):
+            for col in column_names:
+                col_series = value[col]
+                family = _value_dtype_family(col_series.dtype)
+                col_key = encode_key(col)
+                fields[col_key] = encode_element(_python_values(col_series), namespace, owner_name, policy)
+                if family == "category":
+                    fields[f"~cat:{col_key}"] = encode_element(
+                        col_series.cat.categories.tolist(), namespace, owner_name, policy
+                    )
+            if kind == "labels":
+                fields["~index"] = encode_element(_python_labels(index), namespace, owner_name, policy)
+
+        for col in column_names:
+            col_key = encode_key(col)
+            col_series = value[col]
+            fields[f"~dt:{col_key}"] = _encode_extra_value(str(col_series.dtype))
+            if _value_dtype_family(col_series.dtype) == "category":
+                fields[f"~ord:{col_key}"] = _encode_extra_value(bool(col_series.cat.ordered))
+
+        fields["~columns"] = _encode_extra_value(tuple(column_names))
+        fields["~index_kind"] = _encode_extra_value(kind)
+        fields["~index_name"] = _encode_extra_value(index.name)
+        if kind == "labels":
+            fields["~index_dtype"] = _encode_extra_value(str(index.dtype))
+        else:
+            fields["~range_start"] = _encode_extra_value(int(index.start))
+            fields["~range_stop"] = _encode_extra_value(int(index.stop))
+            fields["~range_step"] = _encode_extra_value(int(index.step))
+
+        namespace._redis().hset(raw_key, mapping=fields)
+
+    @classmethod
+    def read_raw(cls, namespace, raw_key) -> pd.DataFrame:
+        raise NotImplementedError  # implemented in Task 4
+
+    @classmethod
+    def delete_raw(cls, namespace, raw_key) -> None:
+        namespace._redis().delete(raw_key)
 
 
 def register() -> None:
