@@ -217,19 +217,28 @@ class DataFrameCodec(GPDCContainerCodec):
         policy = policy_from_defaults(cache_mode, ttl)
         index = value.index
 
+        # Bind all lists to locals BEFORE entering encode_session so they stay
+        # alive for the whole session. Passing temporaries inline into
+        # encode_element lets CPython reuse a freed id() for the next list,
+        # which collides with the encode memo (keyed by id) and aliases
+        # distinct content (e.g. an index list silently reuses a column's ref).
+        col_values = {col: _python_values(value[col]) for col in column_names}
+        col_cats = {
+            col: value[col].cat.categories.tolist()
+            for col in column_names
+            if _value_dtype_family(value[col].dtype) == "category"
+        }
+        index_labels = _python_labels(index) if kind == "labels" else None
+
         fields: dict[str, str] = {}
         with encode_session(namespace):
             for col in column_names:
-                col_series = value[col]
-                family = _value_dtype_family(col_series.dtype)
                 col_key = encode_key(col)
-                fields[col_key] = encode_element(_python_values(col_series), namespace, owner_name, policy)
-                if family == "category":
-                    fields[f"~cat:{col_key}"] = encode_element(
-                        col_series.cat.categories.tolist(), namespace, owner_name, policy
-                    )
+                fields[col_key] = encode_element(col_values[col], namespace, owner_name, policy)
+                if col in col_cats:
+                    fields[f"~cat:{col_key}"] = encode_element(col_cats[col], namespace, owner_name, policy)
             if kind == "labels":
-                fields["~index"] = encode_element(_python_labels(index), namespace, owner_name, policy)
+                fields["~index"] = encode_element(index_labels, namespace, owner_name, policy)
 
         for col in column_names:
             col_key = encode_key(col)
