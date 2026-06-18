@@ -290,6 +290,32 @@ class DataFrameCodec(GPDCContainerCodec):
         namespace._redis().delete(raw_key)
 
 
+class _DfILocIndexer:
+    """Positional row indexer for DataFrameObject (read-only)."""
+
+    def __init__(self, owner: "DataFrameObject") -> None:
+        self._owner = owner
+
+    def __getitem__(self, key):
+        import numpy as np
+
+        owner = self._owner
+        if isinstance(key, (int, np.integer)):
+            columns = owner._column_names()
+            row = {}
+            for col in columns:
+                col_list = owner._get_column_list(col)
+                if col_list is None:
+                    raise IndexError("DataFrame has no rows")
+                row[col] = col_list[int(key)]
+            fields = owner._raw_fields()
+            index_obj = _build_index(fields, owner._namespace, prefix="~")
+            return pd.Series(row, name=index_obj[int(key)])
+        if isinstance(key, slice):
+            return owner._positional_row_slice(key)
+        raise TypeError(f"iloc expects int or slice, got {type(key).__name__!r}")
+
+
 class DataFrameObject(GPDCContainerObject):
     """Redis-backed pandas DataFrame object.
 
@@ -390,6 +416,29 @@ class DataFrameObject(GPDCContainerObject):
         ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
         index_obj = _build_index(fields, self._namespace, prefix="~")
         return _reconstruct_series(values, index_obj, dtype_str, col, self._namespace, cats_ref, ordered)
+
+    @property
+    def iloc(self) -> "_DfILocIndexer":
+        return _DfILocIndexer(self)
+
+    def _positional_row_slice(self, sl: slice) -> pd.DataFrame:
+        columns = self._column_names()
+        fields = self._raw_fields()
+        index_obj = _build_index(fields, self._namespace, prefix="~")
+        sliced_index = index_obj[sl]
+        data_dict = {}
+        for col in columns:
+            col_key = encode_key(col)
+            col_list = self._get_column_list(col)
+            values = col_list[sl] if col_list is not None else []
+            dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
+            family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
+            cats_ref = fields.get(f"~cat:{col_key}") if family == "category" else None
+            ordered = _decode_scalar(fields[f"~ord:{col_key}"]) if family == "category" else None
+            data_dict[col] = _reconstruct_series(
+                values, sliced_index, dtype_str, col, self._namespace, cats_ref, ordered
+            )
+        return pd.DataFrame(data_dict, columns=list(columns))
 
 
 def register() -> None:

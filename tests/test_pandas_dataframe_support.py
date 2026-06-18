@@ -316,3 +316,49 @@ class TestReadApi:
         obj = ns.get_object("df")
         with pytest.raises(KeyError):
             obj["zzz"]
+
+
+class TestDfILoc:
+    def test_iloc_int_returns_row_series(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]}, index=["r1", "r2", "r3"])
+        obj = ns.get_object("df")
+        row = obj.iloc[1]
+        assert isinstance(row, pd.Series)
+        assert list(row.index) == ["a", "b"]
+        assert row["a"] == 2
+        assert row["b"] == "y"
+        assert row.name == "r2"
+
+    def test_iloc_int_negative(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3]})
+        obj = ns.get_object("df")
+        assert obj.iloc[-1]["a"] == 3
+
+    def test_iloc_int_numpy_integer(self, ns):
+        import numpy as np
+
+        ns["df"] = pd.DataFrame({"a": [10, 20]})
+        obj = ns.get_object("df")
+        assert obj.iloc[np.int64(1)]["a"] == 20
+
+    def test_iloc_slice_returns_dataframe(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2, 3, 4], "b": [5, 6, 7, 8]}, index=["r1", "r2", "r3", "r4"])
+        obj = ns.get_object("df")
+        sub = obj.iloc[1:3]
+        assert isinstance(sub, pd.DataFrame)
+        assert list(sub.index) == ["r2", "r3"]
+        assert list(sub["a"]) == [2, 3]
+        assert list(sub["b"]) == [6, 7]
+
+    def test_iloc_slice_on_range_index(self, ns):
+        ns["df"] = pd.DataFrame({"a": [10, 20, 30]})
+        obj = ns.get_object("df")
+        sub = obj.iloc[0:2]
+        assert list(sub.index) == [0, 1]
+        assert list(sub["a"]) == [10, 20]
+
+    def test_iloc_bad_key_type_raises(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1]})
+        obj = ns.get_object("df")
+        with pytest.raises(TypeError):
+            obj.iloc["a"]
