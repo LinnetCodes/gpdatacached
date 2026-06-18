@@ -81,19 +81,42 @@ def _python_labels(index) -> list:
     return [None if na else x for x, na in zip(index.tolist(), list(is_na))]
 
 
-def _reconstruct(values: list, index_obj, fields: dict, namespace) -> pd.Series:
-    """Build a pd.Series from decoded values + index + raw-hash scalar fields."""
-    dtype_str = _decode_scalar(fields["dtype"])
-    name = _decode_scalar(fields["name"])
+def _reconstruct_series(
+    values: list,
+    index_obj,
+    dtype_str: str,
+    name,
+    namespace,
+    cats_ref: str | None = None,
+    ordered=None,
+) -> pd.Series:
+    """Build a pd.Series from decoded values + index + dtype metadata.
+
+    Shared by SeriesCodec.read_raw, DataFrameCodec.read_raw, and DataFrameObject
+    column reads. ``cats_ref`` is the encoded ``ref:`` string pointing at a
+    categories ListObject (category dtype only).
+    """
     family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
     if family == "category":
-        cats = decode_element(fields["categories"], namespace).value
-        ordered = _decode_scalar(fields["ordered"])
+        cats = decode_element(cats_ref, namespace).value
         cat = pd.Categorical(values, categories=cats, ordered=ordered)
         return pd.Series(cat, index=index_obj, name=name)
     if family == "datetime":
         return pd.Series(values, index=index_obj, name=name).astype(dtype_str)
     return pd.Series(values, index=index_obj, dtype=dtype_str, name=name)
+
+
+def _reconstruct(values: list, index_obj, fields: dict, namespace) -> pd.Series:
+    """Series-specific wrapper over _reconstruct_series (reads Series raw-hash fields)."""
+    return _reconstruct_series(
+        values,
+        index_obj,
+        _decode_scalar(fields["dtype"]),
+        _decode_scalar(fields["name"]),
+        namespace,
+        cats_ref=fields.get("categories"),
+        ordered=_decode_scalar(fields["ordered"]) if "ordered" in fields else None,
+    )
 
 
 def _build_index(fields: dict, namespace) -> "pd.Index":
