@@ -23,8 +23,70 @@ __all__ = [
     "DataFrameObject",
     "DataFrameCodec",
     "UnsupportedDataFrameError",
+    "UnsupportedElementTypeError",
     "register",
 ]
+
+
+_ELEMENT_SCAN_FAMILIES = {"object_or_string", "category"}
+
+
+class UnsupportedElementTypeError(TypeError):
+    """A Series/DataFrame element is not encodable by a GPDCScalarCodec subclass.
+
+    Raised when an element is a container type (list/dict/set/container-registered
+    pydantic model) or an unsupported type. Series/DataFrame elements must be
+    scalar types encodable by a GPDCScalarCodec subclass.
+    """
+
+    _GUIDANCE = (
+        "\nSeries/DataFrame elements must be scalar types encodable by a "
+        "GPDCScalarCodec subclass (int/float/bool/str/datetime/date/time/tuple/None, or a "
+        "scalar-registered custom type). Container types are not allowed as elements."
+    )
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message + self._GUIDANCE)
+
+
+def _to_python_native(value):
+    """Normalize a numpy scalar to its Python native equivalent.
+
+    GPDCTypeRegistry.lookup_by_python_type is inconsistent on raw numpy scalars
+    (it rejects np.int64 / np.bool_ as unsupported). Mirrors the .tolist()
+    conversion the encode path already relies on. `isinstance(v, np.generic)`
+    is True for every numpy scalar dtype and `.item()` maps each to its native.
+    """
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _assert_scalar_encodable(values, context: str) -> None:
+    """Raise UnsupportedElementTypeError if any value is not encodable by a
+    GPDCScalarCodec subclass.
+
+    `context` is a human-readable description for the error message (e.g.
+    "Series element", "DataFrame column 'o' element", "index label",
+    "category value"). None values (NA sentinel) are always allowed.
+    """
+    from ..codec import GPDCScalarCodec
+    from ..types import GPDCTypeRegistry
+
+    for raw_value in values:
+        if raw_value is None:
+            continue
+        value = _to_python_native(raw_value)
+        try:
+            entry = GPDCTypeRegistry.lookup_by_python_type(value)
+        except TypeError:
+            raise UnsupportedElementTypeError(
+                f"{context} of type {type(raw_value).__name__!r} is not a supported scalar type."
+            )
+        if not issubclass(entry.codec_class, GPDCScalarCodec):
+            raise UnsupportedElementTypeError(
+                f"{context} of type {type(raw_value).__name__!r} is a container type; only scalar elements are allowed."
+            )
 
 
 class UnsupportedSeriesDtypeError(TypeError):

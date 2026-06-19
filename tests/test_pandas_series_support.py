@@ -558,3 +558,54 @@ class TestPublicAPI:
         assert str(result.dtype) == "float64"
         sub = obj.loc["tue"]
         assert list(sub.values) == [37.0]
+
+
+class TestScalarElementValidation:
+    """Unit tests for the _assert_scalar_encodable helper."""
+
+    def test_accepts_native_scalars_and_none(self):
+        from gpdatacached.extensions.pandas_support import _assert_scalar_encodable
+
+        _assert_scalar_encodable([1, 2.5, True, "x", None], "elem")  # no raise
+
+    def test_accepts_tuple(self):
+        from gpdatacached.extensions.pandas_support import _assert_scalar_encodable
+
+        _assert_scalar_encodable([(1, 2), (3, 4)], "elem")  # tuple is a scalar codec
+
+    def test_normalizes_numpy_scalars(self):
+        import numpy as np
+        from gpdatacached.extensions.pandas_support import _assert_scalar_encodable
+
+        _assert_scalar_encodable([np.int64(1), np.bool_(True), np.float64(2.5)], "elem")
+
+    def test_rejects_list_element(self):
+        from gpdatacached.extensions.pandas_support import (
+            UnsupportedElementTypeError,
+            _assert_scalar_encodable,
+        )
+
+        with pytest.raises(UnsupportedElementTypeError):
+            _assert_scalar_encodable([[1, 2]], "elem")
+
+    def test_rejects_dict_and_set(self):
+        from gpdatacached.extensions.pandas_support import (
+            UnsupportedElementTypeError,
+            _assert_scalar_encodable,
+        )
+
+        for bad in ([{"a": 1}], [{1, 2}]):
+            with pytest.raises(UnsupportedElementTypeError):
+                _assert_scalar_encodable(bad, "elem")
+
+    def test_rejects_unregistered_type(self):
+        from gpdatacached.extensions.pandas_support import (
+            UnsupportedElementTypeError,
+            _assert_scalar_encodable,
+        )
+
+        class Foo:
+            pass
+
+        with pytest.raises(UnsupportedElementTypeError):
+            _assert_scalar_encodable([Foo()], "elem")
