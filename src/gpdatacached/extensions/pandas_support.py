@@ -755,6 +755,19 @@ class DataFrameObject(GPDCContainerObject):
             raise UnsupportedDataFrameError(
                 f"Column {col!r} has dtype {inferred.dtype!r} which is not supported by DataFrameObject."
             )
+
+        data_values = _python_values(inferred)
+
+        # Validate elements are scalar-encodable BEFORE releasing any old column
+        # refs (a mutation), so a rejected input leaves the object untouched.
+        if family in _ELEMENT_SCAN_FAMILIES:
+            _assert_scalar_encodable(data_values, f"DataFrame column {col!r} element")
+        if family == "category":
+            _assert_scalar_encodable(
+                inferred.cat.categories.tolist(),
+                f"DataFrame column {col!r} category value",
+            )
+
         col_key = encode_key(col)
         replacing = col in columns
         old_family = None
@@ -766,7 +779,6 @@ class DataFrameObject(GPDCContainerObject):
             if old_family == "category":
                 self._release_element_ref(r.hget(self.raw_key, f"~cat:{col_key}"))
 
-        data_values = _python_values(inferred)
         with encode_session(self._namespace):
             mapping = {
                 col_key: encode_element(data_values, self._namespace, owner_name, policy),

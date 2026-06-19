@@ -811,3 +811,32 @@ class TestExtendElementBoundary:
         with pytest.raises(UnsupportedElementTypeError):
             obj.extend(pd.DataFrame({"o": [[1, 2]]}))
         assert list(obj["o"]) == ["a", "b"]
+
+
+class TestSetItemElementBoundary:
+    def test_setitem_rejects_container_column(self, ns):
+        from gpdatacached.extensions.pandas_support import UnsupportedElementTypeError
+
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        with pytest.raises(UnsupportedElementTypeError):
+            obj["b"] = [[1, 2], [3, 4]]
+        # column not added
+        assert list(obj.columns) == ["a"]
+
+    def test_setitem_replace_rejects_container_preserves_column(self, ns):
+        from gpdatacached.extensions.pandas_support import UnsupportedElementTypeError
+
+        ns["df"] = pd.DataFrame({"a": ["x", "y"]}, dtype=object)
+        obj = ns.get_object("df")
+        with pytest.raises(UnsupportedElementTypeError):
+            obj["a"] = [[1, 2], [3, 4]]
+        # old column values intact (ref not released, no partial mutation)
+        assert list(obj["a"]) == ["x", "y"]
+
+    def test_setitem_accepts_tuple_column(self, ns):
+        ns["df"] = pd.DataFrame({"a": [1, 2]})
+        obj = ns.get_object("df")
+        obj["b"] = [(1, 2), (3, 4)]
+        assert list(obj.columns) == ["a", "b"]
+        assert list(obj["b"]) == [(1, 2), (3, 4)]
