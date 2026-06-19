@@ -602,3 +602,71 @@ class TestScalarElementValidation:
 
         with pytest.raises(UnsupportedElementTypeError):
             _assert_scalar_encodable([Foo()], "elem")
+
+
+class TestCreateElementBoundary:
+    def test_create_series_rejects_container_element(self, ns):
+        from gpdatacached.extensions.pandas_support import (
+            SeriesCodec,
+            UnsupportedElementTypeError,
+        )
+
+        with pytest.raises(UnsupportedElementTypeError):
+            SeriesCodec.create_raw(
+                ns,
+                "gpdc:testdomain:testns:raw:rej-s",
+                pd.Series([[1, 2], [3, 4]], dtype=object),
+                "owner",
+                "permanent",
+                0,
+            )
+
+    def test_create_series_rejects_dict_element(self, ns):
+        from gpdatacached.extensions.pandas_support import (
+            SeriesCodec,
+            UnsupportedElementTypeError,
+        )
+
+        with pytest.raises(UnsupportedElementTypeError):
+            SeriesCodec.create_raw(
+                ns,
+                "gpdc:testdomain:testns:raw:rej-d",
+                pd.Series([{"a": 1}], dtype=object),
+                "owner",
+                "permanent",
+                0,
+            )
+
+    def test_create_series_accepts_tuple_elements(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        raw_key = "gpdc:testdomain:testns:raw:ok-tuple"
+        SeriesCodec.create_raw(ns, raw_key, pd.Series([(1, 2), (3, 4)], dtype=object), "owner", "permanent", 0)
+        result = SeriesCodec.read_raw(ns, raw_key)
+        assert list(result.values) == [(1, 2), (3, 4)]
+
+    def test_create_series_accepts_numpy_scalars_in_object(self, ns):
+        import numpy as np
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        raw_key = "gpdc:testdomain:testns:raw:ok-np"
+        s = pd.Series([np.int64(1), np.bool_(True), np.float64(2.5)], dtype=object)
+        SeriesCodec.create_raw(ns, raw_key, s, "owner", "permanent", 0)
+        result = SeriesCodec.read_raw(ns, raw_key)
+        assert list(result.values) == [1, True, 2.5]
+
+    def test_create_series_rejects_container_index_label(self, ns):
+        from gpdatacached.extensions.pandas_support import (
+            SeriesCodec,
+            UnsupportedElementTypeError,
+        )
+
+        with pytest.raises(UnsupportedElementTypeError):
+            SeriesCodec.create_raw(
+                ns,
+                "gpdc:testdomain:testns:raw:rej-idx",
+                pd.Series([1, 2], index=pd.Index([[1, 2], [3, 4]], dtype=object)),
+                "owner",
+                "permanent",
+                0,
+            )

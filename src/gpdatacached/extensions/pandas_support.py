@@ -184,15 +184,24 @@ def _validate_dataframe(value: pd.DataFrame) -> tuple[list, str]:
 
 
 def _python_values(series: pd.Series) -> list:
-    """Materialize Series values as Python natives with NA -> None."""
+    """Materialize Series values as Python natives with NA -> None.
+
+    Numpy scalars (e.g. np.int64/np.bool_ inside an object-dtype Series, which
+    .tolist() leaves untouched) are normalized to Python natives so the element
+    codec lookup succeeds. Container values (list/dict/set) are not numpy
+    scalars and pass through unchanged.
+    """
     is_na = pd.isna(series)
-    return [None if na else x for x, na in zip(series.tolist(), list(is_na))]
+    return [None if na else _to_python_native(x) for x, na in zip(series.tolist(), list(is_na))]
 
 
 def _python_labels(index) -> list:
-    """Materialize Index labels as Python natives with NA -> None."""
+    """Materialize Index labels as Python natives with NA -> None.
+
+    Numpy scalars are normalized to Python natives (see _python_values).
+    """
     is_na = pd.isna(index)
-    return [None if na else x for x, na in zip(index.tolist(), list(is_na))]
+    return [None if na else _to_python_native(x) for x, na in zip(index.tolist(), list(is_na))]
 
 
 def _reconstruct_series(
@@ -369,6 +378,15 @@ class DataFrameCodec(GPDCContainerCodec):
             if _value_dtype_family(value[col].dtype) == "category"
         }
         index_labels = _python_labels(index) if kind == "labels" else None
+
+        # Validate elements are scalar-encodable BEFORE encoding (no Redis write yet).
+        for col in column_names:
+            if _value_dtype_family(value[col].dtype) in _ELEMENT_SCAN_FAMILIES:
+                _assert_scalar_encodable(col_values[col], f"DataFrame column {col!r} element")
+            if col in col_cats:
+                _assert_scalar_encodable(col_cats[col], f"DataFrame column {col!r} category value")
+        if index_labels is not None and _value_dtype_family(index.dtype) in _ELEMENT_SCAN_FAMILIES:
+            _assert_scalar_encodable(index_labels, "DataFrame index label")
 
         fields: dict[str, str] = {}
         with encode_session(namespace):
@@ -830,6 +848,15 @@ class SeriesCodec(GPDCContainerCodec):
         data_values = _python_values(value)
         index_labels = _python_labels(index) if kind == "labels" else None
         categories = value.cat.categories.tolist() if family == "category" else None
+
+        # Validate elements are scalar-encodable BEFORE encoding (no Redis write yet).
+        if family in _ELEMENT_SCAN_FAMILIES:
+            _assert_scalar_encodable(data_values, "Series element")
+        if categories is not None:
+            _assert_scalar_encodable(categories, "Series category value")
+        if index_labels is not None and _value_dtype_family(index.dtype) in _ELEMENT_SCAN_FAMILIES:
+            _assert_scalar_encodable(index_labels, "Series index label")
+
         fields: dict[str, str] = {}
         with encode_session(namespace):
             fields["data"] = encode_element(data_values, namespace, owner_name, policy)

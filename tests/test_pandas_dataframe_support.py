@@ -766,3 +766,37 @@ class TestFullWorkflow:
         cp = obj.deepcopy()
         assert isinstance(cp, pd.DataFrame)
         assert list(cp.index) == ["mon", "tue", "wed"]
+
+
+class TestCreateElementBoundary:
+    def test_create_dataframe_rejects_container_column(self, ns):
+        from gpdatacached.extensions.pandas_support import (
+            DataFrameCodec,
+            UnsupportedElementTypeError,
+        )
+
+        with pytest.raises(UnsupportedElementTypeError):
+            DataFrameCodec.create_raw(
+                ns,
+                "gpdc:testdomain:testns:raw:rej-df",
+                pd.DataFrame({"o": [[1, 2], [3, 4]]}),
+                "owner",
+                "permanent",
+                0,
+            )
+
+    def test_create_dataframe_rejects_dict_element(self, ns):
+        from gpdatacached.extensions.pandas_support import (
+            DataFrameCodec,
+            UnsupportedElementTypeError,
+        )
+
+        with pytest.raises(UnsupportedElementTypeError):
+            DataFrameCodec.create_raw(
+                ns,
+                "gpdc:testdomain:testns:raw:rej-df2",
+                pd.DataFrame({"o": [{"a": 1}, {"b": 2}]}),
+                "owner",
+                "permanent",
+                0,
+            )
