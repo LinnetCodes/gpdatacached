@@ -801,6 +801,22 @@ class TestCreateElementBoundary:
                 0,
             )
 
+    def test_create_dataframe_rejects_container_index_label(self, ns):
+        from gpdatacached.extensions.pandas_support import (
+            DataFrameCodec,
+            UnsupportedElementTypeError,
+        )
+
+        with pytest.raises(UnsupportedElementTypeError):
+            DataFrameCodec.create_raw(
+                ns,
+                "gpdc:testdomain:testns:raw:rej-df-idx",
+                pd.DataFrame({"a": [1, 2]}, index=pd.Index([["x"], ["y"]], dtype=object)),
+                "owner",
+                "permanent",
+                0,
+            )
+
 
 class TestExtendElementBoundary:
     def test_dataframe_extend_rejects_container_row(self, ns):
@@ -811,6 +827,17 @@ class TestExtendElementBoundary:
         with pytest.raises(UnsupportedElementTypeError):
             obj.extend(pd.DataFrame({"o": [[1, 2]]}))
         assert list(obj["o"]) == ["a", "b"]
+
+    def test_dataframe_extend_rejects_container_index_label(self, ns):
+        from gpdatacached.extensions.pandas_support import UnsupportedElementTypeError
+
+        ns["df"] = pd.DataFrame({"o": ["a", "b"]}, index=["r1", "r2"], dtype=object)
+        obj = ns.get_object("df")
+        with pytest.raises(UnsupportedElementTypeError):
+            obj.extend(pd.DataFrame({"o": ["z"]}, index=pd.Index([["nested"]], dtype=object)))
+        # object untouched: values and index unchanged
+        assert list(obj["o"]) == ["a", "b"]
+        assert list(obj.value.index) == ["r1", "r2"]
 
 
 class TestSetItemElementBoundary:
