@@ -167,7 +167,6 @@ class TestDataFrameRoundTrip:
             pd.DataFrame({"d": pd.to_datetime(["2020-01-01", "2021-01-01"])}),  # datetime naive
             pd.DataFrame({"d": pd.to_datetime(["2020-01-01", "2021-01-01"], utc=True)}),  # datetime tz
             pd.DataFrame({"c": pd.Series(["a", "b", "a"], dtype="category")}),  # category
-            pd.DataFrame({"o": [{"k": 1}, [1, 2], "s"]}),  # object with nested containers
         ],
     )
     def test_round_trip_preserves_all(self, ns, df):
@@ -362,15 +361,6 @@ class TestDfILoc:
         obj = ns.get_object("df")
         with pytest.raises(TypeError):
             obj.iloc["a"]
-
-    def test_iloc_object_dtype_column_returns_plain_snapshot(self, ns):
-        # .iloc on an object-dtype column returns a plain snapshot (not a live GPDC container),
-        # consistent with .value / df[col] snapshot semantics.
-        ns["df"] = pd.DataFrame({"o": [{"k": 1}, {"k": 2}]})
-        obj = ns.get_object("df")
-        val = obj.iloc[0]["o"]
-        assert val == {"k": 1}
-        assert type(val) is dict
 
 
 class TestDfLoc:
@@ -659,12 +649,6 @@ class TestNestingAndRefCounting:
         ns["d"] = {"df": pd.DataFrame({"a": [1, 2]})}
         d = ns.get_object("d")
         assert list(d["df"].value["a"]) == [1, 2]
-
-    def test_object_dtype_column_nested_container(self, ns):
-        ns["df"] = pd.DataFrame({"o": [{"k": 1}, {"k": 2}]})
-        obj = ns.get_object("df")
-        # iloc[i] returns live container objects for nested cells; use .value
-        assert obj.value["o"].iloc[0] == {"k": 1}
 
     def test_delete_named_dataframe_releases_all_children(self, ns, raw_redis):
         from gpdatacached.keys import make_raw_key

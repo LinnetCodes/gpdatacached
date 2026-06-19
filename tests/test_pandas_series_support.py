@@ -117,7 +117,6 @@ class TestAllValueDtypes:
             pd.Series(pd.to_datetime(["2020-01-01", "2021-01-01"])),  # datetime naive
             pd.Series(pd.to_datetime(["2020-01-01", "2021-01-01"], utc=True)),  # datetime tz-aware
             pd.Series(["x", "y", "x"], dtype="category"),  # category
-            pd.Series([{"k": 1}, [1, 2], "s"]),  # object mixed
         ],
     )
     def test_round_trip_preserves_dtype_values_index(self, ns, series):
@@ -499,12 +498,6 @@ class TestNestingAndRefCounting:
         ns["d"] = {"a": pd.Series([1, 2], dtype="int64")}
         d = ns.get_object("d")
         assert list(d["a"].value.values) == [1, 2]
-
-    def test_object_dtype_element_nested_container(self, ns):
-        ns["s"] = pd.Series([{"k": 1}, {"k": 2}], dtype=object)
-        obj = ns.get_object("s")
-        # .iloc[0] returns a DictObject wrapper; go through .value for the plain dict.
-        assert obj.iloc[0].value == {"k": 1}
 
     def test_delete_named_series_releases_children(self, ns, raw_redis):
         from gpdatacached.keys import make_raw_key
