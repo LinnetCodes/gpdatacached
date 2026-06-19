@@ -260,16 +260,6 @@ def _reconstruct_column(values, index_obj, fields, col, namespace) -> pd.Series:
     return _reconstruct_series(values, index_obj, dtype_str, col, namespace, cats_ref, ordered)
 
 
-def _snap(value):
-    """Return a snapshot of a decoded cell: deep-copy containers, pass scalars through.
-
-    Used by the .iloc/.loc row read paths so object-dtype nested-container cells
-    come back as plain Python values (matching .value/df[col] snapshot semantics),
-    not live GPDC container references that could mutate the cache.
-    """
-    return value.deepcopy() if hasattr(value, "deepcopy") else value
-
-
 def _reconstruct(values: list, index_obj, fields: dict, namespace) -> pd.Series:
     """Series-specific wrapper over _reconstruct_series (reads Series raw-hash fields)."""
     return _reconstruct_series(
@@ -465,7 +455,7 @@ class _DfILocIndexer:
                 col_list = owner._get_column_list(col)
                 if col_list is None:
                     raise IndexError("DataFrame has no rows")
-                row[col] = _snap(col_list[int(key)])
+                row[col] = col_list[int(key)]
             fields = owner._raw_fields()
             index_obj = _build_index(fields, owner._namespace, prefix="~")
             return pd.Series(row, name=index_obj[int(key)])
@@ -496,7 +486,7 @@ class _DfLocIndexer:
         data_dict = {}
         for col in columns:
             col_list = owner._get_column_list(col)
-            values = [_snap(col_list[p]) for p in positions]
+            values = [col_list[p] for p in positions]
             data_dict[col] = _reconstruct_column(values, sliced_index, fields, col, owner._namespace)
         result = pd.DataFrame(data_dict, columns=list(columns))
         if len(result) == 1:
@@ -844,8 +834,7 @@ class DataFrameObject(GPDCContainerObject):
         data_dict = {}
         for col in columns:
             col_list = self._get_column_list(col)
-            raw = col_list[sl] if col_list is not None else []
-            values = [_snap(v) for v in raw]
+            values = col_list[sl] if col_list is not None else []
             data_dict[col] = _reconstruct_column(values, sliced_index, fields, col, self._namespace)
         return pd.DataFrame(data_dict, columns=list(columns))
 

@@ -840,3 +840,24 @@ class TestSetItemElementBoundary:
         obj["b"] = [(1, 2), (3, 4)]
         assert list(obj.columns) == ["a", "b"]
         assert list(obj["b"]) == [(1, 2), (3, 4)]
+
+
+class TestReadPathScalarCells:
+    def test_iloc_object_column_returns_scalar(self, ns):
+        ns["df"] = pd.DataFrame({"o": ["a", "b"]})
+        obj = ns.get_object("df")
+        row = obj.iloc[0]
+        assert row["o"] == "a"
+        assert type(row["o"]) is str
+
+    def test_loc_object_column_returns_scalar(self, ns):
+        ns["df"] = pd.DataFrame({"o": ["a", "b"]}, index=["r1", "r2"])
+        obj = ns.get_object("df")
+        row = obj.loc["r1"]
+        assert row["o"] == "a"
+
+    def test_positional_slice_object_column_returns_scalars(self, ns):
+        ns["df"] = pd.DataFrame({"o": ["a", "b", "c"]})
+        obj = ns.get_object("df")
+        sub = obj.iloc[0:2]
+        assert list(sub["o"]) == ["a", "b"]
