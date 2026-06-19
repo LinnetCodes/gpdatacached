@@ -700,3 +700,70 @@ class TestExtendElementBoundary:
         with pytest.raises(UnsupportedElementTypeError):
             obj.extend([([1, 2], "c")])
         assert list(obj.value.index) == ["x", "y"]
+
+
+class TestPydanticElementBoundary:
+    def test_scalar_registered_pydantic_model_accepted_as_element(self, ns):
+        from pydantic import BaseModel
+
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+        from gpdatacached.extensions.pydantic_support import PydanticModelScalarCodec
+        from gpdatacached.scalar import GPDCScalarObject
+
+        class Point(BaseModel):
+            x: int
+            y: int
+
+        class PointObject(GPDCScalarObject):
+            TYPE = "scalar:Point"
+
+        GPDCTypeRegistry.register(
+            python_type=Point,
+            gpdc_type="scalar:Point",
+            object_class=PointObject,
+            codec_class=PydanticModelScalarCodec,
+            priority=0,
+        )
+
+        raw_key = "gpdc:testdomain:testns:raw:point"
+        s = pd.Series([Point(x=1, y=2), Point(x=3, y=4)], dtype=object)
+        SeriesCodec.create_raw(ns, raw_key, s, "owner", "permanent", 0)
+        result = SeriesCodec.read_raw(ns, raw_key)
+        assert result.iloc[0] == Point(x=1, y=2)
+
+    def test_container_registered_pydantic_model_rejected_as_element(self, ns):
+        from pydantic import BaseModel
+
+        from gpdatacached.extensions.pandas_support import (
+            SeriesCodec,
+            UnsupportedElementTypeError,
+        )
+        from gpdatacached.extensions.pydantic_support import (
+            BaseModelContainerObject,
+            PydanticModelContainerCodec,
+        )
+
+        class Order(BaseModel):
+            order_id: str
+            total: float
+
+        class OrderObject(BaseModelContainerObject):
+            TYPE = "collection:Order"
+
+        GPDCTypeRegistry.register(
+            python_type=Order,
+            gpdc_type="collection:Order",
+            object_class=OrderObject,
+            codec_class=PydanticModelContainerCodec,
+            priority=0,
+        )
+
+        with pytest.raises(UnsupportedElementTypeError):
+            SeriesCodec.create_raw(
+                ns,
+                "gpdc:testdomain:testns:raw:order",
+                pd.Series([Order(order_id="a", total=1.0)], dtype=object),
+                "owner",
+                "permanent",
+                0,
+            )
