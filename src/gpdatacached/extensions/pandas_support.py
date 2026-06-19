@@ -62,21 +62,35 @@ def _to_python_native(value):
     return value
 
 
+def _is_na_sentinel(value) -> bool:
+    """True for missing-value sentinels that are always allowed as elements.
+
+    None / pandas NA / pandas NaT are valid NA markers, consistent with
+    _python_values/_python_labels which normalize these to None on the encode
+    path. Uses identity checks rather than pd.isna: pd.isna on a list/dict
+    returns a bool-ambiguous array, and those containers must fall through to
+    the codec lookup below so they get rejected.
+    """
+    return value is None or value is pd.NA or value is pd.NaT
+
+
 def _assert_scalar_encodable(values, context: str) -> None:
     """Raise UnsupportedElementTypeError if any value is not encodable by a
     GPDCScalarCodec subclass.
 
     `context` is a human-readable description for the error message (e.g.
     "Series element", "DataFrame column 'o' element", "index label",
-    "category value"). None values (NA sentinel) are always allowed.
+    "category value"). NA sentinels (None / pandas NA / NaT) are always allowed.
     """
     from ..codec import GPDCScalarCodec
     from ..types import GPDCTypeRegistry
 
     for raw_value in values:
-        if raw_value is None:
+        if _is_na_sentinel(raw_value):
             continue
         value = _to_python_native(raw_value)
+        if _is_na_sentinel(value):
+            continue
         try:
             entry = GPDCTypeRegistry.lookup_by_python_type(value)
         except TypeError:
@@ -597,6 +611,17 @@ class DataFrameObject(GPDCContainerObject):
         policy = policy_from_meta(meta) if meta else policy_from_defaults("permanent", 0)
         owner_name = self._data_owner_name()
 
+        # Validate elements are scalar-encodable BEFORE any Redis write (promote/encode)
+        # so a rejected input leaves the cached object untouched. `appended_is_range`
+        # is False exactly when the input carries user-provided (non-positional) labels.
+        for col in columns:
+            col_key = encode_key(col)
+            col_dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
+            if _value_dtype_family(pd.api.types.pandas_dtype(col_dtype_str)) in _ELEMENT_SCAN_FAMILIES:
+                _assert_scalar_encodable(per_col[col], f"DataFrame column {col!r} element")
+        if not appended_is_range:
+            _assert_scalar_encodable(appended_labels, "DataFrame index label")
+
         # RangeIndex: continue the range, or promote to labels.
         if index_kind == "range":
             range_step = _decode_scalar(fields["~range_step"])
@@ -1040,6 +1065,14 @@ class SeriesObject(GPDCContainerObject):
         except (ValueError, TypeError) as exc:
             raise ValueError(f"Cannot extend Series of dtype {dtype_str!r} with given values: {exc}") from exc
         new_data = _python_values(casted)
+
+        # Validate elements are scalar-encodable BEFORE any Redis write (promote/encode)
+        # so a rejected input leaves the cached object untouched.
+        series_family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
+        if series_family in _ELEMENT_SCAN_FAMILIES:
+            _assert_scalar_encodable(new_data, "Series element")
+        if not _is_range_indexed_series(other):
+            _assert_scalar_encodable(index_values, "Series index label")
 
         r = self._redis()
         meta = ObjectMeta.load(r, self._canonical_redis_key())

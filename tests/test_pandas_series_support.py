@@ -561,6 +561,14 @@ class TestScalarElementValidation:
 
         _assert_scalar_encodable([1, 2.5, True, "x", None], "elem")  # no raise
 
+    def test_accepts_na_sentinels(self):
+        import numpy as np
+        from gpdatacached.extensions.pandas_support import _assert_scalar_encodable
+
+        # All standard NA markers must be allowed (consistent with _python_values,
+        # which normalizes them to None). extend's dict/list path passes these raw.
+        _assert_scalar_encodable([pd.NA, pd.NaT, np.nan, None], "elem")
+
     def test_accepts_tuple(self):
         from gpdatacached.extensions.pandas_support import _assert_scalar_encodable
 
@@ -670,3 +678,25 @@ class TestCreateElementBoundary:
                 "permanent",
                 0,
             )
+
+
+class TestExtendElementBoundary:
+    def test_series_extend_rejects_container_element(self, ns):
+        from gpdatacached.extensions.pandas_support import UnsupportedElementTypeError
+
+        ns["s"] = pd.Series(["a", "b"], dtype=object)
+        obj = ns.get_object("s")
+        with pytest.raises(UnsupportedElementTypeError):
+            obj.extend([("idx0", [1, 2])])
+        # object untouched: values unchanged AND index not promoted (stays RangeIndex)
+        assert list(obj.value.values) == ["a", "b"]
+        assert isinstance(obj.value.index, pd.RangeIndex)
+
+    def test_series_extend_rejects_container_index_label(self, ns):
+        from gpdatacached.extensions.pandas_support import UnsupportedElementTypeError
+
+        ns["s"] = pd.Series(["a", "b"], index=["x", "y"], dtype=object)
+        obj = ns.get_object("s")
+        with pytest.raises(UnsupportedElementTypeError):
+            obj.extend([([1, 2], "c")])
+        assert list(obj.value.index) == ["x", "y"]

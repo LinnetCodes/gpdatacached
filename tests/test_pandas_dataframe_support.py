@@ -800,3 +800,14 @@ class TestCreateElementBoundary:
                 "permanent",
                 0,
             )
+
+
+class TestExtendElementBoundary:
+    def test_dataframe_extend_rejects_container_row(self, ns):
+        from gpdatacached.extensions.pandas_support import UnsupportedElementTypeError
+
+        ns["df"] = pd.DataFrame({"o": ["a", "b"]}, dtype=object)
+        obj = ns.get_object("df")
+        with pytest.raises(UnsupportedElementTypeError):
+            obj.extend(pd.DataFrame({"o": [[1, 2]]}))
+        assert list(obj["o"]) == ["a", "b"]
