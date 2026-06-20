@@ -19,6 +19,7 @@ from .keys import (
 )
 
 if TYPE_CHECKING:
+    from .config import GPDCDomainConfig
     from .namespace import GPDCNamespace
 
 logger = logging.getLogger(__name__)
@@ -66,19 +67,65 @@ class GPDCDomain(GPConfigurable):
             raise RuntimeError(f"Incompatible GPDC version in Redis: {existing!r} (expected {GPDC_PROTOCOL_VERSION!r})")
 
     def _init_domain_meta(self) -> None:
-        """Initialize domain metadata in Redis."""
+        """Initialize or verify domain metadata in Redis.
+
+        Legacy fields (``default_cache_mode``, ``default_ttl_seconds``) keep
+        their existing silent write-once behaviour: written when the domain is
+        new, never compared against config thereafter.
+
+        Lock fields (``default_lock_ttl_seconds``, etc.) follow the
+        ``_init_global_meta`` write-or-verify pattern: written when new,
+        backfilled if missing, raise ``GPDCLockConfigInconsistentError`` on
+        mismatch.
+        """
         cfg = self._config
         meta_key = make_domain_meta_key(self._name)
         existing = self._redis.hgetall(meta_key)
+
+        lock_fields = {
+            "default_lock_ttl_seconds": str(cfg.default_lock_ttl_seconds),
+            "default_lock_acquire_timeout_seconds": str(cfg.default_lock_acquire_timeout_seconds),
+            "gc_lock_ttl_seconds": str(cfg.gc_lock_ttl_seconds),
+            "gc_lock_wait_seconds": str(cfg.gc_lock_wait_seconds),
+        }
+
         if not existing:
+            # New domain: write legacy + lock fields in one shot.
             self._redis.hset(
                 meta_key,
                 mapping={
                     "default_cache_mode": cfg.default_cache_mode,
                     "default_ttl_seconds": str(cfg.default_ttl_seconds),
+                    **lock_fields,
                 },
             )
-        # Always register this domain in the global domains set
+        else:
+            # Existing domain.
+            # Legacy fields: untouched (silent write-once, matches prior behaviour).
+            # Lock fields: write-or-verify.
+            to_write: dict[str, str] = {}
+            conflicts: dict[str, tuple[str, str]] = {}
+            for field, expected in lock_fields.items():
+                actual = existing.get(field)
+                if actual is None:
+                    to_write[field] = expected
+                elif actual != expected:
+                    conflicts[field] = (actual, expected)
+
+            if conflicts:
+                from .exceptions import GPDCLockConfigInconsistentError
+
+                legal_values = {k: existing[k] for k in lock_fields if k in existing}
+                raise GPDCLockConfigInconsistentError(
+                    domain=self._name,
+                    conflicts=conflicts,
+                    legal_values=legal_values,
+                )
+
+            if to_write:
+                self._redis.hset(meta_key, mapping=to_write)
+
+        # Always register this domain in the global domains set.
         self._redis.sadd(GLOBAL_DOMAINS_KEY, self._name)
 
     def _init_predefined_namespaces(self) -> None:
@@ -160,6 +207,30 @@ class GPDCDomain(GPConfigurable):
         if raw:
             return int(raw)
         return self._config.default_ttl_seconds
+
+    def get_default_lock_ttl_seconds(self) -> int:
+        """Effective ``default_lock_ttl_seconds`` for this domain."""
+        meta_key = make_domain_meta_key(self._name)
+        raw = self._redis.hget(meta_key, "default_lock_ttl_seconds")
+        return int(raw) if raw else self._config.default_lock_ttl_seconds
+
+    def get_default_lock_acquire_timeout_seconds(self) -> int:
+        """Effective ``default_lock_acquire_timeout_seconds`` for this domain."""
+        meta_key = make_domain_meta_key(self._name)
+        raw = self._redis.hget(meta_key, "default_lock_acquire_timeout_seconds")
+        return int(raw) if raw else self._config.default_lock_acquire_timeout_seconds
+
+    def get_gc_lock_ttl_seconds(self) -> int:
+        """Effective ``gc_lock_ttl_seconds`` for this domain."""
+        meta_key = make_domain_meta_key(self._name)
+        raw = self._redis.hget(meta_key, "gc_lock_ttl_seconds")
+        return int(raw) if raw else self._config.gc_lock_ttl_seconds
+
+    def get_gc_lock_wait_seconds(self) -> int:
+        """Effective ``gc_lock_wait_seconds`` for this domain."""
+        meta_key = make_domain_meta_key(self._name)
+        raw = self._redis.hget(meta_key, "gc_lock_wait_seconds")
+        return int(raw) if raw else self._config.gc_lock_wait_seconds
 
     def _start_gc(self) -> None:
         cfg = self._config
@@ -245,3 +316,41 @@ class GPDCDomain(GPConfigurable):
         if not getattr(self, "_closed", True):
             logger.warning("GPDCDomain %r was not explicitly closed; auto-closing in __del__", self._name)
             self.close()
+
+
+def reset_domain_config(name: str, config: "GPDCDomainConfig") -> None:
+    """Delete the four lock-config fields from the domain's meta hash in Redis.
+
+    Intended to be called BEFORE constructing ``GPDCDomain`` when the user
+    wants to change lock config on an existing domain:
+
+        reset_domain_config("mydomain", old_config)
+        domain = GPDCDomain("mydomain", new_config)
+
+    No-op if the meta hash has no lock fields (HDEL on missing fields).
+
+    Args:
+        name: Domain name whose meta should be cleared.
+        config: ``GPDCDomainConfig`` carrying Redis connection parameters.
+            Only connection fields are read; lock fields on this config are
+            ignored.
+    """
+    pool = redis.ConnectionPool(
+        host=config.redis_host,
+        port=config.redis_port,
+        db=config.redis_db,
+        password=config.redis_password or None,
+        decode_responses=True,
+    )
+    r = redis.Redis(connection_pool=pool)
+    try:
+        meta_key = make_domain_meta_key(name)
+        r.hdel(
+            meta_key,
+            "default_lock_ttl_seconds",
+            "default_lock_acquire_timeout_seconds",
+            "gc_lock_ttl_seconds",
+            "gc_lock_wait_seconds",
+        )
+    finally:
+        r.close()

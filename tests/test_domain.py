@@ -621,3 +621,182 @@ class TestDomainMetaRedisSource:
         assert ns2._get_default_cache_mode() == "ttl"
         assert ns2._get_default_ttl_seconds() == 300
         d2.close()
+
+
+class TestLockConfigConsistency:
+    def test_first_writer_writes_lock_fields(self, clean_redis, domain_config):
+        from gpdatacached.domain import GPDCDomain
+        from gpdatacached.keys import make_domain_meta_key
+
+        d = GPDCDomain("consistency_test", domain_config)
+        try:
+            meta = clean_redis.hgetall(make_domain_meta_key("consistency_test"))
+            assert meta["default_lock_ttl_seconds"] == "30"
+            assert meta["default_lock_acquire_timeout_seconds"] == "30"
+            assert meta["gc_lock_ttl_seconds"] == "30"
+            assert meta["gc_lock_wait_seconds"] == "5"
+        finally:
+            d.close()
+
+    def test_same_config_succeeds(self, clean_redis, domain_config):
+        from gpdatacached.domain import GPDCDomain
+
+        d1 = GPDCDomain("consistency_test", domain_config)
+        d1.close()
+        # Second open with same config must succeed.
+        d2 = GPDCDomain("consistency_test", domain_config)
+        d2.close()
+
+    def test_different_lock_config_raises(self, clean_redis, domain_config):
+        from gpdatacached.domain import GPDCDomain
+        from gpdatacached.config import GPDCDomainConfig
+        from gpdatacached.exceptions import GPDCLockConfigInconsistentError
+
+        d1 = GPDCDomain("consistency_test", domain_config)
+        d1.close()
+
+        different = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            default_lock_ttl_seconds=60,  # differs from default 30
+        )
+        with pytest.raises(GPDCLockConfigInconsistentError) as exc_info:
+            GPDCDomain("consistency_test", different)
+        msg = str(exc_info.value)
+        assert "default_lock_ttl_seconds" in msg
+        assert "redis='30'" in msg
+        assert "your config='60'" in msg
+        assert "Legal values" in msg
+
+    def test_legacy_fields_silent_on_mismatch(self, clean_redis, raw_redis):
+        """default_cache_mode / default_ttl_seconds keep silent write-once."""
+        from gpdatacached.config import GPDCDomainConfig
+        from gpdatacached.domain import GPDCDomain
+        from gpdatacached.keys import make_domain_meta_key
+
+        cfg1 = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            default_cache_mode="permanent",
+            default_ttl_seconds=0,
+        )
+        d1 = GPDCDomain("legacy_test", cfg1)
+        d1.close()
+
+        cfg2 = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            default_cache_mode="ttl",
+            default_ttl_seconds=3600,
+        )
+        # Must NOT raise — legacy fields are silent on mismatch.
+        d2 = GPDCDomain("legacy_test", cfg2)
+        try:
+            meta = raw_redis.hgetall(make_domain_meta_key("legacy_test"))
+            # Legacy fields NOT overwritten (write-once semantics).
+            assert meta["default_cache_mode"] == "permanent"
+            assert meta["default_ttl_seconds"] == "0"
+        finally:
+            d2.close()
+
+
+class TestGetLockConfigHelpers:
+    def test_get_helpers_after_default_init(self, domain):
+        assert domain.get_default_lock_ttl_seconds() == 30
+        assert domain.get_default_lock_acquire_timeout_seconds() == 30
+        assert domain.get_gc_lock_ttl_seconds() == 30
+        assert domain.get_gc_lock_wait_seconds() == 5
+
+    def test_get_helpers_reflect_custom_config(self, clean_redis):
+        from gpdatacached.config import GPDCDomainConfig
+        from gpdatacached.domain import GPDCDomain
+
+        cfg = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            default_lock_ttl_seconds=99,
+            default_lock_acquire_timeout_seconds=11,
+            gc_lock_ttl_seconds=77,
+            gc_lock_wait_seconds=3,
+        )
+        d = GPDCDomain("custom_lock_cfg", cfg)
+        try:
+            assert d.get_default_lock_ttl_seconds() == 99
+            assert d.get_default_lock_acquire_timeout_seconds() == 11
+            assert d.get_gc_lock_ttl_seconds() == 77
+            assert d.get_gc_lock_wait_seconds() == 3
+        finally:
+            d.close()
+
+
+class TestResetDomainConfig:
+    def test_reset_clears_lock_fields(self, clean_redis, domain_config):
+        from gpdatacached.domain import GPDCDomain, reset_domain_config
+        from gpdatacached.keys import make_domain_meta_key
+
+        # First, populate meta with default config.
+        d = GPDCDomain("reset_test", domain_config)
+        d.close()
+
+        # Verify lock fields exist.
+        meta = clean_redis.hgetall(make_domain_meta_key("reset_test"))
+        assert "default_lock_ttl_seconds" in meta
+
+        # Reset.
+        reset_domain_config("reset_test", domain_config)
+
+        # Lock fields should be gone.
+        meta = clean_redis.hgetall(make_domain_meta_key("reset_test"))
+        assert "default_lock_ttl_seconds" not in meta
+        assert "default_lock_acquire_timeout_seconds" not in meta
+        assert "gc_lock_ttl_seconds" not in meta
+        assert "gc_lock_wait_seconds" not in meta
+        # Legacy fields untouched.
+        assert "default_cache_mode" in meta
+
+    def test_reset_allows_new_config(self, clean_redis, domain_config):
+        from gpdatacached.config import GPDCDomainConfig
+        from gpdatacached.domain import GPDCDomain, reset_domain_config
+
+        d = GPDCDomain("reset_test", domain_config)
+        d.close()
+
+        reset_domain_config("reset_test", domain_config)
+
+        new_cfg = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            default_lock_ttl_seconds=120,
+        )
+        # Should succeed because reset cleared the old value.
+        d2 = GPDCDomain("reset_test", new_cfg)
+        assert d2.get_default_lock_ttl_seconds() == 120
+        d2.close()
+
+    def test_reset_no_op_if_no_lock_fields(self, clean_redis, domain_config):
+        from gpdatacached.domain import reset_domain_config
+        from gpdatacached.keys import make_domain_meta_key
+
+        # Create a domain meta with only legacy fields.
+        clean_redis.hset(
+            make_domain_meta_key("fresh_test"),
+            mapping={"default_cache_mode": "permanent", "default_ttl_seconds": "0"},
+        )
+
+        # Reset should be a no-op (HDEL on missing fields).
+        reset_domain_config("fresh_test", domain_config)
+
+        meta = clean_redis.hgetall(make_domain_meta_key("fresh_test"))
+        assert "default_cache_mode" in meta
+        # No lock fields after reset (and there were none before).
+        assert "default_lock_ttl_seconds" not in meta
