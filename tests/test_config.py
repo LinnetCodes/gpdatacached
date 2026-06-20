@@ -150,3 +150,32 @@ class TestGPDCDomainConfigLockFields:
 
         with pytest.raises(ValueError):
             GPDCDomainConfig(gc_lock_wait_seconds=-1)
+
+    def test_lock_ttl_rejects_zero(self):
+        """TTL=0 is invalid: SET NX EX 0 would crash at runtime."""
+        import pytest
+        from gpdatacached.config import GPDCDomainConfig
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(default_lock_ttl_seconds=0)
+
+    def test_gc_lock_ttl_rejects_zero(self):
+        import pytest
+        from gpdatacached.config import GPDCDomainConfig
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(gc_lock_ttl_seconds=0)
+
+    def test_lock_acquire_timeout_allows_zero(self):
+        """timeout=0 means fail-fast (non-blocking); valid."""
+        from gpdatacached.config import GPDCDomainConfig
+
+        cfg = GPDCDomainConfig(default_lock_acquire_timeout_seconds=0)
+        assert cfg.default_lock_acquire_timeout_seconds == 0
+
+    def test_gc_lock_wait_allows_zero(self):
+        """gc_lock_wait=0 means GC never blocks on contended objects."""
+        from gpdatacached.config import GPDCDomainConfig
+
+        cfg = GPDCDomainConfig(gc_lock_wait_seconds=0)
+        assert cfg.gc_lock_wait_seconds == 0

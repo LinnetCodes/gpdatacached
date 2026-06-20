@@ -228,8 +228,9 @@ def run_gc_for_namespace(r: "redis.Redis", domain: str, namespace: str) -> int:
     Returns the number of keys deleted.
 
     Per-canonical locking: each canonical name is processed inside an
-    exclusive lock (with short try-lock timeout via gc_lock_wait_seconds).
-    If the lock cannot be acquired, that canonical is skipped in this GC cycle.
+    exclusive lock (acquired with a short blocking timeout via
+    ``gc_lock_wait_seconds``). If the lock cannot be acquired within that
+    timeout, that canonical is skipped in this GC cycle.
     """
     obj_prefix = make_object_key_prefix(domain, namespace)
     raw_prefix = make_raw_key_prefix(domain, namespace)

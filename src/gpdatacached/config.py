@@ -77,14 +77,22 @@ class GPDCDomainConfig(GPConfig):
 
     @field_validator(
         "default_lock_ttl_seconds",
-        "default_lock_acquire_timeout_seconds",
         "gc_lock_ttl_seconds",
+    )
+    @classmethod
+    def _validate_lock_ttl_fields(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"Lock TTL must be >= 1 (Redis SET NX EX requires positive ttl), got {v!r}")
+        return v
+
+    @field_validator(
+        "default_lock_acquire_timeout_seconds",
         "gc_lock_wait_seconds",
     )
     @classmethod
-    def _validate_lock_time_fields(cls, v: int) -> int:
+    def _validate_lock_wait_fields(cls, v: int) -> int:
         if v < 0:
-            raise ValueError(f"Lock time field must be >= 0, got {v!r}")
+            raise ValueError(f"Lock wait/timeout must be >= 0 (0 = non-blocking), got {v!r}")
         return v
 
     @model_validator(mode="after")
