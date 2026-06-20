@@ -93,7 +93,7 @@ class TestSeriesCodecRoundTrip:
         try:
             SeriesCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
             data_ref = ns._redis().hget(raw_key, "data")
-            index_ref = ns._redis().hget(raw_key, "index")
+            index_ref = ns._redis().hget(raw_key, "index_l0")
             assert data_ref.startswith("ref:")
             assert index_ref.startswith("ref:")
             assert data_ref != index_ref
@@ -294,13 +294,74 @@ class TestIndexVariety:
             ns._redis().delete(raw_key)
         assert list(result.index) == list(idx)
 
-    def test_multiindex_is_unsupported(self, ns):
-        from gpdatacached.extensions.pandas_support import SeriesCodec, UnsupportedSeriesDtypeError
+    def test_multiindex_series_now_supported(self, ns):
+        original = pd.Series(
+            [10, 20, 30],
+            index=pd.MultiIndex.from_tuples([("a", 1), ("a", 2), ("b", 1)], names=["L0", "L1"]),
+            name="s",
+        )
+        ns["ms"] = original
+        result = ns["ms"].value
+        assert isinstance(result.index, pd.MultiIndex)
+        assert list(result.index) == list(original.index)
+        assert result.index.names == ("L0", "L1")
+        assert list(result.values) == [10, 20, 30]
 
-        series = pd.Series([1, 2], index=pd.MultiIndex.from_tuples([("a", 1), ("a", 2)]))
-        raw_key = "gpdc:testdomain:testns:raw:mi"
+    def test_sparse_level_rejected(self, ns):
+        from gpdatacached.extensions.pandas_support import UnsupportedSeriesDtypeError
+
+        idx = pd.MultiIndex.from_arrays([["a", "b"], pd.array([1, 2], dtype="Sparse[int64]")])
         with pytest.raises(UnsupportedSeriesDtypeError):
-            SeriesCodec.create_raw(ns, raw_key, series, "owner", "permanent", 0)
+            ns["bad"] = pd.Series([1, 2], index=idx)
+
+
+class TestSeriesMultiIndexStorage:
+    def test_two_level_round_trip_preserves_levels_and_dtypes(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        idx = pd.MultiIndex.from_arrays([["a", "a", "b"], [1, 2, 1]], names=["L0", "L1"])
+        original = pd.Series([10, 20, 30], index=idx, name="s")
+        raw_key = "gpdc:testdomain:testns:raw:mi"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert isinstance(result.index, pd.MultiIndex)
+        assert list(result.index) == list(original.index)
+        assert result.index.names == ("L0", "L1")
+        assert str(result.index.get_level_values(1).dtype) == "int64"
+        assert list(result.values) == [10, 20, 30]
+
+    def test_raw_hash_has_per_level_ref_fields(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        idx = pd.MultiIndex.from_arrays([["a", "b"], [1, 2]], names=["L0", "L1"])
+        original = pd.Series([1, 2], index=idx)
+        raw_key = "gpdc:testdomain:testns:raw:mihash"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            assert ns._redis().hget(raw_key, "index_kind") == "str:levels"
+            assert ns._redis().hget(raw_key, "index_l0").startswith("ref:")
+            assert ns._redis().hget(raw_key, "index_l1").startswith("ref:")
+            assert ns._redis().hget(raw_key, "index_l0") != ns._redis().hget(raw_key, "index_l1")
+            assert ns._redis().hget(raw_key, "index_names").startswith("tuple:")
+            assert ns._redis().hget(raw_key, "index_dtypes").startswith("tuple:")
+        finally:
+            ns._redis().delete(raw_key)
+
+    def test_l1_levels_equivalent_to_legacy_labels(self, ns):
+        from gpdatacached.extensions.pandas_support import SeriesCodec
+
+        original = pd.Series([1, 2, 3], index=["x", "y", "z"], name="s")
+        raw_key = "gpdc:testdomain:testns:raw:l1"
+        try:
+            SeriesCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            result = SeriesCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result.index) == ["x", "y", "z"]
+        assert result.name == "s"
 
 
 class TestSeriesObjectCore:

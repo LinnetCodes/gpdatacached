@@ -159,12 +159,18 @@ def _value_dtype_family(dtype) -> str | None:
 
 
 def _index_kind(index) -> str | None:
-    """Classify a pandas index: 'range', 'labels', or None if unsupported."""
-    if isinstance(index, pd.MultiIndex):
-        return None
+    """Classify a pandas index: 'range', 'levels', or None if unsupported.
+
+    'levels' covers every labelled index incl. MultiIndex (L>=1).
+    """
     if isinstance(index, pd.RangeIndex):
         return "range"
-    return "labels" if _value_dtype_family(index.dtype) is not None else None
+    if isinstance(index, pd.MultiIndex):
+        for i in range(index.nlevels):
+            if _value_dtype_family(index.get_level_values(i).dtype) is None:
+                return None
+        return "levels"
+    return "levels" if _value_dtype_family(index.dtype) is not None else None
 
 
 def _validate_dataframe(value: pd.DataFrame) -> tuple[list, str]:
@@ -194,6 +200,11 @@ def _validate_dataframe(value: pd.DataFrame) -> tuple[list, str]:
         raise UnsupportedDataFrameError(
             f"DataFrame row index dtype {value.index.dtype} is not supported by DataFrameObject."
         )
+    # DataFrame still stores single-level labelled indexes with the legacy
+    # "labels" representation (~index / ~index_dtype); MultiIndex support is a
+    # later task. _index_kind now returns "levels" for every labelled index.
+    if kind == "levels":
+        kind = "labels"
     return names, kind
 
 
@@ -216,6 +227,32 @@ def _python_labels(index) -> list:
     """
     is_na = pd.isna(index)
     return [None if na else _to_python_native(x) for x, na in zip(index.tolist(), list(is_na))]
+
+
+def _level_labels_and_dtype(index, level_i: int) -> tuple[list, str]:
+    """Return (python-native labels, dtype-string) for one MultiIndex level."""
+    level_vals = index.get_level_values(level_i)
+    return _python_labels(level_vals), str(level_vals.dtype)
+
+
+def _build_levels_index(fields: dict, namespace, prefix: str = "") -> "pd.Index | pd.MultiIndex":
+    """Rebuild a MultiIndex (L>=1) from per-level ref fields."""
+    names = _decode_scalar(fields[f"{prefix}index_names"])
+    dtypes = _decode_scalar(fields[f"{prefix}index_dtypes"])
+    L = len(names)
+    arrays = []
+    for i in range(L):
+        labels = decode_element(fields[f"{prefix}index_l{i}"], namespace).value
+        try:
+            arrays.append(pd.array(labels, dtype=dtypes[i]))
+        except (TypeError, ValueError):
+            # Create-time validation already enforced dtype<->labels consistency,
+            # so reaching here means corruption or a future new dtype; on a cache
+            # read path it is safer to infer than to raise.
+            arrays.append(pd.array(labels))
+    if L == 1:
+        return pd.Index(arrays[0], name=names[0])
+    return pd.MultiIndex.from_arrays(arrays, names=names)
 
 
 def _reconstruct_series(
@@ -873,31 +910,31 @@ class SeriesCodec(GPDCContainerCodec):
 
         policy = policy_from_defaults(cache_mode, ttl)
         data_values = _python_values(value)
-        index_labels = _python_labels(index) if kind == "labels" else None
         categories = value.cat.categories.tolist() if family == "category" else None
 
-        # Validate elements are scalar-encodable BEFORE encoding (no Redis write yet).
         if family in _ELEMENT_SCAN_FAMILIES:
             _assert_scalar_encodable(data_values, "Series element")
         if categories is not None:
             _assert_scalar_encodable(categories, "Series category value")
-        if index_labels is not None and _value_dtype_family(index.dtype) in _ELEMENT_SCAN_FAMILIES:
-            _assert_scalar_encodable(index_labels, "Series index label")
 
         fields: dict[str, str] = {}
         with encode_session(namespace):
             fields["data"] = encode_element(data_values, namespace, owner_name, policy)
-            if kind == "labels":
-                fields["index"] = encode_element(index_labels, namespace, owner_name, policy)
             if family == "category":
                 fields["categories"] = encode_element(categories, namespace, owner_name, policy)
+            if kind == "levels":
+                # Bind all level label lists to locals before encoding (id-aliasing guard).
+                level_labels = [_level_labels_and_dtype(index, i) for i in range(index.nlevels)]
+                for i, (labels, _dtype) in enumerate(level_labels):
+                    _assert_scalar_encodable(labels, f"Series index level {i} label")
+                    fields[f"index_l{i}"] = encode_element(labels, namespace, owner_name, policy)
 
         fields["dtype"] = _encode_extra_value(str(value.dtype))
         fields["name"] = _encode_extra_value(value.name)
         fields["index_kind"] = _encode_extra_value(kind)
-        fields["index_names"] = _encode_extra_value((index.name,))
-        if kind == "labels":
-            fields["index_dtype"] = _encode_extra_value(str(index.dtype))
+        fields["index_names"] = _encode_extra_value(tuple(index.names))
+        if kind == "levels":
+            fields["index_dtypes"] = _encode_extra_value(tuple(dt for _, dt in level_labels))
         if family == "category":
             fields["ordered"] = _encode_extra_value(bool(value.cat.ordered))
         if kind == "range":
@@ -914,7 +951,16 @@ class SeriesCodec(GPDCContainerCodec):
             return pd.Series([], dtype="object")
         data = decode_element(fields["data"], namespace)
         values = data.deepcopy()
-        index_obj = _build_index(fields, namespace)
+        index_kind = _decode_scalar(fields["index_kind"])
+        if index_kind == "range":
+            index_obj = pd.RangeIndex(
+                _decode_scalar(fields["range_start"]),
+                _decode_scalar(fields["range_stop"]),
+                _decode_scalar(fields["range_step"]),
+                name=_decode_scalar(fields["index_names"])[0],
+            )
+        else:  # levels
+            index_obj = _build_levels_index(fields, namespace)
         return _reconstruct(values, index_obj, fields, namespace)
 
     @classmethod
@@ -969,6 +1015,7 @@ class SeriesObject(GPDCContainerObject):
         super().__init__(name, namespace, canonical_name=canonical_name)
         self._data_list_cache = _UNLOADED
         self._index_list_cache = _UNLOADED
+        self._level_lists_cache: dict = {}
 
     @property
     def type(self) -> str:
@@ -989,9 +1036,9 @@ class SeriesObject(GPDCContainerObject):
         return self._data_list_cache
 
     def _get_index_list(self):
-        """Return the index child ListObject, or None when index_kind is 'range'."""
+        """Return the L=0 index child ListObject, or None when index_kind is 'range'."""
         if self._index_list_cache is _UNLOADED:
-            ref = self._redis().hget(self.raw_key, "index")
+            ref = self._redis().hget(self.raw_key, "index_l0")
             self._index_list_cache = decode_element(ref, self._namespace) if ref else None
         return self._index_list_cache
 
@@ -1088,7 +1135,7 @@ class SeriesObject(GPDCContainerObject):
             needs_promote = not _is_range_indexed_series(other)
             if needs_promote:
                 self._promote_range_to_labels(fields, owner_name, policy)
-                index_kind = "labels"
+                index_kind = "levels"
 
         data_list = self._get_data_list()
         index_list = self._get_index_list()
@@ -1098,7 +1145,7 @@ class SeriesObject(GPDCContainerObject):
             encoded_data = [encode_element(v, self._namespace, owner_name, policy) for v in new_data]
         if encoded_data:
             pipe.rpush(data_list.raw_key, *encoded_data)
-        if index_kind == "labels":
+        if index_kind == "levels":
             with encode_session(self._namespace):
                 encoded_idx = [encode_element(v, self._namespace, owner_name, policy) for v in index_values]
             if encoded_idx:
@@ -1109,6 +1156,7 @@ class SeriesObject(GPDCContainerObject):
         pipe.execute()
         self._data_list_cache = _UNLOADED
         self._index_list_cache = _UNLOADED
+        self._level_lists_cache = {}
         self._touch()
 
     def _promote_range_to_labels(self, fields: dict, owner_name, policy) -> None:
@@ -1120,12 +1168,13 @@ class SeriesObject(GPDCContainerObject):
             ref = encode_element(labels, self._namespace, owner_name, policy)
         r = self._redis()
         mapping = {
-            "index": ref,
-            "index_kind": _encode_extra_value("labels"),
-            "index_dtype": _encode_extra_value("int64"),
+            "index_l0": ref,
+            "index_kind": _encode_extra_value("levels"),
+            "index_dtypes": _encode_extra_value(("int64",)),
         }
         for k in ("range_start", "range_stop", "range_step"):
             if k in fields:
                 r.hdel(self.raw_key, k)
         r.hset(self.raw_key, mapping=mapping)
         self._index_list_cache = _UNLOADED
+        self._level_lists_cache = {}
