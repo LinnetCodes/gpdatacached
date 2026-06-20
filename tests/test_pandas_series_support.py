@@ -562,6 +562,39 @@ class TestExtend:
         assert list(result.index) == [0, 1, 2, "x"]
         assert list(result.values) == [1, 2, 3, 4]
 
+    def test_extend_range_with_container_index_label_leaves_object_untouched(self, ns):
+        from gpdatacached.extensions.pandas_support import UnsupportedElementTypeError
+
+        ns["rs"] = pd.Series([10, 20])  # default RangeIndex
+        obj = ns.get_object("rs")
+        raw_before = ns._redis().hgetall(obj.raw_key)
+        with pytest.raises(UnsupportedElementTypeError):
+            obj.extend([([1, 2], 99)])
+        raw_after = ns._redis().hgetall(obj.raw_key)
+        # index representation must be unchanged (still range, not promoted to levels)
+        assert raw_after.get("index_kind") == raw_before.get("index_kind")
+        assert "range_start" in raw_after and "index_l0" not in raw_after
+        # data unchanged
+        assert raw_after.get("data") == raw_before.get("data")
+
+    def test_extend_range_with_multilevel_input_raises_without_promote(self, ns):
+        ns["rs"] = pd.Series([1, 2])  # range
+        obj = ns.get_object("rs")
+        raw_before = ns._redis().hgetall(obj.raw_key)
+        with pytest.raises(ValueError, match="levels"):
+            obj.extend(pd.Series([9], index=pd.MultiIndex.from_tuples([("a", 1)])))
+        raw_after = ns._redis().hgetall(obj.raw_key)
+        assert raw_after.get("index_kind") == raw_before.get("index_kind")  # still range, not promoted
+
+    def test_extend_range_then_incremental_heterogeneous_labels(self, ns):
+        ns["rs"] = pd.Series([1, 2, 3])  # range
+        obj = ns.get_object("rs")
+        obj.extend([("x", 4)])
+        obj.extend([("y", 5)])  # must NOT fail — dtype honestly broadened to object on promote
+        result = obj.value
+        assert list(result.values) == [1, 2, 3, 4, 5]
+        assert list(result.index) == [0, 1, 2, "x", "y"]
+
     def test_extend_incompatible_dtype_raises(self, ns):
         ns["s"] = pd.Series([1, 2], dtype="int64")
         obj = ns.get_object("s")
@@ -578,6 +611,44 @@ class TestExtend:
         obj = ns.get_object("s")
         with pytest.raises(TypeError, match="categor"):
             obj.extend([("x", "c")])
+
+
+class TestSeriesMultiIndexExtend:
+    def _make(self, ns):
+        idx = pd.MultiIndex.from_tuples([("a", 1), ("a", 2)], names=["L0", "L1"])
+        ns["ms"] = pd.Series([10, 20], index=idx)
+        return ns.get_object("ms")
+
+    def test_extend_with_series_same_multiindex(self, ns):
+        obj = self._make(ns)
+        obj.extend(pd.Series([30, 40], index=pd.MultiIndex.from_tuples([("b", 1), ("b", 2)])))
+        assert list(obj.value.values) == [10, 20, 30, 40]
+        assert list(obj.value.index) == [("a", 1), ("a", 2), ("b", 1), ("b", 2)]
+
+    def test_extend_with_tuple_pairs(self, ns):
+        obj = self._make(ns)
+        obj.extend([(("b", 3), 99), (("c", 4), 88)])
+        assert list(obj.value.values) == [10, 20, 99, 88]
+        assert list(obj.value.index) == [("a", 1), ("a", 2), ("b", 3), ("c", 4)]
+
+    def test_extend_level_count_mismatch_raises(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(ValueError, match="levels"):
+            obj.extend(pd.Series([1], index=["just_one"]))
+
+    def test_extend_dtype_cast_failure_raises(self, ns):
+        obj = self._make(ns)
+        bad = pd.Series([1], index=pd.MultiIndex.from_tuples([("a", "not_int")]))
+        with pytest.raises(ValueError):
+            obj.extend(bad)
+
+    def test_extend_list_of_series(self, ns):
+        obj = self._make(ns)
+        more1 = pd.Series([30], index=pd.MultiIndex.from_tuples([("b", 1)]))
+        more2 = pd.Series([40], index=pd.MultiIndex.from_tuples([("b", 2)]))
+        obj.extend([more1, more2])
+        assert list(obj.value.values) == [10, 20, 30, 40]
+        assert list(obj.value.index) == [("a", 1), ("a", 2), ("b", 1), ("b", 2)]
 
 
 class TestRejectedOperations:

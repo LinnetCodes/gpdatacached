@@ -328,25 +328,54 @@ def _build_index(fields: dict, namespace, prefix: str = "") -> "pd.Index":
     return pd.Index(labels, name=name)
 
 
-def _normalize_extend_input(other) -> tuple[list, list]:
-    """Return (index_values, data_values) as Python-native lists from extend input.
+def _normalize_extend_input(other) -> tuple[list, list, int]:
+    """Return (labels, data_values, nlevels) from extend input.
 
-    Accepts a pd.Series, a list of pd.Series, or an iterable of (index, value) tuples.
+    ``labels`` is a list of tuple labels (one per appended row); each tuple's
+    length is the appended index's level count. ``nlevels`` is that level count.
+    Accepts a pd.Series, a list of pd.Series, or an iterable of (index, value)
+    tuples. The level-count check is the caller's responsibility.
     """
     if isinstance(other, pd.Series):
-        return list(other.index), _python_values(other)
+        idx = other.index
+        nlevels = getattr(idx, "nlevels", 1)
+        if isinstance(idx, pd.MultiIndex):
+            labels = [tuple(r) for r in idx]
+        else:
+            labels = [(r,) for r in idx]
+        return labels, _python_values(other), nlevels
     if isinstance(other, (list, tuple)) and len(other) > 0 and isinstance(other[0], pd.Series):
-        idx: list = []
+        idx0 = other[0].index
+        nlevels = getattr(idx0, "nlevels", 1)
+        labels: list = []
         vals: list = []
         for s in other:
-            idx.extend(list(s.index))
+            si = s.index
+            if isinstance(si, pd.MultiIndex):
+                labels.extend(tuple(r) for r in si)
+            else:
+                labels.extend((r,) for r in si)
             vals.extend(_python_values(s))
-        return idx, vals
+        return labels, vals, nlevels
     pairs = list(other)
     bad = [p for p in pairs if not (isinstance(p, tuple) and len(p) == 2)]
     if bad:
         raise TypeError("extend input must be a Series, a list of Series, or (index, value) tuples")
-    return [p[0] for p in pairs], [p[1] for p in pairs]
+    labels = []
+    vals = []
+    nlevels = None
+    for lbl, v in pairs:
+        if not isinstance(lbl, tuple):
+            lbl = (lbl,)
+        if nlevels is None:
+            nlevels = len(lbl)
+        elif len(lbl) != nlevels:
+            raise ValueError("inconsistent index label depths in extend input")
+        labels.append(lbl)
+        vals.append(v)
+    if nlevels is None:
+        nlevels = 1
+    return labels, vals, nlevels
 
 
 def _is_range_indexed_series(other) -> bool:
@@ -1148,7 +1177,10 @@ class SeriesObject(GPDCContainerObject):
                 "Extending a categorical-dtype Series is not supported; "
                 "create a new Series with the desired categories instead."
             )
-        index_values, data_values = _normalize_extend_input(other)
+        index_kind = _decode_scalar(fields["index_kind"])
+        names = _decode_scalar(fields["index_names"])
+
+        labels, data_values, got_levels = _normalize_extend_input(other)
 
         try:
             casted = pd.Series(data_values, dtype=dtype_str)
@@ -1161,44 +1193,90 @@ class SeriesObject(GPDCContainerObject):
         series_family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
         if series_family in _ELEMENT_SCAN_FAMILIES:
             _assert_scalar_encodable(new_data, "Series element")
-        if not _is_range_indexed_series(other):
-            _assert_scalar_encodable(index_values, "Series index label")
 
         r = self._redis()
         meta = ObjectMeta.load(r, self._canonical_redis_key())
         policy = policy_from_meta(meta) if meta else policy_from_defaults("permanent", 0)
         owner_name = self._data_owner_name()
 
-        index_kind = _decode_scalar(fields["index_kind"])
         if index_kind == "range":
-            needs_promote = not _is_range_indexed_series(other)
-            if needs_promote:
-                self._promote_range_to_labels(fields, owner_name, policy)
-                index_kind = "levels"
+            # Range path: promote to L=1 levels if the appended input isn't range-compatible,
+            # else just bump range_stop. Mirror the pre-existing range behaviour.
+            if not _is_range_indexed_series(other):
+                # A range Series promotes to L=1 levels. Validate the appended input
+                # BEFORE the promote (a Redis write) so a rejected input leaves the
+                # object untouched (spec §5).
+                if got_levels != 1:
+                    raise ValueError(f"appended index has {got_levels} levels, stored has 1")
+                appended_index_labels = [lbl[0] for lbl in labels]
+                _assert_scalar_encodable(appended_index_labels, "Series index label")
+                # Compute the honest combined level dtype: old RangeIndex values are int,
+                # so the level is int64 iff the appended labels are int64-castable, else
+                # object. Writing the honest dtype here means subsequent extends cast
+                # against a truthful dtype instead of a stale int64 (spec §6: infer, do
+                # not reject mixed).
+                try:
+                    pd.array(appended_index_labels, dtype="int64")
+                    promote_dtype = "int64"
+                except (TypeError, ValueError):
+                    promote_dtype = "object"
+                self._promote_range_to_labels(fields, owner_name, policy, level_dtype=promote_dtype)
+                fields = self._raw_fields()
+                names = _decode_scalar(fields["index_names"])
+            else:
+                data_list = self._get_data_list()
+                new_stop = _decode_scalar(fields["range_stop"]) + len(new_data)
+                pipe = r.pipeline(transaction=True)
+                with encode_session(self._namespace):
+                    encoded_data = [encode_element(v, self._namespace, owner_name, policy) for v in new_data]
+                if encoded_data:
+                    pipe.rpush(data_list.raw_key, *encoded_data)
+                pipe.hset(self.raw_key, "range_stop", _encode_extra_value(new_stop))
+                pipe.execute()
+                self._data_list_cache = _UNLOADED
+                self._level_lists_cache = {}
+                self._touch()
+                return
+
+        # levels path (L >= 1)
+        L = len(names)
+        if got_levels != L:
+            raise ValueError(f"appended index has {got_levels} levels, stored has {L}")
+        dtypes = _decode_scalar(fields["index_dtypes"])
+        per_level_new: list[list] = []
+        for i in range(L):
+            col_labels = [lbl[i] for lbl in labels]
+            # Validate raw labels BEFORE the dtype cast: a string-dtype cast would
+            # silently stringify container labels (e.g. [1, 2] -> "[1, 2]"), so the
+            # cast must not run before scalar-encodability is confirmed. The promote
+            # branch already validated L=0 labels; this re-check is a harmless no-op
+            # for that path but required for the direct levels path.
+            _assert_scalar_encodable(col_labels, f"Series index level {i} label")
+            try:
+                casted_lvl = pd.array(col_labels, dtype=dtypes[i])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Cannot extend index level {i} ({names[i]!r}) to dtype {dtypes[i]!r}: {exc}") from exc
+            per_level_new.append([None if pd.isna(v) else _to_python_native(v) for v in casted_lvl])
 
         data_list = self._get_data_list()
-        index_list = self._get_index_list()
-
         pipe = r.pipeline(transaction=True)
         with encode_session(self._namespace):
             encoded_data = [encode_element(v, self._namespace, owner_name, policy) for v in new_data]
+            encoded_levels = [
+                [encode_element(v, self._namespace, owner_name, policy) for v in per_level_new[i]] for i in range(L)
+            ]
         if encoded_data:
             pipe.rpush(data_list.raw_key, *encoded_data)
-        if index_kind == "levels":
-            with encode_session(self._namespace):
-                encoded_idx = [encode_element(v, self._namespace, owner_name, policy) for v in index_values]
-            if encoded_idx:
-                pipe.rpush(index_list.raw_key, *encoded_idx)
-        else:
-            new_stop = _decode_scalar(fields["range_stop"]) + len(new_data)
-            pipe.hset(self.raw_key, "range_stop", _encode_extra_value(new_stop))
+        for i in range(L):
+            if encoded_levels[i]:
+                pipe.rpush(self._get_level_list(i).raw_key, *encoded_levels[i])
         pipe.execute()
         self._data_list_cache = _UNLOADED
         self._index_list_cache = _UNLOADED
         self._level_lists_cache = {}
         self._touch()
 
-    def _promote_range_to_labels(self, fields: dict, owner_name, policy) -> None:
+    def _promote_range_to_labels(self, fields: dict, owner_name, policy, level_dtype="int64") -> None:
         start = _decode_scalar(fields["range_start"])
         stop = _decode_scalar(fields["range_stop"])
         step = _decode_scalar(fields["range_step"])
@@ -1209,7 +1287,7 @@ class SeriesObject(GPDCContainerObject):
         mapping = {
             "index_l0": ref,
             "index_kind": _encode_extra_value("levels"),
-            "index_dtypes": _encode_extra_value(("int64",)),
+            "index_dtypes": _encode_extra_value((level_dtype,)),
         }
         for k in ("range_start", "range_stop", "range_step"):
             if k in fields:
