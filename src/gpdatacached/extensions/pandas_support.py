@@ -177,8 +177,10 @@ def _validate_dataframe(value: pd.DataFrame) -> tuple[list, str]:
     """Validate a DataFrame for storage.
 
     Returns ``(column_names, index_kind)``. Raises ``UnsupportedDataFrameError``
-    on duplicate column names, a MultiIndex row index, an unsupported per-column
-    dtype, or an unsupported row-index dtype.
+    on duplicate column names, an unsupported per-column dtype, or an
+    unsupported row-index dtype. ``index_kind`` is ``_index_kind``'s result
+    (``range`` or ``levels``; single-level labelled and MultiIndex both yield
+    ``levels``).
     """
     names = list(value.columns)
     seen: set = set()
@@ -186,10 +188,6 @@ def _validate_dataframe(value: pd.DataFrame) -> tuple[list, str]:
         if n in seen:
             raise UnsupportedDataFrameError(f"Duplicate column names are not supported by DataFrameObject: {names!r}.")
         seen.add(n)
-    if isinstance(value.index, pd.MultiIndex):
-        raise UnsupportedDataFrameError(
-            "DataFrame row index is a MultiIndex, which is not supported by DataFrameObject."
-        )
     for col in names:
         if _value_dtype_family(value[col].dtype) is None:
             raise UnsupportedDataFrameError(
@@ -200,11 +198,6 @@ def _validate_dataframe(value: pd.DataFrame) -> tuple[list, str]:
         raise UnsupportedDataFrameError(
             f"DataFrame row index dtype {value.index.dtype} is not supported by DataFrameObject."
         )
-    # DataFrame still stores single-level labelled indexes with the legacy
-    # "labels" representation (~index / ~index_dtype); MultiIndex support is a
-    # later task. _index_kind now returns "levels" for every labelled index.
-    if kind == "levels":
-        kind = "labels"
     return names, kind
 
 
@@ -313,19 +306,21 @@ def _reconstruct(values: list, index_obj, fields: dict, namespace) -> pd.Series:
 def _build_index(fields: dict, namespace, prefix: str = "") -> "pd.Index":
     """Build a pd.Index from raw-hash scalar/index fields.
 
-    ``prefix`` is "" for Series raw-hash field names (``index_kind``) and "~"
-    for DataFrame raw-hash field names (``~index_kind``).
+    Handles ``range`` and ``levels``. ``prefix`` is "" for Series raw-hash
+    field names (``index_kind``) and "~" for DataFrame raw-hash field names
+    (``~index_kind``).
     """
     index_kind = _decode_scalar(fields[f"{prefix}index_kind"])
+    # Temporary: delegates to _build_levels_index for callers still routing through
+    # _build_index (Df indexers / __getitem__ / _positional_row_slice). Task 7 collapses this.
+    if index_kind == "levels":
+        return _build_levels_index(fields, namespace, prefix=prefix)
     index_names = _decode_scalar(fields[f"{prefix}index_names"])
     name = index_names[0] if index_names else None
-    if index_kind == "range":
-        start = _decode_scalar(fields[f"{prefix}range_start"])
-        stop = _decode_scalar(fields[f"{prefix}range_stop"])
-        step = _decode_scalar(fields[f"{prefix}range_step"])
-        return pd.RangeIndex(start, stop, step, name=name)
-    labels = decode_element(fields[f"{prefix}index"], namespace).value
-    return pd.Index(labels, name=name)
+    start = _decode_scalar(fields[f"{prefix}range_start"])
+    stop = _decode_scalar(fields[f"{prefix}range_stop"])
+    step = _decode_scalar(fields[f"{prefix}range_step"])
+    return pd.RangeIndex(start, stop, step, name=name)
 
 
 def _normalize_extend_input(other) -> tuple[list, list, int]:
@@ -448,7 +443,6 @@ class DataFrameCodec(GPDCContainerCodec):
             for col in column_names
             if _value_dtype_family(value[col].dtype) == "category"
         }
-        index_labels = _python_labels(index) if kind == "labels" else None
 
         # Validate elements are scalar-encodable BEFORE encoding (no Redis write yet).
         for col in column_names:
@@ -456,8 +450,6 @@ class DataFrameCodec(GPDCContainerCodec):
                 _assert_scalar_encodable(col_values[col], f"DataFrame column {col!r} element")
             if col in col_cats:
                 _assert_scalar_encodable(col_cats[col], f"DataFrame column {col!r} category value")
-        if index_labels is not None and _value_dtype_family(index.dtype) in _ELEMENT_SCAN_FAMILIES:
-            _assert_scalar_encodable(index_labels, "DataFrame index label")
 
         fields: dict[str, str] = {}
         with encode_session(namespace):
@@ -466,8 +458,12 @@ class DataFrameCodec(GPDCContainerCodec):
                 fields[col_key] = encode_element(col_values[col], namespace, owner_name, policy)
                 if col in col_cats:
                     fields[f"~cat:{col_key}"] = encode_element(col_cats[col], namespace, owner_name, policy)
-            if kind == "labels":
-                fields["~index"] = encode_element(index_labels, namespace, owner_name, policy)
+            if kind == "levels":
+                # Bind all level label lists to locals before encoding (id-aliasing guard).
+                level_labels = [_level_labels_and_dtype(index, i) for i in range(index.nlevels)]
+                for i, (labels, _dt) in enumerate(level_labels):
+                    _assert_scalar_encodable(labels, f"DataFrame index level {i} label")
+                    fields[f"~index_l{i}"] = encode_element(labels, namespace, owner_name, policy)
 
         for col in column_names:
             col_key = encode_key(col)
@@ -478,9 +474,9 @@ class DataFrameCodec(GPDCContainerCodec):
 
         fields["~columns"] = _encode_extra_value(tuple(column_names))
         fields["~index_kind"] = _encode_extra_value(kind)
-        fields["~index_names"] = _encode_extra_value((index.name,))
-        if kind == "labels":
-            fields["~index_dtype"] = _encode_extra_value(str(index.dtype))
+        fields["~index_names"] = _encode_extra_value(tuple(index.names))
+        if kind == "levels":
+            fields["~index_dtypes"] = _encode_extra_value(tuple(dt for _, dt in level_labels))
         else:
             fields["~range_start"] = _encode_extra_value(int(index.start))
             fields["~range_stop"] = _encode_extra_value(int(index.stop))
@@ -494,7 +490,11 @@ class DataFrameCodec(GPDCContainerCodec):
         if not fields:
             return pd.DataFrame()
         column_names = _decode_scalar(fields["~columns"])
-        index_obj = _build_index(fields, namespace, prefix="~")
+        index_kind = _decode_scalar(fields["~index_kind"])
+        if index_kind == "range":
+            index_obj = _build_index(fields, namespace, prefix="~")
+        else:  # levels
+            index_obj = _build_levels_index(fields, namespace, prefix="~")
         data_dict = {}
         for col in column_names:
             col_key = encode_key(col)
@@ -575,6 +575,9 @@ class DataFrameObject(GPDCContainerObject):
         super().__init__(name, namespace, canonical_name=canonical_name)
         self._index_list_cache = _UNLOADED
         self._column_lists_cache: dict = {}
+        # Per-level index ListObject cache (populated by Task 7 accessors; cleared
+        # alongside the other caches on mutation so a stale L0 ref is never read).
+        self._level_lists_cache: dict = {}
 
     @property
     def type(self) -> str:
@@ -600,9 +603,15 @@ class DataFrameObject(GPDCContainerObject):
         return _decode_scalar(self._redis().hget(self.raw_key, "~index_kind"))
 
     def _get_index_list(self):
-        """Return the shared index ListObject wrapper, or None when RangeIndex."""
+        """Return the single-level index ListObject wrapper, or None when RangeIndex.
+
+        For an L=1 ``levels`` row index the level labels live at ``~index_l0``;
+        the legacy ``~index`` field no longer exists. Task 7 adds per-level
+        accessors for L>=2; until then this is sufficient for ``__len__``,
+        ``.loc``, and ``extend`` on single-level labelled DataFrames.
+        """
         if self._index_list_cache is _UNLOADED:
-            ref = self._redis().hget(self.raw_key, "~index")
+            ref = self._redis().hget(self.raw_key, "~index_l0")
             self._index_list_cache = decode_element(ref, self._namespace) if ref else None
         return self._index_list_cache
 
@@ -616,12 +625,20 @@ class DataFrameObject(GPDCContainerObject):
     def _invalidate_caches(self) -> None:
         self._index_list_cache = _UNLOADED
         self._column_lists_cache = {}
+        self._level_lists_cache = {}
 
-    def _promote_df_range_to_labels(self, fields: dict, owner_name, policy) -> None:
-        """Materialize a RangeIndex into a labels ~index child in-place.
+    def _promote_df_range_to_labels(self, fields: dict, owner_name, policy, level_dtype="int64") -> None:
+        """Materialize a RangeIndex into an L=1 ``levels`` index in place.
+
+        Emits ``~index_l0`` / ``~index_kind=levels`` / ``~index_dtypes`` (matching
+        the new levels storage layout; ``read_raw`` no longer reads ``labels``).
+        ``level_dtype`` lets the extend caller pass an honest combined dtype so
+        subsequent extends cast against a truthful dtype instead of a stale
+        int64 (mirrors the Series Task-5 fix). Defaults to ``int64`` so today's
+        single-level extend caller behaves as before.
 
         Note: commits outside the extend pipeline. If the subsequent append
-        pipeline fails, the index stays promoted (range→labels) with no rows
+        pipeline fails, the index stays promoted (range→levels) with no rows
         added — semantically valid but representationally changed. Mirrors
         SeriesObject.extend's promote path.
         """
@@ -633,13 +650,14 @@ class DataFrameObject(GPDCContainerObject):
             ref = encode_element(labels, self._namespace, owner_name, policy)
         r = self._redis()
         mapping = {
-            "~index": ref,
-            "~index_kind": _encode_extra_value("labels"),
-            "~index_dtype": _encode_extra_value("int64"),
+            "~index_l0": ref,
+            "~index_kind": _encode_extra_value("levels"),
+            "~index_dtypes": _encode_extra_value((level_dtype,)),
         }
         r.hdel(self.raw_key, "~range_start", "~range_stop", "~range_step")
         r.hset(self.raw_key, mapping=mapping)
         self._index_list_cache = _UNLOADED
+        self._level_lists_cache = {}
 
     def extend(self, other) -> None:
         """Append rows in place. Accepts a DataFrame, a dict of lists, or a list of dicts.
@@ -679,14 +697,14 @@ class DataFrameObject(GPDCContainerObject):
         if not appended_is_range:
             _assert_scalar_encodable(appended_labels, "DataFrame index label")
 
-        # RangeIndex: continue the range, or promote to labels.
+        # RangeIndex: continue the range, or promote to L=1 levels.
         if index_kind == "range":
             range_step = _decode_scalar(fields["~range_step"])
             if range_step == 1 and appended_is_range:
                 pass  # range-compatible; bump range_stop below
             else:
                 self._promote_df_range_to_labels(fields, owner_name, policy)
-                index_kind = "labels"
+                index_kind = "levels"
                 fields = self._raw_fields()
 
         # Per-column validate/cast. Bind all casted python_values to a dict
@@ -725,7 +743,7 @@ class DataFrameObject(GPDCContainerObject):
                 encoded_per_col[col] = [
                     encode_element(v, self._namespace, owner_name, policy) for v in python_values_by_col[col]
                 ]
-            if index_kind == "labels":
+            if index_kind == "levels":
                 encoded_idx = [encode_element(lbl, self._namespace, owner_name, policy) for lbl in appended_labels]
             else:
                 encoded_idx = None
@@ -733,7 +751,7 @@ class DataFrameObject(GPDCContainerObject):
             enc = encoded_per_col[col]
             if enc:
                 pipe.rpush(self._get_column_list(col).raw_key, *enc)
-        if index_kind == "labels":
+        if index_kind == "levels":
             if encoded_idx:
                 pipe.rpush(self._get_index_list().raw_key, *encoded_idx)
         else:

@@ -48,18 +48,16 @@ class TestValidateDataFrame:
         with pytest.raises(UnsupportedDataFrameError, match="Duplicate column names"):
             _validate_dataframe(df)
 
-    def test_multiindex_rejected(self):
-        from gpdatacached.extensions.pandas_support import (
-            UnsupportedDataFrameError,
-            _validate_dataframe,
-        )
+    def test_multiindex_accepted_returns_levels(self):
+        from gpdatacached.extensions.pandas_support import _validate_dataframe
 
         df = pd.DataFrame(
             {"a": [1, 2]},
             index=pd.MultiIndex.from_tuples([("x", 1), ("x", 2)]),
         )
-        with pytest.raises(UnsupportedDataFrameError, match="MultiIndex"):
-            _validate_dataframe(df)
+        columns, kind = _validate_dataframe(df)
+        assert list(columns) == ["a"]
+        assert kind == "levels"
 
     def test_unsupported_column_dtype_rejected(self):
         from gpdatacached.extensions.pandas_support import (
@@ -102,17 +100,21 @@ class TestCreateRawHashLayout:
         finally:
             ns._redis().delete(raw_key)
 
-    def test_labeled_index_df_writes_shared_index_ref(self, ns):
+    def test_labeled_index_df_writes_level0_ref(self, ns):
         from gpdatacached.extensions.pandas_support import DataFrameCodec
+        from gpdatacached.types import _decode_scalar
 
         df = pd.DataFrame({"a": [1, 2]}, index=["r1", "r2"])
         raw_key = "gpdc:testdomain:testns:raw:df2"
         try:
             DataFrameCodec.create_raw(ns, raw_key, df, "owner", "permanent", 0)
             fields = ns._redis().hgetall(raw_key)
-            assert fields["~index"].startswith("ref:")
-            assert fields["~index_kind"] == "str:labels"
-            assert fields["~index_dtype"] == "str:str"
+            # single-level labelled now stores as L=1 "levels" (no legacy ~index)
+            assert "~index" not in fields
+            assert fields["~index_l0"].startswith("ref:")
+            assert _decode_scalar(fields["~index_kind"]) == "levels"
+            assert _decode_scalar(fields["~index_dtypes"]) == (str(df.index.dtype),)
+            assert _decode_scalar(fields["~index_names"]) == (None,)
         finally:
             ns._redis().delete(raw_key)
 
@@ -222,6 +224,61 @@ class TestDataFrameRoundTrip:
         finally:
             ns._redis().delete(raw_key)
         assert list(result.columns) == [("g", "a"), ("g", "b")]
+
+
+class TestDataFrameMultiIndexRowStorage:
+    def test_two_level_row_index_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        idx = pd.MultiIndex.from_arrays([["a", "a", "b"], [1, 2, 1]], names=["L0", "L1"])
+        original = pd.DataFrame({"x": [1, 2, 3], "y": [4.0, 5.0, 6.0]}, index=idx)
+        raw_key = "gpdc:testdomain:testns:raw:dfmi"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            result = DataFrameCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert isinstance(result.index, pd.MultiIndex)
+        assert list(result.index) == list(original.index)
+        # Per-level dtypes guard against the _build_levels_index except-fallback
+        # silently masking a dtype mismatch (e.g. a regression that stores the
+        # wrong dtype string).
+        assert str(result.index.get_level_values(0).dtype) == str(original.index.get_level_values(0).dtype)
+        assert str(result.index.get_level_values(1).dtype) == str(original.index.get_level_values(1).dtype)
+        assert list(result.columns) == ["x", "y"]
+        assert list(result["x"]) == [1, 2, 3]
+        assert list(result["y"]) == [4.0, 5.0, 6.0]
+
+    def test_raw_hash_has_tilde_prefixed_level_fields(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        idx = pd.MultiIndex.from_arrays([["a", "b"], [1, 2]], names=["L0", "L1"])
+        original = pd.DataFrame({"x": [1, 2]}, index=idx)
+        raw_key = "gpdc:testdomain:testns:raw:dfmihash"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            assert ns._redis().hget(raw_key, "~index_kind") == "str:levels"
+            assert ns._redis().hget(raw_key, "~index_l0").startswith("ref:")
+            assert ns._redis().hget(raw_key, "~index_l1").startswith("ref:")
+            assert ns._redis().hget(raw_key, "~index_l0") != ns._redis().hget(raw_key, "~index_l1")
+            assert ns._redis().hget(raw_key, "~index_names").startswith("tuple:")
+            assert ns._redis().hget(raw_key, "~index_dtypes").startswith("tuple:")
+        finally:
+            ns._redis().delete(raw_key)
+
+    def test_l1_levels_row_index_equivalent_to_legacy_labels(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        original = pd.DataFrame({"x": [1, 2, 3]}, index=["p", "q", "r"])
+        raw_key = "gpdc:testdomain:testns:raw:dfl1"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            result = DataFrameCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert list(result.index) == ["p", "q", "r"]
+        assert list(result.columns) == ["x"]
+        assert list(result["x"]) == [1, 2, 3]
 
 
 class TestDataFrameObjectCore:
@@ -436,7 +493,7 @@ class TestDfExtend:
         obj.extend(pd.DataFrame({"a": [4]}, index=["x"]))
         result = obj.value
         assert list(result.index) == [0, 1, 2, "x"]
-        assert ns.get_object("df")._index_kind() == "labels"
+        assert ns.get_object("df")._index_kind() == "levels"
 
     def test_extend_category_column_valid_values(self, ns):
         ns["df"] = pd.DataFrame({"c": pd.Series(["a", "b"], dtype=pd.CategoricalDtype(["a", "b"]))})
