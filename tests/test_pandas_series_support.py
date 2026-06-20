@@ -312,13 +312,19 @@ class TestSeriesObjectCore:
         assert list(obj.value.values) == [1, 2, 3]
         assert list(obj.value.index) == ["a", "b", "c"]
 
-    def test_len_dtype_name_index_name(self, ns):
+    def test_len_dtype_name_index_names(self, ns):
         ns["s"] = pd.Series([1, 2, 3], index=["a", "b", "c"], name="vals")
         obj = ns.get_object("s")
         assert len(obj) == 3
         assert obj.dtype == "int64"
         assert obj.name == "vals"
-        assert obj.index_name is None
+        assert obj.index_names == (None,)
+
+    def test_index_names_is_tuple(self, ns):
+        ns["s"] = pd.Series([1, 2], index=["a", "b"], name="s")
+        assert ns["s"].index_names == (None,)
+        ns["s2"] = pd.Series([1, 2], index=pd.Index(["a", "b"], name="lvl0"))
+        assert ns["s2"].index_names == ("lvl0",)
 
     def test_deepcopy_returns_plain_series(self, ns):
         ns["s"] = pd.Series([1, 2], index=["a", "b"], name="n")

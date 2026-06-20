@@ -280,14 +280,15 @@ def _build_index(fields: dict, namespace, prefix: str = "") -> "pd.Index":
     for DataFrame raw-hash field names (``~index_kind``).
     """
     index_kind = _decode_scalar(fields[f"{prefix}index_kind"])
-    index_name = _decode_scalar(fields[f"{prefix}index_name"])
+    index_names = _decode_scalar(fields[f"{prefix}index_names"])
+    name = index_names[0] if index_names else None
     if index_kind == "range":
         start = _decode_scalar(fields[f"{prefix}range_start"])
         stop = _decode_scalar(fields[f"{prefix}range_stop"])
         step = _decode_scalar(fields[f"{prefix}range_step"])
-        return pd.RangeIndex(start, stop, step, name=index_name)
+        return pd.RangeIndex(start, stop, step, name=name)
     labels = decode_element(fields[f"{prefix}index"], namespace).value
-    return pd.Index(labels, name=index_name)
+    return pd.Index(labels, name=name)
 
 
 def _normalize_extend_input(other) -> tuple[list, list]:
@@ -411,7 +412,7 @@ class DataFrameCodec(GPDCContainerCodec):
 
         fields["~columns"] = _encode_extra_value(tuple(column_names))
         fields["~index_kind"] = _encode_extra_value(kind)
-        fields["~index_name"] = _encode_extra_value(index.name)
+        fields["~index_names"] = _encode_extra_value((index.name,))
         if kind == "labels":
             fields["~index_dtype"] = _encode_extra_value(str(index.dtype))
         else:
@@ -697,8 +698,8 @@ class DataFrameObject(GPDCContainerObject):
         return self._column_names()
 
     @property
-    def index_name(self):
-        return _decode_scalar(self._redis().hget(self.raw_key, "~index_name"))
+    def index_names(self) -> tuple:
+        return _decode_scalar(self._redis().hget(self.raw_key, "~index_names"))
 
     def __contains__(self, col) -> bool:
         try:
@@ -894,7 +895,7 @@ class SeriesCodec(GPDCContainerCodec):
         fields["dtype"] = _encode_extra_value(str(value.dtype))
         fields["name"] = _encode_extra_value(value.name)
         fields["index_kind"] = _encode_extra_value(kind)
-        fields["index_name"] = _encode_extra_value(index.name)
+        fields["index_names"] = _encode_extra_value((index.name,))
         if kind == "labels":
             fields["index_dtype"] = _encode_extra_value(str(index.dtype))
         if family == "category":
@@ -956,7 +957,8 @@ class _LocIndexer:
             raise KeyError(label)
         data = owner._get_data_list()
         values = [data[p] for p in positions]
-        index_name = owner.index_name
+        names = owner.index_names
+        index_name = names[0] if names else None
         return owner._build_series_from(values, pd.Index([labels[p] for p in positions], name=index_name))
 
 
@@ -1009,8 +1011,8 @@ class SeriesObject(GPDCContainerObject):
         return _decode_scalar(self._redis().hget(self.raw_key, "name"))
 
     @property
-    def index_name(self):
-        return _decode_scalar(self._redis().hget(self.raw_key, "index_name"))
+    def index_names(self) -> tuple:
+        return _decode_scalar(self._redis().hget(self.raw_key, "index_names"))
 
     def deepcopy(self) -> pd.Series:
         return self.value.copy(deep=True)
@@ -1030,7 +1032,8 @@ class SeriesObject(GPDCContainerObject):
         """Return the pd.Index for a positional slice, honoring RangeIndex."""
         fields = self._raw_fields()
         index_kind = _decode_scalar(fields["index_kind"])
-        index_name = _decode_scalar(fields["index_name"])
+        index_names = _decode_scalar(fields["index_names"])
+        index_name = index_names[0] if index_names else None
         if index_kind == "range":
             start = _decode_scalar(fields["range_start"])
             stop = _decode_scalar(fields["range_stop"])

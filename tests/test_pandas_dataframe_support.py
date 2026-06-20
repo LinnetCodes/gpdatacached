@@ -271,10 +271,10 @@ class TestReadApi:
         obj = ns.get_object("df")
         assert obj.columns == ("z", "a")
 
-    def test_index_name(self, ns):
+    def test_index_names(self, ns):
         ns["df"] = pd.DataFrame({"a": [1]}, index=pd.Index(["x"], name="rows"))
         obj = ns.get_object("df")
-        assert obj.index_name == "rows"
+        assert obj.index_names == ("rows",)
 
     def test_contains_column(self, ns):
         ns["df"] = pd.DataFrame({"a": [1], "b": [2]})
