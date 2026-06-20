@@ -506,6 +506,10 @@ class DataFrameCodec(GPDCContainerCodec):
                 fields[f"~ord:{col_key}"] = _encode_extra_value(bool(col_series.cat.ordered))
 
         fields["~columns"] = _encode_extra_value(tuple(column_names))
+        # Column level-names stored only for MultiIndex columns; a single-level
+        # column index .name is out of scope (see Plan 2 Task 1 / spec §3.2).
+        if isinstance(value.columns, pd.MultiIndex):
+            fields["~columns_names"] = _encode_extra_value(tuple(value.columns.names))
         fields["~index_kind"] = _encode_extra_value(kind)
         fields["~index_names"] = _encode_extra_value(tuple(index.names))
         if kind == "levels":
@@ -533,7 +537,12 @@ class DataFrameCodec(GPDCContainerCodec):
             col_key = encode_key(col)
             values = decode_element(fields[col_key], namespace).deepcopy()
             data_dict[col] = _reconstruct_column(values, index_obj, fields, col, namespace)
-        return pd.DataFrame(data_dict, columns=list(column_names), index=index_obj)
+        if "~columns_names" in fields:
+            col_names = _decode_scalar(fields["~columns_names"])
+            columns = pd.MultiIndex.from_tuples(list(column_names), names=col_names)
+        else:
+            columns = list(column_names)
+        return pd.DataFrame(data_dict, columns=columns, index=index_obj)
 
     @classmethod
     def delete_raw(cls, namespace, raw_key) -> None:

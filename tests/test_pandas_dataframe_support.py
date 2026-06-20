@@ -1085,3 +1085,62 @@ class TestDataFrameMultiIndexRowExtend:
         assert list(result["c"].cat.categories) == ["x", "y", "z"]
         assert result["c"].cat.ordered is True
         assert list(result.index) == [("a", 1), ("a", 2), ("b", 1), ("b", 2)]
+
+
+class TestDataFrameColumnMultiIndexStorage:
+    def test_two_level_column_index_round_trip_preserves_names(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("a", "y"), ("b", "x")], names=["L0", "L1"])
+        original = pd.DataFrame([[1, 2, 3], [4, 5, 6]], columns=cols)
+        raw_key = "gpdc:testdomain:testns:raw:cmi"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            result = DataFrameCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert isinstance(result.columns, pd.MultiIndex)
+        assert list(result.columns) == list(original.columns)
+        assert result.columns.names == ("L0", "L1")
+        assert list(result[("a", "x")]) == [1, 4]
+
+    def test_raw_hash_has_columns_names_field(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("b", "y")], names=["L0", "L1"])
+        original = pd.DataFrame([[1, 2]], columns=cols)
+        raw_key = "gpdc:testdomain:testns:raw:cmihash"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            assert ns._redis().hget(raw_key, "~columns_names").startswith("tuple:")
+            assert ns._redis().hget(raw_key, "~columns").startswith("tuple:")
+        finally:
+            ns._redis().delete(raw_key)
+
+    def test_single_level_columns_have_no_columns_names_field(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        original = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+        raw_key = "gpdc:testdomain:testns:raw:csingle"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            assert ns._redis().hget(raw_key, "~columns_names") is None
+        finally:
+            ns._redis().delete(raw_key)
+
+    def test_three_level_column_index_round_trip(self, ns):
+        from gpdatacached.extensions.pandas_support import DataFrameCodec
+
+        cols = pd.MultiIndex.from_tuples([("a", "x", 1), ("a", "y", 2), ("b", "x", 3)], names=["L0", "L1", "L2"])
+        original = pd.DataFrame([[10, 20, 30]], columns=cols)
+        raw_key = "gpdc:testdomain:testns:raw:cmi3"
+        try:
+            DataFrameCodec.create_raw(ns, raw_key, original, "owner", "permanent", 0)
+            result = DataFrameCodec.read_raw(ns, raw_key)
+        finally:
+            ns._redis().delete(raw_key)
+        assert isinstance(result.columns, pd.MultiIndex)
+        assert result.columns.nlevels == 3
+        assert list(result.columns) == list(original.columns)
+        assert result.columns.names == ("L0", "L1", "L2")
+        assert list(result[("b", "x", 3)]) == [30]
