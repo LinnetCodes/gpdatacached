@@ -1,3 +1,69 @@
+"""Optional pandas ``Series`` / ``DataFrame`` support for gpdatacached.
+
+pandas is an optional dependency. Register it explicitly to make
+:class:`pd.Series` and :class:`pd.DataFrame` cacheable GPDC types with live
+:class:`SeriesObject` / :class:`DataFrameObject` wrappers::
+
+    from gpdatacached.extensions.pandas_support import register
+    register()
+
+Scope at a glance
+-----------------
+* **Row indexes**: ``RangeIndex`` (default int index, stored compactly) and any
+  labelled index including ``pd.MultiIndex`` (stored one ``collection:list``
+  child per level). ``.index_names`` always returns a tuple.
+* **DataFrame columns**: single-level (scalar names) or ``pd.MultiIndex``
+  (tuple names); the row and column axes are independent and compose (a
+  DataFrame may have both a row and a column MultiIndex).
+* **Value dtypes**: int/float (incl. nullable ``Int64``/``Float64``), bool,
+  str/string, object, datetime (naive & tz-aware), category.
+* **Mutation**: append-focused only — row ``extend`` (Series & DataFrame) and,
+  on DataFrame, column ``__setitem__`` / ``__delitem__`` (structural
+  add/replace/drop). No cell-level or in-place row mutation.
+
+Usage guidance — read selectively, then work locally
+-----------------------------------------------------
+gpdatacached is a **cache shared across processes**, not an in-process pandas
+workspace. The intended pattern is: *one writer caches a large structure; many
+reader processes each pull the subset they need for the current task, then
+operate on that local copy.*
+
+* **Fetch your subset in one selective pass, then work locally.** Use the
+  online accessors below to read just the rows/columns you need; do all
+  further processing (filtering, joining, aggregating) on the returned plain
+  ``pandas`` object. Do not ping the cache per-row or per-cell.
+* **Online reads are supported only when meaningfully cheaper than full
+  restore.** Anything that approaches the cost of ``.value`` (e.g.
+  ``.loc[slice]``, ``.loc[list]``, ``.iloc[list]``) is rejected with a
+  ``TypeError`` pointing at ``.value``.
+
+Per-accessor cost (the decision guide)::
+
+    .iloc[int]          O(1)              a single positional value/cell
+    .iloc[a:b]          O(b-a)            a positional slice
+    .loc[key]           O(N), selective   depth-k prefix label scan; decodes
+                                           only matched rows but reads every
+                                           index level — do NOT put in a hot loop
+    df[col] / df[tuple] O(N), one column  (DataFrame) a single column
+    df[level0] / df[list] O(N_cols) + O(matches·N)
+                                         column-axis selection (cheap; few cols)
+    .value              full restore      O(N) — the escape hatch
+
+Decision rule:
+
+* **One-shot selective read** (rows/columns wanted ≪ total) → use the online
+  accessor (``.iloc`` / ``.loc`` / ``__getitem__``).
+* **Repeated or heavy work on the same data** — sorting, many label lookups,
+  complex pandas semantics, or any operation the online API rejects → call
+  ``.value`` once to materialize the local ``pandas`` object and work on it.
+
+Notes
+-----
+* ``.loc`` matches labels with Python ``==``; ``nan`` labels therefore do not
+  match (``nan != nan``).
+* Returned partial results retain the full stored index (no level is dropped).
+"""
+
 from __future__ import annotations
 
 import numpy as np
@@ -671,6 +737,13 @@ class DataFrameObject(GPDCContainerObject):
 
     @property
     def value(self) -> pd.DataFrame:
+        """Full materialization as a plain :class:`pandas.DataFrame`.
+
+        Use this for repeated or heavy work on the same data (sorting, many
+        lookups, complex pandas semantics, or operations the online API
+        rejects). For a one-shot selective read, prefer :attr:`iloc` / :attr:`loc`
+        / ``df[col]``. See the module docstring for the full usage guidance.
+        """
         return DataFrameCodec.read_raw(self._namespace, self.raw_key)
 
     @value.setter
@@ -943,6 +1016,21 @@ class DataFrameObject(GPDCContainerObject):
         return iter(self._column_names())
 
     def __getitem__(self, col):
+        """Select column(s) from the cached DataFrame.
+
+        - ``df[col]`` (single-level, scalar) → that column as a ``pd.Series``.
+        - ``df[(a, b, ...)]`` (multi-level, full-depth tuple) → that column as
+          a ``pd.Series``.
+        - ``df[level0]`` or ``df[(a, b)]`` (multi-level, partial prefix) → a
+          sub-``pd.DataFrame`` of the matching columns.
+        - ``df[list_of_keys]`` → a sub-``pd.DataFrame`` (always, even one key).
+
+        Cost is O(N) per selected column but only over the *selected* columns
+        — the rest of the DataFrame is not read — so this is the right tool
+        for a one-shot selective column read (cheap: column count is small).
+        For repeated or heavy work on the same data, call :attr:`value` and
+        work on the local ``pandas`` object. See the module docstring.
+        """
         fields = self._raw_fields()
         columns = self._column_names()  # tuple of scalars (single) or tuples (multi)
         col_names = self._columns_names_or_none()
@@ -1120,6 +1208,13 @@ class DataFrameObject(GPDCContainerObject):
 
     @property
     def loc(self) -> "_DfLocIndexer":
+        """Row label accessor (depth-k prefix on MultiIndex rows).
+
+        O(N) selective scan — fine for a one-shot partial read, not for hot
+        loops; for repeated lookups call :attr:`value`. Slices and label-lists
+        are rejected (call :attr:`value`). Column selection uses
+        ``df[...]`` (cheap; few columns). See the module docstring.
+        """
         return _DfLocIndexer(self)
 
     def _positional_row_slice(self, sl: slice) -> pd.DataFrame:
@@ -1323,6 +1418,13 @@ class SeriesObject(GPDCContainerObject):
 
     @property
     def value(self) -> pd.Series:
+        """Full materialization as a plain :class:`pandas.Series`.
+
+        Use this for repeated or heavy work on the same data (sorting, many
+        label lookups, complex pandas semantics, or operations the online API
+        rejects). For a one-shot selective read, prefer :attr:`iloc` / :attr:`loc`.
+        See the module docstring for the full usage guidance.
+        """
         return SeriesCodec.read_raw(self._namespace, self.raw_key)
 
     @value.setter
@@ -1373,6 +1475,13 @@ class SeriesObject(GPDCContainerObject):
 
     @property
     def loc(self) -> "_LocIndexer":
+        """Row label accessor (depth-k prefix on a MultiIndex).
+
+        O(N) selective scan — fine for a one-shot partial read, but do not use
+        in a hot loop; for repeated lookups call :attr:`value` and work on the
+        local ``pandas`` object. Slices and label-lists are rejected (call
+        :attr:`value`). See the module docstring.
+        """
         return _LocIndexer(self)
 
     def _positional_index_slice(self, sl: slice):
