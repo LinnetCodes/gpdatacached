@@ -137,8 +137,12 @@ def acquire(
             raise LockAcquisitionTimeout(lock_key=lock_key, timeout=timeout)
 
         # BLPOP timeout is in seconds (float accepted in Redis 6+).
-        # Cap at the remaining time; on timeout or wake-up, loop back to SET NX.
-        r.blpop(notify_key, timeout=remaining)
+        # Cap at min(remaining, ttl) so we retry SET NX after the lock's TTL
+        # expires, even if no release notification arrives (e.g. holder crashed
+        # without releasing). Per the design, a waiter should recover within
+        # ~ttl of a holder crash, not wait the full acquire timeout.
+        blpop_timeout = min(remaining, ttl)
+        r.blpop(notify_key, timeout=blpop_timeout)
 
 
 @contextlib.contextmanager
