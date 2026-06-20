@@ -153,6 +153,59 @@ class TestCrossProcessMutex:
             d.close()
             crash_proc.join(timeout=2.0)
 
+    def test_cross_process_blpop_wakeup(self, clean_redis):
+        """BLPOP wake-up latency: child releases; parent acquires within 100ms."""
+        domain_name = "cptest_blpop"
+        ns_name = "testns"
+        key = "shared"
+
+        # Pre-create the shared object.
+        d = GPDCDomain(domain_name, _make_config())
+        ns = d.ensure_namespace(ns_name)
+        ns[key] = 0
+        d.close()
+
+        # Use a manager queue to get the release timestamp from the child.
+        manager = mp.Manager()
+        release_time_q = manager.Queue()
+        acquired_time_q = manager.Queue()
+
+        def holder():
+            d = GPDCDomain(domain_name, _make_config())
+            try:
+                ns = d.ensure_namespace(ns_name)
+                obj = ns.get_object(key)
+                with obj.lock(timeout=5.0):
+                    time.sleep(0.5)  # hold for 500ms
+                    release_time_q.put(time.monotonic())
+            finally:
+                d.close()
+
+        proc = mp.Process(target=holder)
+        proc.start()
+
+        # Give the holder a moment to acquire.
+        time.sleep(0.2)
+
+        # Parent tries to acquire — will block in BLPOP until holder releases.
+        d = GPDCDomain(domain_name, _make_config())
+        try:
+            ns = d.ensure_namespace(ns_name)
+            obj = ns.get_object(key)
+            with obj.lock(timeout=5.0):
+                acquired_time_q.put(time.monotonic())
+        finally:
+            d.close()
+
+        proc.join(timeout=5.0)
+        assert not proc.is_alive(), "holder process did not finish"
+
+        release_t = release_time_q.get(timeout=1.0)
+        acquired_t = acquired_time_q.get(timeout=1.0)
+        latency = acquired_t - release_t
+        # Should be well under 100ms on a local Redis.
+        assert latency < 0.1, f"BLPOP wake-up latency {latency * 1000:.1f}ms exceeds 100ms"
+
 
 class TestGCConcurrency:
     def test_gc_runs_concurrent_with_locked_writer(self, clean_redis):

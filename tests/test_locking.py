@@ -110,6 +110,47 @@ class TestHeldLockRelease:
 
         assert not r.exists("gpdc:test:lock:x")
 
+    def test_release_wakes_exactly_one_waiter(self, clean_module_redis):
+        """Multiple waiters BLPOP on the same notify_key; a single release wakes only one."""
+        r = clean_module_redis
+        r.set("gpdc:test:lock:x", "token-abc")
+        held = HeldLock(r, "gpdc:test:lock:x", "gpdc:test:locknotify:x", "token-abc")
+
+        woken_count = {"n": 0}
+        woken_event = threading.Event()
+
+        def waiter():
+            # BLPOP with a 2-second timeout; if woken, increment counter.
+            result = r.blpop("gpdc:test:locknotify:x", timeout=2.0)
+            if result is not None:
+                woken_count["n"] += 1
+            # Signal main thread that this waiter finished (woken or timed out).
+            woken_event.set()
+
+        threads = [threading.Thread(target=waiter) for _ in range(3)]
+        for t in threads:
+            t.start()
+
+        # Give all waiters time to enter BLPOP.
+        time.sleep(0.3)
+
+        # Release: RPUSHes exactly one item.
+        held.release()
+
+        # Wait a bit for the woken thread to update the counter.
+        time.sleep(0.2)
+
+        # Exactly one waiter should have been woken; the other two time out at 2s.
+        # We don't wait for the timeouts — just verify the wake count is exactly 1.
+        assert woken_count["n"] == 1, f"expected 1 waiter woken, got {woken_count['n']}"
+
+        # Clean up: don't leave the other 2 threads hanging for the full 2s timeout.
+        # Push 2 more items so they exit promptly.
+        r.rpush("gpdc:test:locknotify:x", "cleanup", "cleanup")
+        for t in threads:
+            t.join(timeout=1.0)
+            assert not t.is_alive()
+
 
 class TestTryLock:
     def test_try_lock_succeeds_on_unlocked(self, clean_module_redis):

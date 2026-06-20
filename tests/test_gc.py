@@ -490,3 +490,52 @@ class TestGCLockedBehavior:
             assert not clean_redis.exists(make_raw_key(DOMAIN, NS, "b"))
 
         t.join(timeout=2.0)
+
+    def test_gc_deadlock_free_with_user_holding_five_locks(self, ns, clean_redis):
+        """User holds 5 locks in sorted order; GC runs concurrently without deadlock."""
+        # Create 5 named objects.
+        names = ["obj_a", "obj_b", "obj_c", "obj_d", "obj_e"]
+        for n in names:
+            ns[n] = [1]
+
+        # Make one orphan that GC will need to clean up while we hold locks.
+        clean_redis.delete(make_object_key(DOMAIN, NS, "obj_c"))
+        clean_redis.delete(make_ref_key(DOMAIN, NS, "obj_c"))
+
+        # Shorten GC lock wait so any deadlock surfaces quickly.
+        clean_redis.hset(make_domain_meta_key(DOMAIN), "gc_lock_wait_seconds", "1")
+
+        gc_done = threading.Event()
+        gc_result = {"deleted": None, "error": None}
+
+        def run_gc():
+            try:
+                gc_result["deleted"] = ns.domain.run_gc(namespace=NS)
+            except Exception as e:
+                gc_result["error"] = e
+            finally:
+                gc_done.set()
+
+        # Acquire all 5 locks in sorted order; spawn GC mid-hold; verify completion.
+        # Note: we acquire via direct lock calls, not via get_object(), to control order.
+        from gpdatacached.locking import try_lock
+
+        held_locks = []
+        try:
+            for name in sorted(names):
+                lk = make_lock_key(DOMAIN, NS, name)
+                nk = make_lock_notify_key(DOMAIN, NS, name)
+                held = try_lock(clean_redis, lk, nk, ttl=30)
+                assert held is not None, f"could not acquire lock on {name}"
+                held_locks.append(held)
+
+            t = threading.Thread(target=run_gc)
+            t.start()
+
+            # GC should complete within 10s (skips our locked objects, cleans obj_c orphan).
+            assert gc_done.wait(timeout=10.0), "GC deadlocked or hung"
+            assert gc_result["error"] is None, f"GC raised: {gc_result['error']!r}"
+        finally:
+            for held in held_locks:
+                held.release()
+            t.join(timeout=2.0)
