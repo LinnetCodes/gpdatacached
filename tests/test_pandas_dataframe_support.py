@@ -1230,3 +1230,75 @@ class TestDataFrameColumnMultiIndexGetitem:
         obj = self._make(ns)  # 2-level columns
         with pytest.raises(KeyError):
             obj[[("a", "x", "extra")]]
+
+
+class TestDataFrameColumnMultiIndexSetDel:
+    def _make(self, ns):
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("a", "y")], names=["L0", "L1"])
+        ns["cdf"] = pd.DataFrame([[1, 2], [3, 4]], columns=cols)
+        return ns.get_object("cdf")
+
+    def test_setitem_new_full_tuple_adds_column(self, ns):
+        obj = self._make(ns)
+        obj[("b", "z")] = [5, 6]
+        result = obj.value
+        assert list(result.columns) == [("a", "x"), ("a", "y"), ("b", "z")]
+        assert list(result[("b", "z")]) == [5, 6]
+        assert result.columns.names == ("L0", "L1")
+
+    def test_setitem_replace_existing_full_tuple(self, ns):
+        obj = self._make(ns)
+        obj[("a", "x")] = [9, 9]
+        assert list(obj.value[("a", "x")]) == [9, 9]
+
+    def test_setitem_arity_mismatch_raises_valueerror(self, ns):
+        obj = self._make(ns)  # 2-level columns
+        with pytest.raises(ValueError, match="levels"):
+            obj[("only_one",)] = [1, 2]
+
+    def test_setitem_partial_scalar_rejected(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(TypeError, match=".value"):
+            obj["a"] = [1, 2]
+
+    def test_setitem_list_rejected(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(TypeError, match=".value"):
+            obj[[("a", "x"), ("a", "y")]] = [[1, 2], [3, 4]]
+
+    def test_setitem_wrong_length_raises_valueerror(self, ns):
+        obj = self._make(ns)  # 2 rows
+        with pytest.raises(ValueError, match="row count"):
+            obj[("b", "z")] = [1, 2, 3]
+
+    def test_delitem_full_tuple_drops_column(self, ns):
+        obj = self._make(ns)
+        del obj[("a", "x")]
+        result = obj.value
+        assert list(result.columns) == [("a", "y")]
+        assert result.columns.names == ("L0", "L1")
+
+    def test_delitem_arity_mismatch_raises_valueerror(self, ns):
+        obj = self._make(ns)  # 2-level columns
+        with pytest.raises(ValueError, match="levels"):
+            del obj[("only_one",)]
+
+    def test_delitem_partial_scalar_rejected(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(TypeError, match=".value"):
+            del obj["a"]
+
+    def test_delitem_list_rejected(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(TypeError, match=".value"):
+            del obj[[("a", "x"), ("a", "y")]]
+
+    def test_single_level_setitem_tuple_rejected(self, ns):
+        ns["sl"] = pd.DataFrame({"x": [1, 2]})
+        with pytest.raises(TypeError, match=".value"):
+            ns.get_object("sl")[("a", "b")] = [3, 4]
+
+    def test_single_level_delitem_tuple_rejected(self, ns):
+        ns["sl"] = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+        with pytest.raises(TypeError, match=".value"):
+            del ns.get_object("sl")[("a", "b")]

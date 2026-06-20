@@ -991,6 +991,21 @@ class DataFrameObject(GPDCContainerObject):
 
         r = self._redis()
         fields = self._raw_fields()
+        is_multi = "~columns_names" in fields
+        if is_multi:
+            nlevels = len(_decode_scalar(fields["~columns_names"]))
+            if not isinstance(col, tuple):
+                raise TypeError(
+                    "partial/list column mutation is not supported on a MultiIndex-column "
+                    "DataFrame; call .value for the full pandas object and operate on it locally."
+                )
+            if len(col) != nlevels:
+                raise ValueError(f"column key has {len(col)} levels, columns have {nlevels}")
+        elif isinstance(col, (tuple, list)):
+            raise TypeError(
+                "tuple/list column keys are not supported on a single-level-column "
+                "DataFrame; call .value for the full pandas object and operate on it locally."
+            )
         columns = list(_decode_scalar(fields["~columns"]))
         owner_name = self._data_owner_name()
         meta = ObjectMeta.load(r, self._canonical_redis_key())
@@ -1060,6 +1075,21 @@ class DataFrameObject(GPDCContainerObject):
         """Drop a column. The shared index is retained (even for the last column)."""
         r = self._redis()
         fields = self._raw_fields()
+        is_multi = "~columns_names" in fields
+        if is_multi:
+            nlevels = len(_decode_scalar(fields["~columns_names"]))
+            if not isinstance(col, tuple):
+                raise TypeError(
+                    "partial/list column deletion is not supported on a MultiIndex-column "
+                    "DataFrame; call .value for the full pandas object and operate on it locally."
+                )
+            if len(col) != nlevels:
+                raise ValueError(f"column key has {len(col)} levels, columns have {nlevels}")
+        elif isinstance(col, (tuple, list)):
+            raise TypeError(
+                "tuple/list column keys are not supported on a single-level-column "
+                "DataFrame; call .value for the full pandas object and operate on it locally."
+            )
         columns = list(_decode_scalar(fields["~columns"]))
         if col not in columns:
             raise KeyError(col)
