@@ -560,7 +560,10 @@ class _DfILocIndexer:
             return pd.Series(row, name=index_obj)
         if isinstance(key, slice):
             return owner._positional_row_slice(key)
-        raise TypeError(f"iloc expects int or slice, got {type(key).__name__!r}")
+        raise TypeError(
+            ".iloc list (positional fancy) indexing is not supported on this cache object; "
+            "use .iloc with an int or slice, or call .value for the full pandas object."
+        )
 
 
 class _DfLocIndexer:
@@ -631,8 +634,10 @@ class DataFrameObject(GPDCContainerObject):
     """Redis-backed pandas DataFrame object.
 
     raw_key is a Redis HASH: column value-refs under ``encode_key(col)``, the
-    shared index under ``~index``, and scalar metadata under ``~``-prefixed
-    fields. See the design spec for the full layout.
+    per-level index labels under ``~index_l{i}`` (with ``~index_kind`` /
+    ``~index_names`` / ``~index_dtypes`` scalar metadata), and other scalar
+    metadata under ``~``-prefixed fields. See the design spec for the full
+    layout.
     """
 
     TYPE = "collection:pandas_dataframe"
@@ -1145,7 +1150,10 @@ class _ILocIndexer:
         if isinstance(key, slice):
             values = data[key]
             return owner._build_series_from(values, owner._positional_index_slice(key))
-        raise TypeError(f"iloc expects int or slice, got {type(key).__name__!r}")
+        raise TypeError(
+            ".iloc list (positional fancy) indexing is not supported on this cache object; "
+            "use .iloc with an int or slice, or call .value for the full pandas object."
+        )
 
 
 class _LocIndexer:
@@ -1206,7 +1214,6 @@ class SeriesObject(GPDCContainerObject):
     def __init__(self, name, namespace, *, canonical_name=None) -> None:
         super().__init__(name, namespace, canonical_name=canonical_name)
         self._data_list_cache = _UNLOADED
-        self._index_list_cache = _UNLOADED
         self._level_lists_cache: dict = {}
 
     @property
@@ -1226,13 +1233,6 @@ class SeriesObject(GPDCContainerObject):
             ref = self._redis().hget(self.raw_key, "data")
             self._data_list_cache = decode_element(ref, self._namespace) if ref else None
         return self._data_list_cache
-
-    def _get_index_list(self):
-        """Return the L=0 index child ListObject, or None when index_kind is 'range'."""
-        if self._index_list_cache is _UNLOADED:
-            ref = self._redis().hget(self.raw_key, "index_l0")
-            self._index_list_cache = decode_element(ref, self._namespace) if ref else None
-        return self._index_list_cache
 
     def _get_level_list(self, level_i: int):
         """Return the per-level index child ListObject, or None when the level is absent."""
@@ -1402,7 +1402,6 @@ class SeriesObject(GPDCContainerObject):
                 pipe.rpush(self._get_level_list(i).raw_key, *encoded_levels[i])
         pipe.execute()
         self._data_list_cache = _UNLOADED
-        self._index_list_cache = _UNLOADED
         self._level_lists_cache = {}
         self._touch()
 
@@ -1423,5 +1422,4 @@ class SeriesObject(GPDCContainerObject):
             if k in fields:
                 r.hdel(self.raw_key, k)
         r.hset(self.raw_key, mapping=mapping)
-        self._index_list_cache = _UNLOADED
         self._level_lists_cache = {}

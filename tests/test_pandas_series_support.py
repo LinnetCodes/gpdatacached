@@ -696,7 +696,7 @@ class TestNestingAndRefCounting:
         ns["s"] = pd.Series([1, 2, 3], index=["a", "b", "c"], dtype="int64")
         obj = ns.get_object("s")
         data_child = obj._get_data_list()
-        index_child = obj._get_index_list()
+        index_child = obj._get_level_list(0)
         assert raw_redis.exists(data_child.raw_key)
         assert raw_redis.exists(index_child.raw_key)
 
