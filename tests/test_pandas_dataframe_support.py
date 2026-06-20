@@ -1365,3 +1365,42 @@ class TestDataFrameMultiIndexIntegration:
         r = df_obj._redis()
         for c in [("a", "x"), ("b", "y")]:
             assert r.ttl(df_obj._get_column_list(c).raw_key) > 0
+
+    def _make_dual(self, ns):
+        rows = pd.MultiIndex.from_tuples([("r", 1), ("r", 2), ("s", 1)], names=["RL0", "RL1"])
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("a", "y"), ("b", "x")], names=["CL0", "CL1"])
+        ns["dual"] = pd.DataFrame([[1, 2, 3], [4, 5, 6], [7, 8, 9]], index=rows, columns=cols)
+        return ns.get_object("dual")
+
+    def test_iloc_slice_preserves_column_multiindex(self, ns):
+        obj = self._make_dual(ns)
+        sub = obj.iloc[0:2]
+        assert isinstance(sub.columns, pd.MultiIndex)
+        assert sub.columns.names == ("CL0", "CL1")
+        assert list(sub[("a", "x")]) == [1, 4]
+        assert isinstance(sub.index, pd.MultiIndex)
+
+    def test_iloc_int_row_series_has_column_multiindex(self, ns):
+        obj = self._make_dual(ns)
+        row = obj.iloc[1]
+        assert isinstance(row, pd.Series)
+        assert isinstance(row.index, pd.MultiIndex)
+        assert row.index.names == ("CL0", "CL1")
+        assert row[("a", "y")] == 5
+        # row label preserved
+        assert row.name == ("r", 2)
+
+    def test_loc_full_tuple_preserves_column_multiindex(self, ns):
+        obj = self._make_dual(ns)
+        sub = obj.loc[("r", 1)]
+        assert isinstance(sub, pd.Series)  # single full-depth row match -> Series
+        assert isinstance(sub.index, pd.MultiIndex)
+        assert sub.index.names == ("CL0", "CL1")
+        assert sub[("b", "x")] == 3
+
+    def test_loc_partial_preserves_column_multiindex(self, ns):
+        obj = self._make_dual(ns)
+        sub = obj.loc["r"]  # row depth-1 partial -> DataFrame
+        assert isinstance(sub.columns, pd.MultiIndex)
+        assert sub.columns.names == ("CL0", "CL1")
+        assert list(sub.index) == [("r", 1), ("r", 2)]

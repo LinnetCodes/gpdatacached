@@ -563,15 +563,16 @@ class _DfILocIndexer:
     def __getitem__(self, key):
         owner = self._owner
         if isinstance(key, (int, np.integer)):
+            fields = owner._raw_fields()
             columns = owner._column_names()
-            row = {}
+            values = []
             for col in columns:
                 col_list = owner._get_column_list(col)
                 if col_list is None:
                     raise IndexError("DataFrame has no rows")
-                row[col] = col_list[int(key)]
+                values.append(col_list[int(key)])
             index_obj = owner._build_full_row_index()[int(key)]
-            return pd.Series(row, name=index_obj)
+            return pd.Series(values, index=_build_columns_index(fields, columns), name=index_obj)
         if isinstance(key, slice):
             return owner._positional_row_slice(key)
         raise TypeError(
@@ -638,7 +639,7 @@ class _DfLocIndexer:
             col_list = owner._get_column_list(col)
             values = [col_list[p] for p in positions]
             data_dict[col] = _reconstruct_column(values, sliced_index, fields, col, owner._namespace)
-        result = pd.DataFrame(data_dict, columns=list(columns))
+        result = pd.DataFrame(data_dict, columns=_build_columns_index(fields, columns))
         if k == L and len(positions) == 1:
             return result.iloc[0]  # single full-depth match -> row as pd.Series
         return result
@@ -1139,7 +1140,7 @@ class DataFrameObject(GPDCContainerObject):
             col_list = self._get_column_list(col)
             values = col_list[sl] if col_list is not None else []
             data_dict[col] = _reconstruct_column(values, index_obj, fields, col, self._namespace)
-        return pd.DataFrame(data_dict, columns=list(columns))
+        return pd.DataFrame(data_dict, columns=_build_columns_index(fields, columns))
 
 
 def register() -> None:
