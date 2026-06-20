@@ -5,8 +5,13 @@ See ``dev_docs/2026-06-21-cross-process-locking-design.md`` for the design.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import time
+import uuid
 from typing import TYPE_CHECKING
+
+from .exceptions import LockAcquisitionTimeout
 
 if TYPE_CHECKING:
     import redis
@@ -85,3 +90,69 @@ class HeldLock:
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         self.release()
         return False
+
+
+def try_lock(
+    r: "redis.Redis",
+    lock_key: str,
+    notify_key: str,
+    *,
+    ttl: int,
+) -> HeldLock | None:
+    """Non-blocking lock attempt.
+
+    Returns a ``HeldLock`` on success, or ``None`` if the lock is currently held.
+    """
+    token = uuid.uuid4().hex
+    if r.set(lock_key, token, nx=True, ex=ttl):
+        return HeldLock(r, lock_key, notify_key, token)
+    return None
+
+
+def acquire(
+    r: "redis.Redis",
+    lock_key: str,
+    notify_key: str,
+    *,
+    ttl: int,
+    timeout: float,
+) -> HeldLock:
+    """Block until the lock is acquired or ``timeout`` elapses.
+
+    Algorithm: ``SET NX EX`` fast-path; on failure, ``BLPOP`` on the notify
+    queue; retry on wake or BLPOP timeout.
+
+    Raises:
+        LockAcquisitionTimeout: if the lock cannot be acquired within ``timeout``.
+    """
+    token = uuid.uuid4().hex
+    deadline = time.monotonic() + timeout
+
+    while True:
+        if r.set(lock_key, token, nx=True, ex=ttl):
+            return HeldLock(r, lock_key, notify_key, token)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise LockAcquisitionTimeout(lock_key=lock_key, timeout=timeout)
+
+        # BLPOP timeout is in seconds (float accepted in Redis 6+).
+        # Cap at the remaining time; on timeout or wake-up, loop back to SET NX.
+        r.blpop(notify_key, timeout=remaining)
+
+
+@contextlib.contextmanager
+def lock_context_manager(
+    r: "redis.Redis",
+    lock_key: str,
+    notify_key: str,
+    *,
+    ttl: int,
+    timeout: float,
+):
+    """Context manager wrapper around ``acquire`` + ``release``."""
+    held = acquire(r, lock_key, notify_key, ttl=ttl, timeout=timeout)
+    try:
+        yield held
+    finally:
+        held.release()
