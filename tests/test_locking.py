@@ -54,15 +54,20 @@ class TestHeldLockRelease:
         assert 0 < ttl <= 5
 
     def test_release_token_mismatch_is_silent(self, clean_module_redis, caplog):
+        import logging
+
         r = clean_module_redis
         r.set("gpdc:test:lock:x", "actual-token")
         held = HeldLock(r, "gpdc:test:lock:x", "gpdc:test:locknotify:x", "wrong-token")
-        # Must not raise.
-        held.release()
+        with caplog.at_level(logging.WARNING, logger="gpdatacached.locking"):
+            # Must not raise.
+            held.release()
         # Lock key still exists (was not ours to release).
         assert r.exists("gpdc:test:lock:x")
         # Notify queue untouched.
         assert not r.exists("gpdc:test:locknotify:x")
+        # Warning was logged.
+        assert any("lost before release" in rec.message for rec in caplog.records)
 
     def test_release_idempotent(self, clean_module_redis):
         r = clean_module_redis
