@@ -5,7 +5,7 @@ import threading
 import pandas as pd
 import pytest
 
-from gpdatacached.types import GPDCTypeRegistry
+from gpdatacached.types import GPDCTypeRegistry, encode_key
 
 
 @pytest.fixture(autouse=True)
@@ -1302,3 +1302,66 @@ class TestDataFrameColumnMultiIndexSetDel:
         ns["sl"] = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
         with pytest.raises(TypeError, match=".value"):
             del ns.get_object("sl")[("a", "b")]
+
+
+class TestDataFrameMultiIndexIntegration:
+    def test_row_and_column_multiindex_compose(self, ns):
+        rows = pd.MultiIndex.from_tuples([("r", 1), ("r", 2), ("s", 1)], names=["RL0", "RL1"])
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("b", "y")], names=["CL0", "CL1"])
+        original = pd.DataFrame([[1, 2], [3, 4], [5, 6]], index=rows, columns=cols)
+        ns["both"] = original
+        result = ns["both"].value
+        assert isinstance(result.index, pd.MultiIndex)
+        assert isinstance(result.columns, pd.MultiIndex)
+        assert result.index.names == ("RL0", "RL1")
+        assert result.columns.names == ("CL0", "CL1")
+        assert list(result[("a", "x")]) == [1, 3, 5]
+
+    def test_loc_row_partial_on_rowcol_multiindex_df(self, ns):
+        rows = pd.MultiIndex.from_tuples([("r", 1), ("r", 2), ("s", 1)], names=["RL0", "RL1"])
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("a", "y")], names=["CL0", "CL1"])
+        ns["both"] = pd.DataFrame([[1, 2], [3, 4], [5, 6]], index=rows, columns=cols)
+        obj = ns.get_object("both")
+        sub = obj.loc["r"]  # row-axis depth-1 partial (Plan 1) — supported
+        assert list(sub.index) == [("r", 1), ("r", 2)]
+
+    def test_getitem_column_partial_on_rowcol_multiindex_df(self, ns):
+        rows = pd.MultiIndex.from_tuples([("r", 1), ("s", 1)], names=["RL0", "RL1"])
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("a", "y"), ("b", "x")], names=["CL0", "CL1"])
+        ns["both"] = pd.DataFrame([[1, 2, 3], [4, 5, 6]], index=rows, columns=cols)
+        obj = ns.get_object("both")
+        sub = obj["a"]  # column-axis depth-1 partial (Plan 2) — supported
+        assert list(sub.columns) == [("a", "x"), ("a", "y")]
+        assert isinstance(sub.index, pd.MultiIndex)
+
+    def test_extend_column_multiindex_dataframe(self, ns):
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("a", "y")], names=["CL0", "CL1"])
+        ns["cdf"] = pd.DataFrame([[1, 2]], columns=cols)
+        obj = ns.get_object("cdf")
+        more = pd.DataFrame([[3, 4]], columns=cols, index=[1])
+        obj.extend(more)
+        result = obj.value
+        assert list(result[("a", "x")]) == [1, 3]
+        assert list(result[("a", "y")]) == [2, 4]
+        assert list(result.columns) == [("a", "x"), ("a", "y")]
+        assert result.columns.names == ("CL0", "CL1")
+
+    def test_column_multiindex_cascade_delete_releases_columns(self, ns):
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("b", "y")], names=["CL0", "CL1"])
+        ns["wrap"] = {"d": pd.DataFrame([[1, 2]], columns=cols)}
+        df_obj = ns.get_object("wrap")["d"]
+        r = df_obj._redis()
+        cx_key = r.hget(df_obj.raw_key, encode_key(("a", "x")))[len("ref:") :]
+        cy_key = r.hget(df_obj.raw_key, encode_key(("b", "y")))[len("ref:") :]
+        assert r.exists(cx_key, cy_key) == 2
+        del ns["wrap"]
+        assert r.exists(cx_key, cy_key) == 0
+
+    def test_column_multiindex_level_children_get_ttl(self, domain_with_namespaces):
+        ns = domain_with_namespaces.ensure_namespace("ns_2")  # sliding, 7200s
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("b", "y")], names=["CL0", "CL1"])
+        ns["ct"] = pd.DataFrame([[1, 2]], columns=cols)
+        df_obj = ns.get_object("ct")
+        r = df_obj._redis()
+        for c in [("a", "x"), ("b", "y")]:
+            assert r.ttl(df_obj._get_column_list(c).raw_key) > 0
