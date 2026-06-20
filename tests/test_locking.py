@@ -203,3 +203,121 @@ class TestLockContextManager:
             with lock_context_manager(r, "gpdc:test:lock:x", "gpdc:test:locknotify:x", ttl=10, timeout=1.0):
                 raise Boom()
         assert not r.exists("gpdc:test:lock:x")
+
+
+class TestGPDCDataObjectLock:
+    def test_lock_returns_context_manager(self, ns, clean_module_redis):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        with obj.lock() as held:
+            assert held.lock_key == "gpdc:testdomain:testns:lock:x"
+            assert clean_module_redis.exists(held.lock_key)
+        assert not clean_module_redis.exists("gpdc:testdomain:testns:lock:x")
+
+    def test_lock_uses_domain_defaults(self, ns, clean_module_redis):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        with obj.lock():
+            ttl = clean_module_redis.ttl("gpdc:testdomain:testns:lock:x")
+            # default_lock_ttl_seconds is 30.
+            assert 0 < ttl <= 30
+
+    def test_lock_explicit_ttl_timeout(self, ns, clean_module_redis):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        with obj.lock(ttl=15, timeout=5):
+            ttl = clean_module_redis.ttl("gpdc:testdomain:testns:lock:x")
+            assert 0 < ttl <= 15
+
+    def test_lock_canonical_not_alias(self, ns, clean_module_redis):
+        """Locking a reference object locks the canonical name."""
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]  # y is now a reference to x's canonical
+        obj_y = ns.get_object("y")
+        with obj_y.lock() as held:
+            # canonical name is "x", not "y"
+            assert held.lock_key == "gpdc:testdomain:testns:lock:x"
+
+    def test_lock_mutual_exclusion_same_canonical(self, ns):
+        """Locking canonical via either name blocks the other."""
+        import threading
+        import time as time_mod
+
+        ns["x"] = [1, 2, 3]
+        ns["y"] = ns["x"]  # alias
+
+        obj_x = ns.get_object("x")
+        obj_y = ns.get_object("y")
+
+        order = []
+
+        def hold_y():
+            with obj_y.lock(timeout=2.0):
+                order.append("y_acquired")
+                time_mod.sleep(0.2)
+
+        with obj_x.lock(timeout=2.0):
+            order.append("x_acquired")
+            t = threading.Thread(target=hold_y)
+            t.start()
+            time_mod.sleep(0.1)
+            order.append("x_releasing")
+
+        t.join(timeout=3.0)
+        assert order == ["x_acquired", "x_releasing", "y_acquired"]
+
+    def test_lock_acquire_timeout_raises(self, ns):
+        import threading
+        import time as time_mod
+        from gpdatacached.exceptions import LockAcquisitionTimeout
+
+        ns["x"] = 42
+        obj = ns.get_object("x")
+
+        blocker_acquired = threading.Event()
+
+        def hold():
+            with obj.lock(timeout=2.0):
+                blocker_acquired.set()
+                time_mod.sleep(1.0)
+
+        t = threading.Thread(target=hold)
+        t.start()
+        blocker_acquired.wait(timeout=1.0)
+
+        try:
+            with pytest.raises(LockAcquisitionTimeout):
+                with obj.lock(timeout=0.3):
+                    pass
+        finally:
+            t.join(timeout=3.0)
+
+    def test_try_lock_returns_none_when_held(self, ns):
+        import threading
+        import time as time_mod
+
+        ns["x"] = 42
+        obj = ns.get_object("x")
+
+        blocker_acquired = threading.Event()
+
+        def hold():
+            with obj.lock(timeout=2.0):
+                blocker_acquired.set()
+                time_mod.sleep(0.5)
+
+        t = threading.Thread(target=hold)
+        t.start()
+        blocker_acquired.wait(timeout=1.0)
+
+        try:
+            assert obj.try_lock() is None
+        finally:
+            t.join(timeout=3.0)
+
+    def test_try_lock_succeeds_when_unlocked(self, ns):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        held = obj.try_lock()
+        assert held is not None
+        held.release()

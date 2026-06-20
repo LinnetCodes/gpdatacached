@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
 from .exceptions import LifecyclePermissionError, ObjectGoneError
-from .keys import make_object_key, make_uri
+from .keys import make_lock_key, make_lock_notify_key, make_object_key, make_uri
 from .meta import ObjectMeta
 
 
@@ -259,3 +259,51 @@ class GPDCDataObject(ABC):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(uri={self.uri!r})"
+
+    def lock(
+        self,
+        *,
+        ttl: int | None = None,
+        timeout: float | None = None,
+    ):
+        """Acquire an exclusive lock on this object's canonical name (blocking).
+
+        Locks the canonical name (data owner), so reference and owner resolve
+        to the same lock. Opt-in: never called automatically by mutating methods.
+
+        Args:
+            ttl: Redis TTL for the lock key. None → domain default.
+            timeout: Acquisition timeout in seconds. None → domain default.
+
+        Raises:
+            LockAcquisitionTimeout: if the lock cannot be acquired within timeout.
+        """
+        from .locking import lock_context_manager
+
+        if ttl is None:
+            ttl = self.domain.get_default_lock_ttl_seconds()
+        if timeout is None:
+            timeout = self.domain.get_default_lock_acquire_timeout_seconds()
+
+        domain_name = self.domain.name
+        ns_name = self._namespace.name
+        lock_key = make_lock_key(domain_name, ns_name, self._canonical_name)
+        notify_key = make_lock_notify_key(domain_name, ns_name, self._canonical_name)
+        return lock_context_manager(self._redis(), lock_key, notify_key, ttl=ttl, timeout=timeout)
+
+    def try_lock(self, *, ttl: int | None = None):
+        """Non-blocking lock attempt. Returns HeldLock or None.
+
+        See ``lock()`` for semantics. ``ttl`` defaults to the domain's
+        ``default_lock_ttl_seconds``.
+        """
+        from .locking import try_lock as _try_lock
+
+        if ttl is None:
+            ttl = self.domain.get_default_lock_ttl_seconds()
+
+        domain_name = self.domain.name
+        ns_name = self._namespace.name
+        lock_key = make_lock_key(domain_name, ns_name, self._canonical_name)
+        notify_key = make_lock_notify_key(domain_name, ns_name, self._canonical_name)
+        return _try_lock(self._redis(), lock_key, notify_key, ttl=ttl)
