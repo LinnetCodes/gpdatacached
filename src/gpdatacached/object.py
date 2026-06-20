@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import contextlib
 import datetime
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from .domain import GPDCDomain
+    from .locking import HeldLock
     from .namespace import GPDCNamespace
 
 from .exceptions import LifecyclePermissionError, ObjectGoneError
@@ -265,7 +267,7 @@ class GPDCDataObject(ABC):
         *,
         ttl: int | None = None,
         timeout: float | None = None,
-    ):
+    ) -> "contextlib.AbstractContextManager[HeldLock]":
         """Acquire an exclusive lock on this object's canonical name (blocking).
 
         Locks the canonical name (data owner), so reference and owner resolve
@@ -291,7 +293,7 @@ class GPDCDataObject(ABC):
         notify_key = make_lock_notify_key(domain_name, ns_name, self._canonical_name)
         return lock_context_manager(self._redis(), lock_key, notify_key, ttl=ttl, timeout=timeout)
 
-    def try_lock(self, *, ttl: int | None = None):
+    def try_lock(self, *, ttl: int | None = None) -> "HeldLock | None":
         """Non-blocking lock attempt. Returns HeldLock or None.
 
         See ``lock()`` for semantics. ``ttl`` defaults to the domain's

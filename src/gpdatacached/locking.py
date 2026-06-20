@@ -9,6 +9,7 @@ import contextlib
 import logging
 import time
 import uuid
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from .exceptions import LockAcquisitionTimeout
@@ -153,7 +154,7 @@ def lock_context_manager(
     *,
     ttl: int,
     timeout: float,
-):
+) -> "Iterator[HeldLock]":
     """Context manager wrapper around ``acquire`` + ``release``."""
     held = acquire(r, lock_key, notify_key, ttl=ttl, timeout=timeout)
     try:

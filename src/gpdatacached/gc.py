@@ -71,7 +71,6 @@ def _scan_all_keys(
 
 def _gc_process_obj_key(r: "redis.Redis", obj_key: str, raw_to_obj: dict[str, str]) -> int:
     """Process a single obj key. Returns count of deletions."""
-    deleted = 0
     key_type = r.type(obj_key)
 
     if key_type == "hash":
@@ -102,7 +101,7 @@ def _gc_process_obj_key(r: "redis.Redis", obj_key: str, raw_to_obj: dict[str, st
             r.delete(obj_key)
             return 1
 
-    return deleted
+    return 0
 
 
 def _gc_process_ref_key(
@@ -113,7 +112,6 @@ def _gc_process_ref_key(
     name: str,
 ) -> int:
     """Process a single ref key. Returns count of deletions."""
-    deleted = 0
     raw_key = make_raw_key(domain, namespace, name)
     obj_key = make_object_key(domain, namespace, name)
     if not r.exists(raw_key) and not r.exists(obj_key):
@@ -156,7 +154,7 @@ def _gc_process_ref_key(
         else:
             remove_referrer(r, ref_key, member)
 
-    return deleted
+    return 0
 
 
 def _gc_process_raw_key(
