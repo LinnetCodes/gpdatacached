@@ -55,6 +55,12 @@ class GPDCDomainConfig(GPConfig):
 
     namespaces: dict[str, GPDCNamespaceConfig] = Field(default_factory=dict)
 
+    # Lock configuration (see dev_docs/2026-06-21-cross-process-locking-design.md).
+    default_lock_ttl_seconds: int = 30
+    default_lock_acquire_timeout_seconds: int = 30
+    gc_lock_ttl_seconds: int = 30
+    gc_lock_wait_seconds: int = 5
+
     @field_validator("default_cache_mode")
     @classmethod
     def _validate_cache_mode(cls, v: str) -> str:
@@ -67,6 +73,18 @@ class GPDCDomainConfig(GPConfig):
     def _validate_ttl(cls, v: int) -> int:
         if v < 0:
             raise ValueError(f"Invalid default_ttl_seconds: {v!r}")
+        return v
+
+    @field_validator(
+        "default_lock_ttl_seconds",
+        "default_lock_acquire_timeout_seconds",
+        "gc_lock_ttl_seconds",
+        "gc_lock_wait_seconds",
+    )
+    @classmethod
+    def _validate_lock_time_fields(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(f"Lock time field must be >= 0, got {v!r}")
         return v
 
     @model_validator(mode="after")

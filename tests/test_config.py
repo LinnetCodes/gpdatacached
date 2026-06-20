@@ -97,3 +97,56 @@ class TestGPDCDomainConfig:
 
         with pytest.raises(ValueError):
             GPDCDomainConfig(default_ttl_seconds=-1)
+
+
+class TestGPDCDomainConfigLockFields:
+    def test_lock_defaults(self):
+        from gpdatacached.config import GPDCDomainConfig
+
+        cfg = GPDCDomainConfig()
+        assert cfg.default_lock_ttl_seconds == 30
+        assert cfg.default_lock_acquire_timeout_seconds == 30
+        assert cfg.gc_lock_ttl_seconds == 30
+        assert cfg.gc_lock_wait_seconds == 5
+
+    def test_lock_fields_settable(self):
+        from gpdatacached.config import GPDCDomainConfig
+
+        cfg = GPDCDomainConfig(
+            default_lock_ttl_seconds=60,
+            default_lock_acquire_timeout_seconds=10,
+            gc_lock_ttl_seconds=120,
+            gc_lock_wait_seconds=3,
+        )
+        assert cfg.default_lock_ttl_seconds == 60
+        assert cfg.default_lock_acquire_timeout_seconds == 10
+        assert cfg.gc_lock_ttl_seconds == 120
+        assert cfg.gc_lock_wait_seconds == 3
+
+    def test_lock_ttl_rejects_negative(self):
+        import pytest
+        from gpdatacached.config import GPDCDomainConfig
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(default_lock_ttl_seconds=-1)
+
+    def test_lock_acquire_timeout_rejects_negative(self):
+        import pytest
+        from gpdatacached.config import GPDCDomainConfig
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(default_lock_acquire_timeout_seconds=-1)
+
+    def test_gc_lock_ttl_rejects_negative(self):
+        import pytest
+        from gpdatacached.config import GPDCDomainConfig
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(gc_lock_ttl_seconds=-1)
+
+    def test_gc_lock_wait_rejects_negative(self):
+        import pytest
+        from gpdatacached.config import GPDCDomainConfig
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(gc_lock_wait_seconds=-1)
