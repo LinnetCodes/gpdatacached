@@ -304,17 +304,15 @@ def _reconstruct(values: list, index_obj, fields: dict, namespace) -> pd.Series:
 
 
 def _build_index(fields: dict, namespace, prefix: str = "") -> "pd.Index":
-    """Build a pd.Index from raw-hash scalar/index fields.
+    """Build a RangeIndex from raw-hash range fields.
 
-    Handles ``range`` and ``levels``. ``prefix`` is "" for Series raw-hash
-    field names (``index_kind``) and "~" for DataFrame raw-hash field names
-    (``~index_kind``).
+    Handles the ``range`` index kind only. ``levels`` indexes (single-level
+    labelled or MultiIndex) are rebuilt via ``_build_levels_index`` directly
+    at their call sites (``DataFrameCodec.read_raw``, ``SeriesCodec.read_raw``,
+    ``DataFrameObject._build_full_row_index``). ``prefix`` is "" for Series
+    raw-hash field names (``index_kind``) and "~" for DataFrame raw-hash field
+    names (``~index_kind``).
     """
-    index_kind = _decode_scalar(fields[f"{prefix}index_kind"])
-    # Temporary: delegates to _build_levels_index for callers still routing through
-    # _build_index (Df indexers / __getitem__ / _positional_row_slice). Task 7 collapses this.
-    if index_kind == "levels":
-        return _build_levels_index(fields, namespace, prefix=prefix)
     index_names = _decode_scalar(fields[f"{prefix}index_names"])
     name = index_names[0] if index_names else None
     start = _decode_scalar(fields[f"{prefix}range_start"])
@@ -523,41 +521,74 @@ class _DfILocIndexer:
                 if col_list is None:
                     raise IndexError("DataFrame has no rows")
                 row[col] = col_list[int(key)]
-            fields = owner._raw_fields()
-            index_obj = _build_index(fields, owner._namespace, prefix="~")
-            return pd.Series(row, name=index_obj[int(key)])
+            index_obj = owner._build_full_row_index()[int(key)]
+            return pd.Series(row, name=index_obj)
         if isinstance(key, slice):
             return owner._positional_row_slice(key)
         raise TypeError(f"iloc expects int or slice, got {type(key).__name__!r}")
 
 
 class _DfLocIndexer:
-    """Label-based row indexer for DataFrameObject (read-only)."""
+    """Label-based row indexer for DataFrameObject (read-only).
+
+    Supports scalar / tuple depth-k prefix selection on a MultiIndex (or
+    single-level labelled) row index. Rejects slice and list with a TypeError
+    pointing to ``.value`` (the cost-bar from the design spec). Full-depth
+    (``k == L``) with exactly one matching row returns that row as a
+    ``pd.Series``; partial depth or multiple matches return a ``pd.DataFrame``.
+    """
 
     def __init__(self, owner: "DataFrameObject") -> None:
         self._owner = owner
 
-    def __getitem__(self, label):
+    def __getitem__(self, key):
         owner = self._owner
+        if isinstance(key, slice):
+            raise TypeError(
+                ".loc slices are not supported on this cache object; "
+                "call .value for the full pandas object and operate on it locally, "
+                "or use .iloc for positional slicing."
+            )
+        if isinstance(key, list):
+            raise TypeError(
+                ".loc label-list selection is not supported on this cache object; "
+                "call .value for the full pandas object and operate on it locally."
+            )
         fields = owner._raw_fields()
-        index_list = owner._get_index_list()
-        if index_list is None:
-            raise TypeError(".loc is not supported on a RangeIndex DataFrame; use .iloc")
-        labels = index_list.value
-        positions = [i for i, lbl in enumerate(labels) if lbl == label]
+        if _decode_scalar(fields["~index_kind"]) == "range":
+            raise TypeError(
+                ".loc on a RangeIndex is not supported on this cache object; "
+                "use .iloc for positional slicing, or call .value for the full pandas object."
+            )
+        names = _decode_scalar(fields["~index_names"])
+        L = len(names)
+        key_tuple = key if isinstance(key, tuple) else (key,)
+        k = len(key_tuple)
+        if k > L:
+            raise KeyError(f"key depth {k} exceeds index levels {L}")
+        # Fetch all L level values once (ListObject.value is uncached -> each call is a Redis lrange).
+        all_level_values = [owner._get_level_list(i).value for i in range(L)]
+        # NA-label matching follows Python == semantics; nan labels won't match (pre-existing behaviour).
+        positions = [
+            pos for pos in range(len(owner)) if all(all_level_values[i][pos] == key_tuple[i] for i in range(k))
+        ]
         if not positions:
-            raise KeyError(label)
+            raise KeyError(key)
         columns = owner._column_names()
-        full_index = _build_index(fields, owner._namespace, prefix="~")
-        sliced_index = pd.Index([labels[p] for p in positions], name=full_index.name)
+        # Build the result row index from the SAME all_level_values (matched positions, all L levels).
+        arrays = [[lvl[p] for p in positions] for lvl in all_level_values]
+        if L == 1:
+            sliced_index = pd.Index(arrays[0], name=names[0])
+        else:
+            sliced_index = pd.MultiIndex.from_arrays(arrays, names=names)
         data_dict = {}
         for col in columns:
             col_list = owner._get_column_list(col)
             values = [col_list[p] for p in positions]
             data_dict[col] = _reconstruct_column(values, sliced_index, fields, col, owner._namespace)
         result = pd.DataFrame(data_dict, columns=list(columns))
-        if len(result) == 1:
-            return result.iloc[0]
+        if k == L and len(positions) == 1:
+            return result.iloc[0]  # single full-depth match -> row as pd.Series
         return result
 
 
@@ -605,15 +636,30 @@ class DataFrameObject(GPDCContainerObject):
     def _get_index_list(self):
         """Return the single-level index ListObject wrapper, or None when RangeIndex.
 
-        For an L=1 ``levels`` row index the level labels live at ``~index_l0``;
-        the legacy ``~index`` field no longer exists. Task 7 adds per-level
-        accessors for L>=2; until then this is sufficient for ``__len__``,
-        ``.loc``, and ``extend`` on single-level labelled DataFrames.
+        Legacy L=0 accessor retained for the extend pipeline (which appends to
+        ``~index_l0`` in place). For new depth-k read paths prefer
+        ``_get_level_list``; for full-row index rebuilds prefer
+        ``_build_full_row_index``.
         """
         if self._index_list_cache is _UNLOADED:
             ref = self._redis().hget(self.raw_key, "~index_l0")
             self._index_list_cache = decode_element(ref, self._namespace) if ref else None
         return self._index_list_cache
+
+    def _get_level_list(self, level_i: int):
+        """Return the per-level index ListObject wrapper, or None when the level is absent."""
+        if level_i not in self._level_lists_cache:
+            ref = self._redis().hget(self.raw_key, f"~index_l{level_i}")
+            self._level_lists_cache[level_i] = decode_element(ref, self._namespace) if ref else None
+        return self._level_lists_cache[level_i]
+
+    def _build_full_row_index(self):
+        """Rebuild the full row pd.Index / pd.MultiIndex from raw-hash fields."""
+        fields = self._raw_fields()
+        kind = _decode_scalar(fields["~index_kind"])
+        if kind == "range":
+            return _build_index(fields, self._namespace, prefix="~")
+        return _build_levels_index(fields, self._namespace, prefix="~")
 
     def _get_column_list(self, col):
         """Return a column's value ListObject wrapper (cached)."""
@@ -774,7 +820,7 @@ class DataFrameObject(GPDCContainerObject):
         if self._index_kind() == "range":
             fields = self._raw_fields()
             return _decode_scalar(fields["~range_stop"]) - _decode_scalar(fields["~range_start"])
-        idx = self._get_index_list()
+        idx = self._get_level_list(0)
         return len(idx) if idx is not None else 0
 
     @property
@@ -801,9 +847,8 @@ class DataFrameObject(GPDCContainerObject):
             raise KeyError(col)
         data_list = self._get_column_list(col)
         values = data_list.deepcopy() if data_list is not None else []
-        fields = self._raw_fields()
-        index_obj = _build_index(fields, self._namespace, prefix="~")
-        return _reconstruct_column(values, index_obj, fields, col, self._namespace)
+        index_obj = self._build_full_row_index()
+        return _reconstruct_column(values, index_obj, self._raw_fields(), col, self._namespace)
 
     def __setitem__(self, col, values) -> None:
         """Add or replace a column. ``len(values)`` must equal the current row count."""
@@ -914,13 +959,21 @@ class DataFrameObject(GPDCContainerObject):
     def _positional_row_slice(self, sl: slice) -> pd.DataFrame:
         columns = self._column_names()
         fields = self._raw_fields()
-        index_obj = _build_index(fields, self._namespace, prefix="~")
-        sliced_index = index_obj[sl]
+        kind = _decode_scalar(fields["~index_kind"])
+        if kind == "range":
+            index_obj = _build_index(fields, self._namespace, prefix="~")[sl]
+        else:
+            names = _decode_scalar(fields["~index_names"])
+            arrays = [self._get_level_list(i)[sl] for i in range(len(names))]
+            if len(names) == 1:
+                index_obj = pd.Index(arrays[0], name=names[0])
+            else:
+                index_obj = pd.MultiIndex.from_arrays(arrays, names=names)
         data_dict = {}
         for col in columns:
             col_list = self._get_column_list(col)
             values = col_list[sl] if col_list is not None else []
-            data_dict[col] = _reconstruct_column(values, sliced_index, fields, col, self._namespace)
+            data_dict[col] = _reconstruct_column(values, index_obj, fields, col, self._namespace)
         return pd.DataFrame(data_dict, columns=list(columns))
 
 
@@ -1065,9 +1118,12 @@ class _LocIndexer:
         k = len(key_tuple)
         if k > L:
             raise KeyError(f"key depth {k} exceeds index levels {L}")
-        level_lists = [owner._get_level_list(i).value for i in range(k)]
+        # Fetch all L level values once (ListObject.value is uncached -> each call is a Redis lrange).
+        all_level_values = [owner._get_level_list(i).value for i in range(L)]
         # NA-label matching follows Python == semantics; nan labels won't match (pre-existing behaviour).
-        positions = [pos for pos in range(len(owner)) if all(level_lists[i][pos] == key_tuple[i] for i in range(k))]
+        positions = [
+            pos for pos in range(len(owner)) if all(all_level_values[i][pos] == key_tuple[i] for i in range(k))
+        ]
         if not positions:
             raise KeyError(key)
         # full-depth + exactly one match -> scalar value (pandas semantics)
@@ -1075,8 +1131,8 @@ class _LocIndexer:
             return owner._get_data_list()[positions[0]]
         data = owner._get_data_list()
         values = [data[p] for p in positions]
-        # Build the result index directly from cached level lists (all L levels, matched positions).
-        arrays = [[owner._get_level_list(i).value[p] for p in positions] for i in range(L)]
+        # Build the result index from the SAME all_level_values (matched positions, all L levels).
+        arrays = [[lvl[p] for p in positions] for lvl in all_level_values]
         if L == 1:
             sliced_index = pd.Index(arrays[0], name=names[0])
         else:

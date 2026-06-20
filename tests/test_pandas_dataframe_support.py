@@ -945,3 +945,71 @@ class TestReadPathScalarCells:
         obj = ns.get_object("df")
         sub = obj.iloc[0:2]
         assert list(sub["o"]) == ["a", "b"]
+
+
+class TestDataFrameMultiIndexRowRead:
+    def _make(self, ns):
+        idx = pd.MultiIndex.from_tuples([("a", 1), ("a", 2), ("b", 1)], names=["L0", "L1"])
+        ns["mdf"] = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]}, index=idx)
+        return ns.get_object("mdf")
+
+    def test_iloc_int_returns_row_series(self, ns):
+        obj = self._make(ns)
+        row = obj.iloc[0]
+        assert row["x"] == 1 and row["y"] == 4
+
+    def test_iloc_slice_returns_dataframe(self, ns):
+        obj = self._make(ns)
+        result = obj.iloc[1:3]
+        assert list(result["x"]) == [2, 3]
+        assert isinstance(result.index, pd.MultiIndex)
+        assert list(result.index) == [("a", 2), ("b", 1)]
+
+    def test_loc_full_tuple_one_match_returns_series(self, ns):
+        obj = self._make(ns)
+        row = obj.loc[("b", 1)]
+        assert row["x"] == 3
+        assert row["y"] == 6
+
+    def test_loc_depth1_returns_dataframe(self, ns):
+        obj = self._make(ns)
+        result = obj.loc["a"]
+        assert list(result["x"]) == [1, 2]
+        assert isinstance(result.index, pd.MultiIndex)
+
+    def test_loc_missing_label_raises_keyerror(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(KeyError):
+            obj.loc[("zzz", 9)]
+
+    def test_loc_slice_rejected_points_to_value(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(TypeError) as exc:
+            obj.loc["a":"b"]
+        assert ".value" in str(exc.value)
+
+    def test_loc_list_rejected_points_to_value(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(TypeError) as exc:
+            obj.loc[["a", "b"]]
+        assert ".value" in str(exc.value)
+
+    def test_loc_full_tuple_duplicate_returns_dataframe(self, ns):
+        idx = pd.MultiIndex.from_tuples([("a", 1), ("a", 1), ("b", 2)], names=["L0", "L1"])
+        ns["dup"] = pd.DataFrame({"x": [10, 20, 30]}, index=idx)
+        result = ns.get_object("dup").loc[("a", 1)]
+        assert isinstance(result, pd.DataFrame)
+        assert list(result["x"]) == [10, 20]
+
+    def test_iloc_negative_int_returns_row_series(self, ns):
+        obj = self._make(ns)
+        row = obj.iloc[-1]
+        assert row["x"] == 3 and row["y"] == 6
+
+    def test_loc_on_l1_labelled_df_returns_row_series(self, ns):
+        ns["l1"] = pd.DataFrame({"x": [10, 20, 30]}, index=["p", "q", "r"])
+        obj = ns.get_object("l1")
+        row = obj.loc["q"]
+        assert isinstance(row, pd.Series)
+        assert row["x"] == 20
+        assert row.name == "q"
