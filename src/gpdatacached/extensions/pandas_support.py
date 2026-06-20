@@ -228,6 +228,17 @@ def _level_labels_and_dtype(index, level_i: int) -> tuple[list, str]:
     return _python_labels(level_vals), str(level_vals.dtype)
 
 
+def _infer_promote_dtype(labels: list) -> str:
+    """Honest combined dtype for a range→levels promote: int64 if all appended
+    labels cast to int64, else object. (RangeIndex values are always int, so the
+    combined level dtype is determined by whether the appended labels are int64.)"""
+    try:
+        pd.array(labels, dtype="int64")
+        return "int64"
+    except (TypeError, ValueError):
+        return "object"
+
+
 def _build_levels_index(fields: dict, namespace, prefix: str = "") -> "pd.Index | pd.MultiIndex":
     """Rebuild a MultiIndex (L>=1) from per-level ref fields."""
     names = _decode_scalar(fields[f"{prefix}index_names"])
@@ -376,21 +387,40 @@ def _is_range_indexed_series(other) -> bool:
     return isinstance(other, pd.Series) and isinstance(other.index, pd.RangeIndex)
 
 
-def _normalize_df_extend_input(other, columns: list) -> tuple[dict, list]:
-    """Normalize extend input for a DataFrame into ({col: python_values}, index_labels).
+def _normalize_df_extend_input(other, columns: list, expect_levels: int | None = None) -> tuple[dict, list[list], int]:
+    """Normalize extend input for a DataFrame.
 
-    ``index_labels`` is the list of row labels carried by ``other``. For dict /
-    list-of-dict inputs (which have no index), positional labels ``0..n-1`` are
-    synthesized (range-compatible). Raises ValueError on column-set mismatch or
-    TypeError on a malformed input.
+    Returns ``(per_col, index_labels_per_level, nlevels)`` where ``per_col`` maps
+    each column to its python-native values, ``index_labels_per_level`` is a list
+    of ``nlevels`` lists (one per index level, each the appended labels for that
+    level), and ``nlevels`` is the appended index's level count.
+
+    For dict / list-of-dict inputs (which carry no index), positional labels
+    ``0..n-1`` are synthesized (range-compatible). A genuine MultiIndex-row
+    DataFrame (``expect_levels >= 2``) rejects dict/list inputs with a TypeError
+    pointing at ``.value`` — those forms synthesise positional labels a
+    MultiIndex cannot supply. Raises ValueError on column-set mismatch.
     """
     if isinstance(other, pd.DataFrame):
         other_cols = list(other.columns)
         if set(other_cols) != set(columns):
             raise ValueError(f"extend input columns {other_cols!r} do not match {columns!r}")
         per_col = {c: _python_values(other[c]) for c in columns}
-        return per_col, list(other.index)
+        idx = other.index
+        nlevels = getattr(idx, "nlevels", 1)
+        if isinstance(idx, pd.MultiIndex):
+            index_labels_per_level = [_python_labels(idx.get_level_values(i)) for i in range(nlevels)]
+        else:
+            index_labels_per_level = [_python_labels(idx)]
+            nlevels = 1
+        return per_col, index_labels_per_level, nlevels
+    multi_rejected = expect_levels is not None and expect_levels > 1
     if isinstance(other, dict):
+        if multi_rejected:
+            raise TypeError(
+                "extend a MultiIndex-row DataFrame with a DataFrame only; "
+                "for other inputs call .value for the full pandas object and operate on it locally."
+            )
         if set(other.keys()) != set(columns):
             raise ValueError(f"extend input columns {list(other.keys())!r} do not match {columns!r}")
         per_col = {}
@@ -403,8 +433,13 @@ def _normalize_df_extend_input(other, columns: list) -> tuple[dict, list]:
                 f"extend dict-of-lists columns have mismatched lengths: { {c: len(per_col[c]) for c in columns} }"
             )
         n = next(iter(lengths)) if lengths else 0
-        return per_col, list(range(n))
+        return per_col, [list(range(n))], 1
     if isinstance(other, (list, tuple)):
+        if multi_rejected:
+            raise TypeError(
+                "extend a MultiIndex-row DataFrame with a DataFrame only; "
+                "for other inputs call .value for the full pandas object and operate on it locally."
+            )
         rows = list(other)
         bad = [r for r in rows if not isinstance(r, dict)]
         if bad:
@@ -415,7 +450,7 @@ def _normalize_df_extend_input(other, columns: list) -> tuple[dict, list]:
                 raise ValueError(f"extend row columns {list(r.keys())!r} do not match {columns!r}")
             for c in columns:
                 per_col[c].append(r[c])
-        return per_col, list(range(len(rows)))
+        return per_col, [list(range(len(rows)))], 1
     raise TypeError("extend input must be a DataFrame, dict, or list of dict rows")
 
 
@@ -604,10 +639,10 @@ class DataFrameObject(GPDCContainerObject):
 
     def __init__(self, name, namespace, *, canonical_name=None) -> None:
         super().__init__(name, namespace, canonical_name=canonical_name)
-        self._index_list_cache = _UNLOADED
         self._column_lists_cache: dict = {}
-        # Per-level index ListObject cache (populated by Task 7 accessors; cleared
-        # alongside the other caches on mutation so a stale L0 ref is never read).
+        # Per-level index ListObject cache (L>=1; the extend pipeline and the
+        # depth-k read paths both go through _get_level_list). Cleared on
+        # mutation so a stale ref is never read.
         self._level_lists_cache: dict = {}
 
     @property
@@ -633,19 +668,6 @@ class DataFrameObject(GPDCContainerObject):
     def _index_kind(self) -> str:
         return _decode_scalar(self._redis().hget(self.raw_key, "~index_kind"))
 
-    def _get_index_list(self):
-        """Return the single-level index ListObject wrapper, or None when RangeIndex.
-
-        Legacy L=0 accessor retained for the extend pipeline (which appends to
-        ``~index_l0`` in place). For new depth-k read paths prefer
-        ``_get_level_list``; for full-row index rebuilds prefer
-        ``_build_full_row_index``.
-        """
-        if self._index_list_cache is _UNLOADED:
-            ref = self._redis().hget(self.raw_key, "~index_l0")
-            self._index_list_cache = decode_element(ref, self._namespace) if ref else None
-        return self._index_list_cache
-
     def _get_level_list(self, level_i: int):
         """Return the per-level index ListObject wrapper, or None when the level is absent."""
         if level_i not in self._level_lists_cache:
@@ -669,7 +691,6 @@ class DataFrameObject(GPDCContainerObject):
         return self._column_lists_cache[col]
 
     def _invalidate_caches(self) -> None:
-        self._index_list_cache = _UNLOADED
         self._column_lists_cache = {}
         self._level_lists_cache = {}
 
@@ -702,13 +723,15 @@ class DataFrameObject(GPDCContainerObject):
         }
         r.hdel(self.raw_key, "~range_start", "~range_stop", "~range_step")
         r.hset(self.raw_key, mapping=mapping)
-        self._index_list_cache = _UNLOADED
         self._level_lists_cache = {}
 
     def extend(self, other) -> None:
         """Append rows in place. Accepts a DataFrame, a dict of lists, or a list of dicts.
 
-        Mutates the cached object in Redis and returns None.
+        Mutates the cached object in Redis and returns None. For a genuine
+        MultiIndex-row DataFrame (L>=2), only a DataFrame with a matching
+        MultiIndex is accepted (dict/list inputs synthesise positional labels a
+        MultiIndex cannot supply -> TypeError; use ``.value``).
         """
         from ..lifecycle import policy_from_meta, policy_from_defaults
 
@@ -716,9 +739,13 @@ class DataFrameObject(GPDCContainerObject):
         fields = self._raw_fields()
         columns = list(_decode_scalar(fields["~columns"]))
         index_kind = _decode_scalar(fields["~index_kind"])
+        names = _decode_scalar(fields["~index_names"])
 
-        per_col, appended_labels = _normalize_df_extend_input(other, columns)
-        n = len(appended_labels)
+        expect_levels = len(names) if index_kind == "levels" else None
+        per_col, index_labels_per_level, got_levels = _normalize_df_extend_input(
+            other, columns, expect_levels=expect_levels
+        )
+        n = len(index_labels_per_level[0]) if index_labels_per_level else 0
 
         # Range-compatible iff the appended input carries positional labels
         # (a DataFrame with a RangeIndex, or a dict / list-of-dicts which
@@ -732,36 +759,18 @@ class DataFrameObject(GPDCContainerObject):
         policy = policy_from_meta(meta) if meta else policy_from_defaults("permanent", 0)
         owner_name = self._data_owner_name()
 
-        # Validate elements are scalar-encodable BEFORE any Redis write (promote/encode)
-        # so a rejected input leaves the cached object untouched. `appended_is_range`
-        # is False exactly when the input carries user-provided (non-positional) labels.
-        for col in columns:
-            col_key = encode_key(col)
-            col_dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
-            if _value_dtype_family(pd.api.types.pandas_dtype(col_dtype_str)) in _ELEMENT_SCAN_FAMILIES:
-                _assert_scalar_encodable(per_col[col], f"DataFrame column {col!r} element")
-        if not appended_is_range:
-            _assert_scalar_encodable(appended_labels, "DataFrame index label")
-
-        # RangeIndex: continue the range, or promote to L=1 levels.
-        if index_kind == "range":
-            range_step = _decode_scalar(fields["~range_step"])
-            if range_step == 1 and appended_is_range:
-                pass  # range-compatible; bump range_stop below
-            else:
-                self._promote_df_range_to_labels(fields, owner_name, policy)
-                index_kind = "levels"
-                fields = self._raw_fields()
-
-        # Per-column validate/cast. Bind all casted python_values to a dict
-        # before the encode loop so each stays referenced for the whole
-        # encode_session (mirrors the create_raw id-aliasing fix).
+        # Per-column validate/cast BEFORE any Redis write (promote/encode) so a
+        # rejected input leaves the cached object untouched. Bind all casted
+        # python_values to a dict before the encode loop so each stays referenced
+        # for the whole encode_session (mirrors the create_raw id-aliasing fix).
         python_values_by_col: dict[str, list] = {}
         for col in columns:
             col_key = encode_key(col)
             dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
             family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
             raw_values = per_col[col]
+            if family in _ELEMENT_SCAN_FAMILIES:
+                _assert_scalar_encodable(raw_values, f"DataFrame column {col!r} element")
             if family == "category":
                 existing_cats = decode_element(fields[f"~cat:{col_key}"], self._namespace).value
                 for v in raw_values:
@@ -781,28 +790,79 @@ class DataFrameObject(GPDCContainerObject):
                     raise ValueError(f"Cannot extend column {col!r} with dtype {dtype_str!r}: {exc}") from exc
                 python_values_by_col[col] = _python_values(casted)
 
-        # One MULTI/EXEC pipeline: RPUSH each column + shared index lockstep.
+        # RangeIndex: continue the range, or promote to L=1 levels.
+        if index_kind == "range":
+            range_step = _decode_scalar(fields["~range_step"])
+            if range_step == 1 and appended_is_range:
+                # range-compatible: just bump range_stop + append columns.
+                pipe = r.pipeline(transaction=True)
+                with encode_session(self._namespace):
+                    encoded_per_col = {
+                        col: [encode_element(v, self._namespace, owner_name, policy) for v in python_values_by_col[col]]
+                        for col in columns
+                    }
+                for col in columns:
+                    enc = encoded_per_col[col]
+                    if enc:
+                        pipe.rpush(self._get_column_list(col).raw_key, *enc)
+                new_stop = _decode_scalar(fields["~range_stop"]) + n
+                pipe.hset(self.raw_key, "~range_stop", _encode_extra_value(new_stop))
+                pipe.execute()
+                self._invalidate_caches()
+                self._touch()
+                return
+            # Promote to L=1 levels. Validate BEFORE the promote (a Redis write)
+            # so a rejected input leaves the object untouched (spec §5).
+            if got_levels != 1:
+                raise ValueError(f"appended index has {got_levels} levels, stored has 1")
+            appended_index_labels = index_labels_per_level[0]
+            _assert_scalar_encodable(appended_index_labels, "DataFrame index label")
+            # Compute the honest combined level dtype: old RangeIndex values are
+            # int, so the level is int64 iff the appended labels are int64-castable,
+            # else object. Writing the honest dtype here means subsequent extends
+            # cast against a truthful dtype instead of a stale int64 (spec §6:
+            # infer, do not reject mixed). Mirrors the Series Task-5 fix.
+            promote_dtype = _infer_promote_dtype(appended_index_labels)
+            self._promote_df_range_to_labels(fields, owner_name, policy, level_dtype=promote_dtype)
+            fields = self._raw_fields()
+            index_kind = "levels"
+            names = _decode_scalar(fields["~index_names"])
+
+        # levels path (L >= 1)
+        L = len(names)
+        if got_levels != L:
+            raise ValueError(f"appended index has {got_levels} levels, stored has {L}")
+        dtypes = _decode_scalar(fields["~index_dtypes"])
+        per_level_new: list[list] = []
+        for i in range(L):
+            col_labels = index_labels_per_level[i]
+            # Validate raw labels BEFORE the dtype cast: a string-dtype cast would
+            # silently stringify container labels, so scalar-encodability must be
+            # confirmed first (mirrors SeriesObject.extend).
+            _assert_scalar_encodable(col_labels, f"DataFrame index level {i} label")
+            try:
+                casted_lvl = pd.array(col_labels, dtype=dtypes[i])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Cannot extend index level {i} ({names[i]!r}) to dtype {dtypes[i]!r}: {exc}") from exc
+            per_level_new.append([None if pd.isna(v) else _to_python_native(v) for v in casted_lvl])
+
+        # One MULTI/EXEC pipeline: RPUSH each column AND each level list lockstep.
         pipe = r.pipeline(transaction=True)
         with encode_session(self._namespace):
-            encoded_per_col: dict[str, list[str]] = {}
-            for col in columns:
-                encoded_per_col[col] = [
-                    encode_element(v, self._namespace, owner_name, policy) for v in python_values_by_col[col]
-                ]
-            if index_kind == "levels":
-                encoded_idx = [encode_element(lbl, self._namespace, owner_name, policy) for lbl in appended_labels]
-            else:
-                encoded_idx = None
+            encoded_per_col = {
+                col: [encode_element(v, self._namespace, owner_name, policy) for v in python_values_by_col[col]]
+                for col in columns
+            }
+            encoded_levels = [
+                [encode_element(v, self._namespace, owner_name, policy) for v in per_level_new[i]] for i in range(L)
+            ]
         for col in columns:
             enc = encoded_per_col[col]
             if enc:
                 pipe.rpush(self._get_column_list(col).raw_key, *enc)
-        if index_kind == "levels":
-            if encoded_idx:
-                pipe.rpush(self._get_index_list().raw_key, *encoded_idx)
-        else:
-            new_stop = _decode_scalar(fields["~range_stop"]) + n
-            pipe.hset(self.raw_key, "~range_stop", _encode_extra_value(new_stop))
+        for i in range(L):
+            if encoded_levels[i]:
+                pipe.rpush(self._get_level_list(i).raw_key, *encoded_levels[i])
         pipe.execute()
 
         self._invalidate_caches()
@@ -1289,11 +1349,7 @@ class SeriesObject(GPDCContainerObject):
                 # object. Writing the honest dtype here means subsequent extends cast
                 # against a truthful dtype instead of a stale int64 (spec §6: infer, do
                 # not reject mixed).
-                try:
-                    pd.array(appended_index_labels, dtype="int64")
-                    promote_dtype = "int64"
-                except (TypeError, ValueError):
-                    promote_dtype = "object"
+                promote_dtype = _infer_promote_dtype(appended_index_labels)
                 self._promote_range_to_labels(fields, owner_name, policy, level_dtype=promote_dtype)
                 fields = self._raw_fields()
                 names = _decode_scalar(fields["index_names"])

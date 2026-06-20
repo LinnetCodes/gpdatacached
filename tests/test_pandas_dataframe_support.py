@@ -717,7 +717,7 @@ class TestNestingAndRefCounting:
         obj = ns.get_object("df")
         a_list = obj._get_column_list("a")
         c_list = obj._get_column_list("c")
-        index_list = obj._get_index_list()
+        index_list = obj._get_level_list(0)
         # find the categories child by scanning the raw hash
         from gpdatacached.types import encode_key
         from gpdatacached.types import decode_element
@@ -742,13 +742,13 @@ class TestNestingAndRefCounting:
         assert raw_redis.ttl(obj.raw_key) > 0
         assert raw_redis.ttl(a_list.raw_key) > 0
         if not index_is_range:
-            assert raw_redis.ttl(obj._get_index_list().raw_key) > 0
+            assert raw_redis.ttl(obj._get_level_list(0).raw_key) > 0
 
     def test_sliding_ttl_propagates_to_labeled_index_children(self, ns, raw_redis):
         ns["df"] = pd.DataFrame({"a": [1, 2]}, index=["r1", "r2"])
         obj = ns.get_object("df")
         obj.update_cache_mode_and_ttl("sliding", 300)
-        index_list = obj._get_index_list()
+        index_list = obj._get_level_list(0)
         assert raw_redis.ttl(obj.raw_key) > 0
         assert raw_redis.ttl(index_list.raw_key) > 0
 
@@ -1013,3 +1013,75 @@ class TestDataFrameMultiIndexRowRead:
         assert isinstance(row, pd.Series)
         assert row["x"] == 20
         assert row.name == "q"
+
+
+class TestDataFrameMultiIndexRowExtend:
+    def _make(self, ns):
+        idx = pd.MultiIndex.from_tuples([("a", 1), ("a", 2)], names=["L0", "L1"])
+        ns["mdf"] = pd.DataFrame({"x": [1, 2]}, index=idx)
+        return ns.get_object("mdf")
+
+    def test_extend_with_matching_dataframe(self, ns):
+        obj = self._make(ns)
+        obj.extend(pd.DataFrame({"x": [3, 4]}, index=pd.MultiIndex.from_tuples([("b", 1), ("b", 2)])))
+        assert list(obj.value["x"]) == [1, 2, 3, 4]
+        assert list(obj.value.index) == [("a", 1), ("a", 2), ("b", 1), ("b", 2)]
+
+    def test_extend_level_count_mismatch_raises(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(ValueError, match="levels"):
+            obj.extend(pd.DataFrame({"x": [9]}, index=["only"]))
+
+    def test_extend_dict_rejected_on_l2(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(TypeError, match=".value"):
+            obj.extend({"x": [9]})
+
+    def test_extend_list_of_dicts_rejected_on_l2(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(TypeError):
+            obj.extend([{"x": 9}])
+
+    def test_extend_dict_still_works_on_l1_levels(self, ns):
+        ns["df1"] = pd.DataFrame({"x": [1, 2]}, index=["p", "q"])
+        ns.get_object("df1").extend({"x": [3]})  # L=1 levels keeps today's behaviour
+        assert list(ns.get_object("df1").value["x"]) == [1, 2, 3]
+
+    def test_extend_range_then_incremental_heterogeneous_labels(self, ns):
+        # the Task-5 honest-dtype regression, DataFrame variant
+        ns["rs"] = pd.DataFrame({"x": [1, 2, 3]})  # range
+        obj = ns.get_object("rs")
+        obj.extend(pd.DataFrame({"x": [4]}, index=["x"]))
+        obj.extend(pd.DataFrame({"x": [5]}, index=["y"]))  # must NOT fail
+        result = obj.value
+        assert list(result["x"]) == [1, 2, 3, 4, 5]
+        assert list(result.index) == [0, 1, 2, "x", "y"]
+
+    def test_extend_range_with_multilevel_input_raises_without_promote(self, ns):
+        ns["rs"] = pd.DataFrame({"x": [1, 2]})  # range
+        obj = ns.get_object("rs")
+        raw_before = ns._redis().hgetall(obj.raw_key)
+        with pytest.raises(ValueError, match="levels"):
+            obj.extend(pd.DataFrame({"x": [9]}, index=pd.MultiIndex.from_tuples([("a", 1)])))
+        raw_after = ns._redis().hgetall(obj.raw_key)
+        assert raw_after.get("~index_kind") == raw_before.get("~index_kind")  # still range
+        assert "~index_l0" not in raw_after
+
+    def test_extend_multilevel_dataframe_with_category_column(self, ns):
+        idx = pd.MultiIndex.from_tuples([("a", 1), ("a", 2)], names=["L0", "L1"])
+        ns["catdf"] = pd.DataFrame(
+            {"c": pd.Categorical(["x", "y"], categories=["x", "y", "z"], ordered=True)},
+            index=idx,
+        )
+        obj = ns.get_object("catdf")
+        obj.extend(
+            pd.DataFrame(
+                {"c": pd.Categorical(["z", "x"], categories=["x", "y", "z"], ordered=True)},
+                index=pd.MultiIndex.from_tuples([("b", 1), ("b", 2)]),
+            )
+        )
+        result = obj.value
+        assert list(result["c"]) == ["x", "y", "z", "x"]
+        assert list(result["c"].cat.categories) == ["x", "y", "z"]
+        assert result["c"].cat.ordered is True
+        assert list(result.index) == [("a", 1), ("a", 2), ("b", 1), ("b", 2)]
