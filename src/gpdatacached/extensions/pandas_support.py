@@ -992,20 +992,49 @@ class _LocIndexer:
     def __init__(self, owner: "SeriesObject") -> None:
         self._owner = owner
 
-    def __getitem__(self, label):
+    def __getitem__(self, key):
         owner = self._owner
-        index_list = owner._get_index_list()
-        if index_list is None:
-            raise TypeError(".loc is not supported on a RangeIndex Series; use .iloc")
-        labels = index_list.value
-        positions = [i for i, lbl in enumerate(labels) if lbl == label]
+        if isinstance(key, slice):
+            raise TypeError(
+                ".loc slices are not supported on this cache object; "
+                "call .value for the full pandas object and operate on it locally, "
+                "or use .iloc for positional slicing."
+            )
+        if isinstance(key, list):
+            raise TypeError(
+                ".loc label-list selection is not supported on this cache object; "
+                "call .value for the full pandas object and operate on it locally."
+            )
+        fields = owner._raw_fields()
+        if _decode_scalar(fields["index_kind"]) == "range":
+            raise TypeError(
+                ".loc on a RangeIndex is not supported on this cache object; "
+                "use .iloc for positional slicing, or call .value for the full pandas object."
+            )
+        names = _decode_scalar(fields["index_names"])
+        L = len(names)
+        # normalise key to a depth-k tuple
+        key_tuple = key if isinstance(key, tuple) else (key,)
+        k = len(key_tuple)
+        if k > L:
+            raise KeyError(f"key depth {k} exceeds index levels {L}")
+        level_lists = [owner._get_level_list(i).value for i in range(k)]
+        # NA-label matching follows Python == semantics; nan labels won't match (pre-existing behaviour).
+        positions = [pos for pos in range(len(owner)) if all(level_lists[i][pos] == key_tuple[i] for i in range(k))]
         if not positions:
-            raise KeyError(label)
+            raise KeyError(key)
+        # full-depth + exactly one match -> scalar value (pandas semantics)
+        if k == L and len(positions) == 1:
+            return owner._get_data_list()[positions[0]]
         data = owner._get_data_list()
         values = [data[p] for p in positions]
-        names = owner.index_names
-        index_name = names[0] if names else None
-        return owner._build_series_from(values, pd.Index([labels[p] for p in positions], name=index_name))
+        # Build the result index directly from cached level lists (all L levels, matched positions).
+        arrays = [[owner._get_level_list(i).value[p] for p in positions] for i in range(L)]
+        if L == 1:
+            sliced_index = pd.Index(arrays[0], name=names[0])
+        else:
+            sliced_index = pd.MultiIndex.from_arrays(arrays, names=names)
+        return owner._build_series_from(values, sliced_index)
 
 
 class SeriesObject(GPDCContainerObject):
@@ -1042,6 +1071,13 @@ class SeriesObject(GPDCContainerObject):
             self._index_list_cache = decode_element(ref, self._namespace) if ref else None
         return self._index_list_cache
 
+    def _get_level_list(self, level_i: int):
+        """Return the per-level index child ListObject, or None when the level is absent."""
+        if level_i not in self._level_lists_cache:
+            ref = self._redis().hget(self.raw_key, f"index_l{level_i}")
+            self._level_lists_cache[level_i] = decode_element(ref, self._namespace) if ref else None
+        return self._level_lists_cache[level_i]
+
     def _raw_fields(self) -> dict:
         return self._redis().hgetall(self.raw_key)
 
@@ -1076,20 +1112,23 @@ class SeriesObject(GPDCContainerObject):
         return _LocIndexer(self)
 
     def _positional_index_slice(self, sl: slice):
-        """Return the pd.Index for a positional slice, honoring RangeIndex."""
+        """Return the pd.Index for a positional slice, honoring RangeIndex and MultiIndex."""
         fields = self._raw_fields()
         index_kind = _decode_scalar(fields["index_kind"])
-        index_names = _decode_scalar(fields["index_names"])
-        index_name = index_names[0] if index_names else None
+        names = _decode_scalar(fields["index_names"])
         if index_kind == "range":
-            start = _decode_scalar(fields["range_start"])
-            stop = _decode_scalar(fields["range_stop"])
-            step = _decode_scalar(fields["range_step"])
-            full = pd.RangeIndex(start, stop, step, name=index_name)
+            full = pd.RangeIndex(
+                _decode_scalar(fields["range_start"]),
+                _decode_scalar(fields["range_stop"]),
+                _decode_scalar(fields["range_step"]),
+                name=names[0],
+            )
             return full[sl]
-        index_list = self._get_index_list()
-        labels = index_list[sl] if index_list is not None else []
-        return pd.Index(labels, name=index_name)
+        # levels: slice each level list
+        arrays = [self._get_level_list(i)[sl] for i in range(len(names))]
+        if len(names) == 1:
+            return pd.Index(arrays[0], name=names[0])
+        return pd.MultiIndex.from_arrays(arrays, names=names)
 
     def _build_series_from(self, values: list, index_obj) -> pd.Series:
         return _reconstruct(values, index_obj, self._raw_fields(), self._namespace)

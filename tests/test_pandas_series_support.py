@@ -439,8 +439,7 @@ class TestLoc:
         ns["s"] = pd.Series([10, 20, 30], index=["a", "b", "c"])
         obj = ns.get_object("s")
         result = obj.loc["b"]
-        assert list(result.values) == [20]
-        assert list(result.index) == ["b"]
+        assert result == 20
 
     def test_loc_duplicate_labels_returns_all(self, ns):
         ns["s"] = pd.Series([1, 2, 3], index=["a", "a", "b"])
@@ -460,6 +459,60 @@ class TestLoc:
         obj = ns.get_object("s")
         with pytest.raises(TypeError):
             obj.loc[1]
+
+
+class TestSeriesMultiIndexRead:
+    def _setup(self, ns):
+        idx = pd.MultiIndex.from_tuples([("a", 1), ("a", 2), ("b", 1)], names=["L0", "L1"])
+        ns["ms"] = pd.Series([10, 20, 30], index=idx)
+        return ns["ms"]
+
+    def test_iloc_int_returns_scalar(self, ns):
+        obj = self._setup(ns)
+        assert obj.iloc[0] == 10
+        assert obj.iloc[2] == 30
+
+    def test_iloc_slice_returns_series_with_multiindex(self, ns):
+        obj = self._setup(ns)
+        result = obj.iloc[0:2]
+        assert list(result.values) == [10, 20]
+        assert isinstance(result.index, pd.MultiIndex)
+        assert list(result.index) == [("a", 1), ("a", 2)]
+
+    def test_loc_full_tuple_one_match_returns_scalar(self, ns):
+        obj = self._setup(ns)
+        assert obj.loc[("a", 1)] == 10
+        assert obj.loc[("b", 1)] == 30
+
+    def test_loc_depth1_prefix_returns_series(self, ns):
+        obj = self._setup(ns)
+        result = obj.loc["a"]
+        assert list(result.values) == [10, 20]
+        assert list(result.index) == [("a", 1), ("a", 2)]
+
+    def test_loc_missing_label_raises_keyerror(self, ns):
+        obj = self._setup(ns)
+        with pytest.raises(KeyError):
+            obj.loc["zzz"]
+
+    def test_loc_slice_rejected_points_to_value(self, ns):
+        obj = self._setup(ns)
+        with pytest.raises(TypeError) as exc:
+            obj.loc["a":"b"]
+        assert ".value" in str(exc.value)
+
+    def test_loc_full_tuple_duplicate_returns_series(self, ns):
+        idx = pd.MultiIndex.from_tuples([("a", 1), ("a", 1), ("b", 2)], names=["L0", "L1"])
+        ns["dup"] = pd.Series([10, 20, 30], index=idx)
+        result = ns["dup"].loc[("a", 1)]
+        assert isinstance(result, pd.Series)
+        assert list(result.values) == [10, 20]
+
+    def test_loc_list_rejected_points_to_value(self, ns):
+        obj = self._setup(ns)
+        with pytest.raises(TypeError) as exc:
+            obj.loc[["a", "b"]]
+        assert ".value" in str(exc.value)
 
 
 class TestExtend:
@@ -617,7 +670,7 @@ class TestPublicAPI:
         assert result.name == "temp"
         assert str(result.dtype) == "float64"
         sub = obj.loc["tue"]
-        assert list(sub.values) == [37.0]
+        assert sub == 37.0
 
 
 class TestScalarElementValidation:
