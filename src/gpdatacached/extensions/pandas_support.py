@@ -259,6 +259,15 @@ def _build_levels_index(fields: dict, namespace, prefix: str = "") -> "pd.Index 
     return pd.MultiIndex.from_arrays(arrays, names=names)
 
 
+def _build_columns_index(fields: dict, column_names) -> "pd.Index | pd.MultiIndex | list":
+    """Build the DataFrame column index. MultiIndex (with level names) when
+    ``~columns_names`` is present, else the plain column-name list."""
+    if "~columns_names" in fields:
+        col_names = _decode_scalar(fields["~columns_names"])
+        return pd.MultiIndex.from_tuples(list(column_names), names=col_names)
+    return list(column_names)
+
+
 def _reconstruct_series(
     values: list,
     index_obj,
@@ -537,11 +546,7 @@ class DataFrameCodec(GPDCContainerCodec):
             col_key = encode_key(col)
             values = decode_element(fields[col_key], namespace).deepcopy()
             data_dict[col] = _reconstruct_column(values, index_obj, fields, col, namespace)
-        if "~columns_names" in fields:
-            col_names = _decode_scalar(fields["~columns_names"])
-            columns = pd.MultiIndex.from_tuples(list(column_names), names=col_names)
-        else:
-            columns = list(column_names)
+        columns = _build_columns_index(fields, column_names)
         return pd.DataFrame(data_dict, columns=columns, index=index_obj)
 
     @classmethod
@@ -678,6 +683,27 @@ class DataFrameObject(GPDCContainerObject):
 
     def _column_names(self) -> tuple:
         return _decode_scalar(self._redis().hget(self.raw_key, "~columns"))
+
+    def _columns_names_or_none(self):
+        raw = self._redis().hget(self.raw_key, "~columns_names")
+        return _decode_scalar(raw) if raw else None
+
+    def _select_one_series(self, col, fields) -> pd.Series:
+        col_list_obj = self._get_column_list(col)
+        values = col_list_obj.deepcopy() if col_list_obj is not None else []
+        index_obj = self._build_full_row_index()
+        return _reconstruct_column(values, index_obj, fields, col, self._namespace)
+
+    def _select_columns(self, col_list) -> pd.DataFrame:
+        fields = self._raw_fields()
+        index_obj = self._build_full_row_index()
+        data = {}
+        for c in col_list:
+            col_list_obj = self._get_column_list(c)
+            values = col_list_obj.deepcopy() if col_list_obj is not None else []
+            data[c] = _reconstruct_column(values, index_obj, fields, c, self._namespace)
+        columns = _build_columns_index(fields, col_list)
+        return pd.DataFrame(data, columns=columns, index=index_obj)
 
     def _index_kind(self) -> str:
         return _decode_scalar(self._redis().hget(self.raw_key, "~index_kind"))
@@ -915,14 +941,49 @@ class DataFrameObject(GPDCContainerObject):
     def __iter__(self):
         return iter(self._column_names())
 
-    def __getitem__(self, col) -> pd.Series:
-        columns = self._column_names()
+    def __getitem__(self, col):
+        fields = self._raw_fields()
+        columns = self._column_names()  # tuple of scalars (single) or tuples (multi)
+        col_names = self._columns_names_or_none()
+        if isinstance(col, list):
+            if col_names is not None:
+                nlevels = len(col_names)
+                matched = []
+                missing = []
+                for item in col:
+                    key_tuple = item if isinstance(item, tuple) else (item,)
+                    k = len(key_tuple)
+                    hits = [c for c in columns if tuple(c[:k]) == key_tuple] if k <= nlevels else []
+                    if hits:
+                        matched.extend(hits)
+                    else:
+                        missing.append(item)
+                # List misses raise a bare KeyError (pandas-consistent); the scalar branch
+                # adds a depth message because the failure mode there is less obvious.
+                if missing:
+                    raise KeyError(missing)
+                return self._select_columns(matched)
+            missing = [c for c in col if c not in columns]
+            if missing:
+                raise KeyError(missing)
+            return self._select_columns(col)
+        if col_names is not None:
+            nlevels = len(col_names)
+            key_tuple = col if isinstance(col, tuple) else (col,)
+            k = len(key_tuple)
+            if k > nlevels:
+                raise KeyError(f"column key depth {k} exceeds column levels {nlevels}")
+            matched = [c for c in columns if tuple(c[:k]) == key_tuple]
+            if not matched:
+                raise KeyError(col)
+            if k == nlevels:
+                # full-depth: duplicate column tuples are rejected at create → exactly one match
+                return self._select_one_series(matched[0], fields)
+            return self._select_columns(matched)
+        # single-level: exact scalar key
         if col not in columns:
             raise KeyError(col)
-        data_list = self._get_column_list(col)
-        values = data_list.deepcopy() if data_list is not None else []
-        index_obj = self._build_full_row_index()
-        return _reconstruct_column(values, index_obj, self._raw_fields(), col, self._namespace)
+        return self._select_one_series(col, fields)
 
     def __setitem__(self, col, values) -> None:
         """Add or replace a column. ``len(values)`` must equal the current row count."""

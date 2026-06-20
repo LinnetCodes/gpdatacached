@@ -373,6 +373,13 @@ class TestReadApi:
         with pytest.raises(KeyError):
             obj["zzz"]
 
+    def test_single_level_list_selection_returns_dataframe(self, ns):
+        ns["sl"] = pd.DataFrame({"x": [1, 2], "y": [3, 4], "z": [5, 6]})
+        sub = ns.get_object("sl")[["x", "z"]]
+        assert isinstance(sub, pd.DataFrame)
+        assert list(sub.columns) == ["x", "z"]
+        assert list(sub["x"]) == [1, 2]
+
 
 class TestDfILoc:
     def test_iloc_int_returns_row_series(self, ns):
@@ -1144,3 +1151,82 @@ class TestDataFrameColumnMultiIndexStorage:
         assert list(result.columns) == list(original.columns)
         assert result.columns.names == ("L0", "L1", "L2")
         assert list(result[("b", "x", 3)]) == [30]
+
+
+class TestDataFrameColumnMultiIndexGetitem:
+    def _make(self, ns):
+        cols = pd.MultiIndex.from_tuples([("a", "x"), ("a", "y"), ("b", "x")], names=["L0", "L1"])
+        ns["cdf"] = pd.DataFrame([[1, 2, 3], [4, 5, 6]], columns=cols)
+        return ns.get_object("cdf")
+
+    def test_full_tuple_returns_series(self, ns):
+        obj = self._make(ns)
+        s = obj[("a", "x")]
+        assert isinstance(s, pd.Series)
+        assert list(s) == [1, 4]
+
+    def test_level0_scalar_returns_sub_dataframe(self, ns):
+        obj = self._make(ns)
+        sub = obj["a"]
+        assert isinstance(sub, pd.DataFrame)
+        assert list(sub.columns) == [("a", "x"), ("a", "y")]
+        assert list(sub[("a", "x")]) == [1, 4]
+
+    def test_partial_tuple_returns_sub_dataframe(self, ns):
+        cols = pd.MultiIndex.from_tuples([("a", "x", 1), ("a", "x", 2), ("a", "y", 1)], names=["L0", "L1", "L2"])
+        ns["c3"] = pd.DataFrame([[1, 2, 3]], columns=cols)
+        sub = ns.get_object("c3")[("a", "x")]
+        assert isinstance(sub, pd.DataFrame)
+        assert list(sub.columns) == [("a", "x", 1), ("a", "x", 2)]
+
+    def test_list_of_tuples_returns_sub_dataframe(self, ns):
+        obj = self._make(ns)
+        sub = obj[[("a", "x"), ("b", "x")]]
+        assert isinstance(sub, pd.DataFrame)
+        assert list(sub.columns) == [("a", "x"), ("b", "x")]
+
+    def test_list_of_level0_scalars_returns_sub_dataframe(self, ns):
+        obj = self._make(ns)
+        sub = obj[["a", "b"]]
+        assert isinstance(sub, pd.DataFrame)
+        assert list(sub.columns) == [("a", "x"), ("a", "y"), ("b", "x")]
+
+    def test_missing_full_tuple_raises_keyerror(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(KeyError):
+            obj[("zzz", "q")]
+
+    def test_unknown_level0_scalar_raises_keyerror(self, ns):
+        obj = self._make(ns)
+        with pytest.raises(KeyError):
+            obj["zzz"]
+
+    def test_over_depth_tuple_raises_keyerror(self, ns):
+        obj = self._make(ns)  # 2-level columns
+        with pytest.raises(KeyError):
+            obj[("a", "x", "extra")]
+
+    def test_empty_list_returns_empty_dataframe(self, ns):
+        obj = self._make(ns)  # 2-level column MultiIndex
+        sub = obj[[]]
+        assert isinstance(sub, pd.DataFrame)
+        assert len(sub.columns) == 0
+        assert sub.columns.nlevels == 2
+        assert sub.columns.names == ("L0", "L1")
+        assert len(sub) == len(obj)
+
+    def test_single_level_empty_list(self, ns):
+        ns["sl"] = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+        sub = ns.get_object("sl")[[]]
+        assert isinstance(sub, pd.DataFrame)
+        assert list(sub.columns) == []
+
+    def test_mixed_type_list_selection(self, ns):
+        obj = self._make(ns)  # columns [("a","x"),("a","y"),("b","x")]
+        sub = obj[[("a", "x"), "b"]]
+        assert list(sub.columns) == [("a", "x"), ("b", "x")]
+
+    def test_list_over_depth_item_raises_keyerror(self, ns):
+        obj = self._make(ns)  # 2-level columns
+        with pytest.raises(KeyError):
+            obj[[("a", "x", "extra")]]
