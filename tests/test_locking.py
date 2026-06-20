@@ -321,3 +321,23 @@ class TestGPDCDataObjectLock:
         held = obj.try_lock()
         assert held is not None
         held.release()
+
+
+class TestPublicExports:
+    def test_lock_acquisition_timeout_exported(self):
+        from gpdatacached import LockAcquisitionTimeout
+        from gpdatacached.exceptions import LockAcquisitionTimeout as Exc
+
+        assert LockAcquisitionTimeout is Exc
+
+    def test_lock_config_inconsistent_exported(self):
+        from gpdatacached import GPDCLockConfigInconsistentError
+        from gpdatacached.exceptions import GPDCLockConfigInconsistentError as Exc
+
+        assert GPDCLockConfigInconsistentError is Exc
+
+    def test_reset_domain_config_exported(self):
+        from gpdatacached import reset_domain_config
+        from gpdatacached.domain import reset_domain_config as Fn
+
+        assert reset_domain_config is Fn

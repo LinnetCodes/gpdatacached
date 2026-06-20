@@ -9,9 +9,11 @@ from .config import GPDCDomainConfig, GPDCNamespaceConfig
 from .exceptions import (
     CanonicalObjectReferencedError,
     CyclicReferenceError,
+    GPDCLockConfigInconsistentError,
+    LockAcquisitionTimeout,
     ObjectGoneError,
 )
-from .domain import GPDCDomain
+from .domain import GPDCDomain, reset_domain_config
 from .keys import make_uri, uri_to_redis_key, validate_object_name
 from .namespace import GPDCNamespace
 from .types import GPDCTypeRegistry
@@ -45,6 +47,8 @@ __all__ = [
     "CanonicalObjectReferencedError",
     "CyclicReferenceError",
     "ObjectGoneError",
+    "GPDCLockConfigInconsistentError",
+    "LockAcquisitionTimeout",
     "GPDCDomain",
     "GPDCNamespace",
     "GPDCDomainConfig",
@@ -71,4 +75,5 @@ __all__ = [
     "validate_object_name",
     "make_uri",
     "uri_to_redis_key",
+    "reset_domain_config",
 ]
