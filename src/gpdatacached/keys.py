@@ -41,6 +41,16 @@ def make_ref_key(domain: str, namespace: str, name: str) -> str:
     return f"gpdc:{domain}:{namespace}:ref:{name}"
 
 
+def make_lock_key(domain: str, namespace: str, name: str) -> str:
+    """Return the Redis key for a per-object distributed lock."""
+    return f"gpdc:{domain}:{namespace}:lock:{name}"
+
+
+def make_lock_notify_key(domain: str, namespace: str, name: str) -> str:
+    """Return the Redis key for the BLPOP wake-up queue of a lock."""
+    return f"gpdc:{domain}:{namespace}:locknotify:{name}"
+
+
 def make_object_key_prefix(domain: str, namespace: str) -> str:
     """Return the prefix for all object keys in a namespace."""
     return f"gpdc:{domain}:{namespace}:obj:"

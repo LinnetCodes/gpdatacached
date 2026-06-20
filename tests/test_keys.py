@@ -4,6 +4,8 @@ from gpdatacached.keys import (
     GLOBAL_DOMAINS_KEY,
     make_domain_meta_key,
     make_domain_namespaces_key,
+    make_lock_key,
+    make_lock_notify_key,
     make_namespace_meta_key,
     make_object_key,
     make_object_key_prefix,
@@ -218,3 +220,11 @@ class TestParseRefEncoded:
         from gpdatacached.keys import parse_ref_encoded
 
         assert parse_ref_encoded("") is None
+
+
+class TestLockKeyBuilders:
+    def test_lock_key(self):
+        assert make_lock_key("mydomain", "myns", "myobj") == "gpdc:mydomain:myns:lock:myobj"
+
+    def test_lock_notify_key(self):
+        assert make_lock_notify_key("mydomain", "myns", "myobj") == "gpdc:mydomain:myns:locknotify:myobj"
