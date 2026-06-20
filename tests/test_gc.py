@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import contextlib
+import logging
+import threading
 from unittest.mock import patch, MagicMock
 
 from gpdatacached.config import GPDCDomainConfig
 from gpdatacached.domain import GPDCDomain
 from gpdatacached.gc import run_gc_for_namespace
 from gpdatacached.keys import (
+    make_domain_meta_key,
+    make_lock_key,
+    make_lock_notify_key,
     make_object_key,
     make_raw_key,
     make_ref_key,
@@ -392,3 +398,95 @@ class TestGCWithCustomContainerType:
 
         run_gc_for_namespace(clean_redis, DOMAIN, NS)
         assert clean_redis.hexists(target_ref_key, "custom_obj")
+
+
+@contextlib.contextmanager
+def _capture_log(name):
+    """Capture log records from the named logger at DEBUG level."""
+    logger = logging.getLogger(name)
+    records = []
+
+    class _Handler(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _Handler()
+    old_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+
+
+class TestGCLockedBehavior:
+    def test_gc_skips_locked_object(self, ns, clean_redis):
+        """When a user holds a lock on an object, GC skips it (logs debug)."""
+        ns["x"] = [1, 2, 3]
+        # Make x's raw_key orphaned (delete obj + ref but keep raw).
+        clean_redis.delete(make_object_key(DOMAIN, NS, "x"))
+        clean_redis.delete(make_ref_key(DOMAIN, NS, "x"))
+
+        # Hold the lock directly via the locking module.
+        from gpdatacached.locking import try_lock
+
+        lock_key = make_lock_key(DOMAIN, NS, "x")
+        notify_key = make_lock_notify_key(DOMAIN, NS, "x")
+        held = try_lock(clean_redis, lock_key, notify_key, ttl=30)
+        assert held is not None
+
+        try:
+            # Shorten GC lock wait so the test fails fast if GC blocks instead of skipping.
+            clean_redis.hset(make_domain_meta_key(DOMAIN), "gc_lock_wait_seconds", "1")
+            with _capture_log("gpdatacached.gc") as logs:
+                ns.domain.run_gc(namespace=NS)
+            # x's raw_key still exists because GC skipped it.
+            assert clean_redis.exists(make_raw_key(DOMAIN, NS, "x"))
+            # Log contains skip message.
+            assert any("lock contention" in r.message for r in logs)
+        finally:
+            held.release()
+
+    def test_gc_processes_unlocked_orphan(self, ns, clean_redis):
+        """Without lock contention, GC still removes orphans as before."""
+        ns["x"] = [1, 2, 3]
+        raw_x = make_raw_key(DOMAIN, NS, "x")
+        clean_redis.delete(make_object_key(DOMAIN, NS, "x"))
+        clean_redis.delete(make_ref_key(DOMAIN, NS, "x"))
+
+        assert clean_redis.exists(raw_x)
+        ns.domain.run_gc(namespace=NS)
+        assert not clean_redis.exists(raw_x)
+
+    def test_gc_does_not_deadlock_with_user(self, ns, clean_redis):
+        """User holds lock on canonical 'a'; GC processes others without hanging."""
+        ns["a"] = [1]
+        ns["b"] = [2]
+        ns["c"] = [3]
+
+        obj_a = ns.get_object("a")
+        # Make b's raw orphaned for GC to clean up while a is locked.
+        clean_redis.delete(make_object_key(DOMAIN, NS, "b"))
+        clean_redis.delete(make_ref_key(DOMAIN, NS, "b"))
+
+        # GC reads gc_lock_wait_seconds from Redis meta (not from _config),
+        # so we write directly to meta to shorten the wait in this test.
+        clean_redis.hset(make_domain_meta_key(DOMAIN), "gc_lock_wait_seconds", "1")
+
+        gc_completed = threading.Event()
+
+        def run_gc():
+            ns.domain.run_gc(namespace=NS)
+            gc_completed.set()
+
+        with obj_a.lock(timeout=2.0):
+            t = threading.Thread(target=run_gc)
+            t.start()
+            # GC should complete even though user holds lock on a.
+            assert gc_completed.wait(timeout=5.0), "GC deadlocked or hung"
+            # b's raw should be cleaned up.
+            assert not clean_redis.exists(make_raw_key(DOMAIN, NS, "b"))
+
+        t.join(timeout=2.0)
