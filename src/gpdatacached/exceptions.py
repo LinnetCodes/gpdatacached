@@ -52,3 +52,61 @@ class CyclicReferenceError(GPDCError):
             f"Break the cycle before storing, or store the shared container "
             f"separately and reference it by name."
         )
+
+
+class GPDCLockError(GPDCError):
+    """Base class for all lock-acquisition/ownership errors."""
+
+
+class LockAcquisitionTimeout(GPDCLockError):
+    """Raised when ``obj.lock()`` cannot acquire the lock within ``timeout``."""
+
+    def __init__(self, lock_key: str, timeout: float) -> None:
+        self.lock_key = lock_key
+        self.timeout = timeout
+        super().__init__(f"Acquiring lock {lock_key!r} timed out after {timeout}s")
+
+
+class LockOwnershipError(GPDCLockError):
+    """Raised when releasing a lock whose Redis token no longer matches.
+
+    Internal: ``HeldLock.release()`` swallows this case (logs a warning) instead
+    of raising, because the caller has no recovery path. The exception class is
+    kept for callers that wrap release logic themselves.
+    """
+
+
+class GPDCLockConfigInconsistentError(GPDCError):
+    """Raised at GPDCDomain construction when the lock config in the explicit
+    ``GPDCDomainConfig`` conflicts with values already stored in Redis domain
+    meta.
+
+    Note: extends ``GPDCError`` directly (not ``GPDCLockError``) because this
+    is a configuration error surfaced before any lock acquisition is attempted.
+    """
+
+    def __init__(
+        self,
+        domain: str,
+        conflicts: dict[str, tuple[str, str]],
+        legal_values: dict[str, str],
+    ) -> None:
+        self.domain = domain
+        self.conflicts = conflicts
+        self.legal_values = legal_values
+
+        lines = [f"Lock config for domain {domain!r} inconsistent with Redis:"]
+        for field, (redis_val, config_val) in conflicts.items():
+            lines.append(f"  conflict: {field}: redis={redis_val!r}, your config={config_val!r}")
+        lines.append("Legal values currently in Redis domain meta:")
+        if legal_values:
+            for field, val in legal_values.items():
+                lines.append(f"  {field} = {val}")
+        else:
+            lines.append("  (none)")
+        lines.append(
+            "To change these values, call "
+            "gpdatacached.reset_domain_config(name, config) "
+            "before constructing GPDCDomain."
+        )
+        super().__init__("\n".join(lines))
