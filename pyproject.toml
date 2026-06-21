@@ -23,7 +23,6 @@ classifiers = [
 ]
 dependencies = [
     "gpconfig>=0.3.0",
-    "gpclog>=0.2.0",
     "pydantic>=2.0",
     "redis>=5.0",
 ]
