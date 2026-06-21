@@ -116,8 +116,9 @@ ns["alias"] = ns["matrix"]   # 绑定到同一 canonical owner 的别名
 # 6. 生命周期控制。
 ns["temp"] = "x"
 obj = ns.get_object("temp")
-obj.expire_in(60)            # 要求 cache_mode 为 'ttl'
-obj.persist()                # 切换为 permanent
+obj.update_cache_mode_and_ttl("ttl", 60)   # 切换为 ttl，TTL 为 60 秒
+obj.expire_in(120)                         # 调整 TTL（要求 cache_mode='ttl'）
+obj.persist()                              # 切换回 permanent
 
 domain.close()
 ```
@@ -463,7 +464,7 @@ GPDC 类型 `collection:list`，底层为 Redis list。
 
 不支持（会抛 `NotImplementedError`）：`+`、`*` 及其反向形式 —— 请使用 `list(obj) + other` 进行拼接，必要时再重新赋值。
 
-`__getitem__` 不支持切片索引；请先转换为 Python list（`list(obj)[start:stop]`）。
+`__setitem__` 和 `__delitem__` 不支持切片索引（请先转换为 Python list：`list(obj)[start:stop]`）。`__getitem__` 支持切片，返回解码后的 Python list。
 
 ### `DictObject`
 
@@ -653,7 +654,7 @@ class CyclicReferenceError(GPDCError)
 ### `LockAcquisitionTimeout`
 
 ```python
-class LockAcquisitionTimeout(GPDCLockError, GPDCError)
+class LockAcquisitionTimeout(GPDCLockError)
 ```
 
 当 `obj.lock()` 在配置的 `timeout` 内未能获取到锁时抛出。携带 `.lock_key` 和 `.timeout`。详见[多进程加锁](./locking.md)。
@@ -680,7 +681,7 @@ class GPDCLockConfigInconsistentError(GPDCError)
 | `"ttl"` | `> 0` | 固定过期。对象在 `ttl` 秒后过期一次。 |
 | `"sliding"` | `> 0` | 滑动窗口。每次变更都会把 TTL 重置为 `ttl` 秒。 |
 
-**校验规则：** `"ttl"` 和 `"sliding"` 严格要求 `ttl > 0`；`"permanent"` 要求 `ttl == 0`。
+**校验规则：** `"ttl"` 和 `"sliding"` 严格要求 `ttl > 0`；`"permanent"` 接受任意 `ttl >= 0`（该值会被静默忽略 —— 实际应用 Redis `PERSIST`，因此永久对象永不过期）。
 
 **策略来源。** 创建新对象时，策略按如下优先级确定：
 

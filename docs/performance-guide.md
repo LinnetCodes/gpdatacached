@@ -53,13 +53,13 @@ A quick reference. "RTT" = Redis round-trip. N = number of elements; counts are 
 
 | Operation | Cost class | Notes (verified against source) |
 |---|---|---|
-| `ns[k] = scalar` | O(1), ~3 RTT (new) / ~4 RTT (overwrite) | `TYPE` (resolve) + `HSET` (metadata) + one TTL apply (`PERSIST`/`EXPIRE`). Overwrite additionally re-reads the existing meta during resolve. |
+| `ns[k] = scalar` | O(1), ~5 RTT (new) / ~4 RTT (overwrite) | `TYPE` (resolve) + `HGET` ×2 (namespace-default policy) + `HSET` (metadata) + one TTL apply (`PERSIST`/`EXPIRE`). Overwrite re-uses the existing policy (no namespace-default reads) and instead re-reads the existing meta during resolve (`HGETALL`). |
 | `ns[k]` (scalar read) | O(1), ~3 RTT | `_resolve_binding` (`TYPE` + `HGETALL`) **plus** the scalar `.value` getter re-loads meta (`HGETALL`). |
-| `ns[k] = [a, b, c]` (flat, scalar-element container) | O(N) local encode, **O(1)** data-write RTT | One `encode_session` + one bulk `create_raw` (single `RPUSH`/`HSET`/`SADD` carrying all elements) + metadata `HSET` + TTL applies on the obj/raw/ref keys (≈ 6 RTT total, independent of N for scalar elements). |
+| `ns[k] = [a, b, c]` (flat, scalar-element container) | O(N) local encode, **O(1)** data-write RTT | One `encode_session` + one bulk `create_raw` (single `RPUSH`/`HSET`/`SADD` carrying all elements) + `HGET` ×2 (namespace-default policy) + metadata `HSET` + TTL applies on the obj/raw/ref keys (≈ 8 RTT total, independent of N for scalar elements). |
 | `ns[k] = [[...], ...]` (nested container) | O(**nested-container count**) RTT + O(N) local | Each nested container becomes one anonymous object (meta `HSET` + its own `create_raw` + `HINCRBY` ref + TTL applies ≈ 5–6 RTT each). Depth does **not** multiply — it is the total node count that scales. |
 | `container.append(x)` / `container[k] = v` (scalar element, non-sliding) | O(1), ~5–6 RTT | `HGETALL` (policy) + data write (`RPUSH`/`HSET`) + `_touch` (`LLEN`/`HLEN` + `HGETALL` + `HSET`). **Add the sliding-subtree walk if `cache_mode="sliding"`** (§3); **add ~5–6 RTT if the element is itself a container** (anonymous-object creation). |
 | `iter(ns)` / `len(ns)` | O(N), batched SCAN | A few RTT per ~100-key SCAN page (`len` delegates to `iter`). Don't put in a hot loop. |
-| `k in ns` | O(1), 1–3 RTT | Direct `TYPE` + `HGETALL` on the named key — **not** a SCAN. Does not scale with namespace size. |
+| `k in ns` | O(1), 1–4 RTT | Direct `TYPE` + `HGETALL` on the named key (1–2 RTT for owner bindings); references add a `GET` + another `TYPE` (up to 4 RTT for aliases). **Not** a SCAN. Does not scale with namespace size. |
 | `del ns[k]` (container owner) | O(owned subtree size) | `_teardown_owner_container` releases each nested ref (`HDEL`) and cascade-deletes orphaned anonymous children; ~1+ RTT per node. Raises `CanonicalObjectReferencedError` if live alias referrers exist — delete those first. |
 | `ns[k] = new_container` (overwrite) | O(old + new subtree) | Full teardown of the old + full encode of the new — see [§8](#8-container-overwrite-vs-in-place-mutation). |
 | `obj.lock()` + release (uncontended) | +2 RTT | `SET NX EX` + one Lua release script. |
@@ -82,7 +82,7 @@ When a self-owned container in sliding mode is mutated, GPDC calls `refresh_ttl(
 2. Recursively descends every **owned child**: per child it does a `HGETALL` (to read that child's own policy) and re-applies its TTL to its keys.
 3. Returns only when the whole owned subtree has been walked.
 
-So the cost of **one** `append` on a sliding list that owns 1000 anonymous children is **thousands** of Redis round-trips — a `HGETALL` + TTL re-apply per owned child (partly pipelined per tree level, but still O(subtree size)). In a frequent-write loop this multiplies your apparent write cost by the subtree size.
+So the cost of **one** `append` on a sliding list that owns 1000 anonymous children is **thousands** of Redis round-trips — a `HGETALL` + TTL re-apply per owned child (each step is an individual round-trip; this path is not pipelined, unlike `persist()`/`update_cache_mode_and_ttl()` which batch one pipeline per tree level). In a frequent-write loop this multiplies your apparent write cost by the subtree size.
 
 ```mermaid
 graph TD
@@ -126,7 +126,7 @@ Every nested container is materialised as a **separate anonymous object** with i
 - A referrer-set increment (`HINCRBY`).
 - A TTL application (`EXPIRE` / `PERSIST`).
 
-On **read**, `.value` recursively walks the same tree, decoding each anonymous object.
+On **read**, `.value` loads each anonymous child's meta (one `HGETALL` per `ref:` element) and returns a live `GPDCContainerObject` handle for each — it does **not** recursively decode nested data. Use `.deepcopy()` if you need the fully decoded Python structure (it recursively materialises every level).
 
 On **mutation**, the sliding-refresh and cascade-delete costs scale with the subtree size (see [§3](#3-sliding-ttl-overuse) and [§10](#10-reference-churn)).
 
@@ -263,7 +263,7 @@ The total cost is **O(old subtree size + new subtree size)**. For a large list t
 
 `iter(ns)` and `len(ns)` are **SCAN-based** and O(N) in the number of named objects in the namespace. They are batched (a pipeline per SCAN page) but still scale linearly. (`len(ns)` delegates to `iter(ns)`.)
 
-> Note: `k in ns` is **not** in this category — it resolves the named key directly (`TYPE` + `HGETALL`, or `GET` + `TYPE` + `HGETALL` for a reference). It is O(1) and 1–3 RTTs per check, regardless of namespace size. It is only worth replacing if you are doing it in a tight loop where even 1–3 RTTs per iteration adds up.
+> Note: `k in ns` is **not** in this category — it resolves the named key directly (`TYPE` + `HGETALL`, or `GET` + `TYPE` + `HGETALL` for a reference). It is O(1) and 1–4 RTTs per check, regardless of namespace size. It is only worth replacing if you are doing it in a tight loop where even 1–4 RTTs per iteration adds up.
 
 ### Anti-pattern
 

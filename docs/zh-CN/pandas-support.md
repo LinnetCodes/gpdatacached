@@ -213,8 +213,8 @@ GPDC 类型 `collection:pandas_dataframe`。底层是一个 Redis hash：列值�
 | `df[(a, b, ...)]` | 全深度元组 → 该单列作为 `pd.Series`。 |
 | `df[level0]` 或 `df[(a, b)]` | 部分深度前缀 → 由匹配列组成的子 `pd.DataFrame`。 |
 | `df[list_of_keys]` | 子 `pd.DataFrame`（每个 key 可以是标量前缀或全深度元组）。 |
-| `df[col_tuple] = values` | 新增或替换全深度列。对 MultiIndex 列的部分/列表列变更会被拒绝并抛出 `TypeError` —— 请调用 `.value`。 |
-| `del df[col_tuple]` | 删除全深度列。对 MultiIndex 列的部分/列表删除会被拒绝并抛出 `TypeError` —— 请调用 `.value`。 |
+| `df[col_tuple] = values` | 新增或替换全深度列。部分深度元组会抛出 `ValueError`；非元组或 list key 会抛出 `TypeError` —— 请调用 `.value`。 |
+| `del df[col_tuple]` | 删除全深度列。部分深度元组会抛出 `ValueError`；非元组或 list key 会抛出 `TypeError` —— 请调用 `.value`。 |
 
 **协议方法**
 

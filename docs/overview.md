@@ -57,7 +57,7 @@ Six principles shape the library:
 | 3 | **Scalars native, containers live** | Scalars return Python values on read; containers return live objects so mutations hit Redis directly. |
 | 4 | **Reference sharing is bounded by namespace** | Cross-namespace references are forbidden, so a namespace can be bulk-deleted safely. |
 | 5 | **Lifecycle and concurrency are explicit** | Cache mode lives on each object; locking is opt-in and never automatic. |
-| 6 | **Codec-driven extensibility** | Every type is a `(python_type, object_class, codec_class)` triple registered with a global registry. |
+| 6 | **Codec-driven extensibility** | Every type is a `(python_type, gpdc_type, object_class, codec_class)` entry (plus an optional `priority`) registered with a global registry. |
 
 Principle **#3** is the most distinctive: it is what makes the library feel like a local data structure instead of a remote cache.
 
@@ -79,7 +79,7 @@ Principle **#3** is the most distinctive: it is what makes the library feel like
 
 ## 3. Architecture
 
-`gpdatacached` is organised in five layers. Each layer depends only on the layers below it.
+`gpdatacached` is organised in five layers. Each layer is meant to depend only on the layers below it; `namespace` (Layer 2) is a documented exception that reaches up to the Layer 3 type registry, because it needs to resolve codecs at encode/decode time.
 
 ```mermaid
 graph TD
@@ -222,7 +222,7 @@ graph LR
         ORF["ref:matrix<br/>HASH referrers"]
     end
     subgraph Alias["Reference binding (name = 'alias')"]
-        AO["obj:alias<br/>STRING = &quot;ref:obj:matrix&quot;"]
+        AO["obj:alias<br/>STRING = &quot;ref:gpdc:{domain}:{ns}:obj:matrix&quot;<br/>(full canonical key, prefix omitted in diagram)"]
     end
     subgraph Anon["Anonymous child (name = '~anon:uuid')"]
         ANM["obj:~anon:uuid<br/>HASH metadata (owner = 'matrix')"]
@@ -394,7 +394,7 @@ Anything you can encode, you can store. The pattern is always:
 
 1. Write a codec subclass of `GPDCScalarCodec` (single value) or `GPDCContainerCodec` (raw key with elements).
 2. Write an object subclass of `GPDCScalarObject` or `GPDCContainerObject` with a unique `TYPE`.
-3. Register a `(python_type, gpdc_type, object_class, codec_class)` tuple with `GPDCTypeRegistry.register(...)`.
+3. Register a `(python_type, gpdc_type, object_class, codec_class)` entry (plus an optional `priority`) with `GPDCTypeRegistry.register(...)`.
 
 From then on, `ns["x"] = MyValue()` works just like a built-in type, including nested references, lifecycle, and locking.
 

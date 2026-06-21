@@ -116,8 +116,9 @@ ns["alias"] = ns["matrix"]   # alias binding to the same canonical owner
 # 6. Lifecycle control.
 ns["temp"] = "x"
 obj = ns.get_object("temp")
-obj.expire_in(60)            # cache_mode must be 'ttl'
-obj.persist()                # switch to permanent
+obj.update_cache_mode_and_ttl("ttl", 60)   # switch to ttl with a 60s TTL
+obj.expire_in(120)                          # adjust the TTL (requires cache_mode='ttl')
+obj.persist()                               # switch back to permanent
 
 domain.close()
 ```
@@ -463,7 +464,7 @@ Implements the full `MutableSequence` interface plus:
 
 Unsupported (raise `NotImplementedError`): `+`, `*` and their reflected forms — use `list(obj) + other` to concatenate, then re-assign if needed.
 
-Slice indexing is unsupported on `__getitem__`; convert to a Python list first (`list(obj)[start:stop]`).
+Slice indexing is unsupported on `__setitem__` and `__delitem__` (convert to a Python list first: `list(obj)[start:stop]`). `__getitem__` does support slices and returns a decoded Python list.
 
 ### `DictObject`
 
@@ -653,7 +654,7 @@ Raised during encoding when a container references itself (directly or transitiv
 ### `LockAcquisitionTimeout`
 
 ```python
-class LockAcquisitionTimeout(GPDCLockError, GPDCError)
+class LockAcquisitionTimeout(GPDCLockError)
 ```
 
 Raised when `obj.lock()` cannot acquire the lock within the configured `timeout`. Carries `.lock_key` and `.timeout`. See [Multi-Process Locking](./locking.md).
@@ -680,7 +681,7 @@ Every object carries a `(cache_mode, ttl)` policy stored in its metadata.
 | `"ttl"` | `> 0` | Fixed expiry. The object expires once after `ttl` seconds. |
 | `"sliding"` | `> 0` | Sliding window. Every mutation refreshes the TTL back to `ttl` seconds. |
 
-**Validation rule:** `"ttl"` and `"sliding"` strictly require `ttl > 0`; `"permanent"` requires `ttl == 0`.
+**Validation rule:** `"ttl"` and `"sliding"` strictly require `ttl > 0`; `"permanent"` accepts any `ttl >= 0` (the value is silently ignored — Redis `PERSIST` is applied, so a permanent object never expires).
 
 **Policy resolution.** When a new object is created, the policy comes from (in priority order):
 

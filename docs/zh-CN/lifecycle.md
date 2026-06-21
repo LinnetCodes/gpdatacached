@@ -80,7 +80,7 @@ stateDiagram-v2
 
 策略会被严格校验：
 
-- `permanent` 要求 `ttl == 0`。
+- `permanent` 接受任何 `ttl >= 0`（该值会被静默忽略 —— 会调用 Redis `PERSIST`，因此对象永不过期）。
 - `ttl` 与 `sliding` 要求 `ttl > 0`。
 - `ttl` 永远不能为负。
 
@@ -129,7 +129,7 @@ graph TD
 | 标量 | `obj:{name}`（元信息 hash，也持有编码后的值） |
 | 容器（canonical owner） | `obj:{name}` + `raw:{name}` + `ref:{name}`（三者共享对象的 TTL） |
 
-这就是为什么容器的元信息、原始数据、引用者集合总是一起消失 —— 它们共用一个 TTL 时钟。引用（别名）绑定有自己的 `obj:` key 与自己的 TTL（独立于 canonical owner），但实际中别名会以与其他对象相同的策略创建。
+这就是为什么容器的元信息、原始数据、引用者集合总是一起消失 —— 它们共用一个 TTL 时钟。引用（别名）绑定作为普通 Redis 字符串 key 存储，创建时**不应用 TTL** —— 别名会一直存在，直到被显式删除。通过引用调用的生命周期方法（如 `expire_in`、`persist`）作用于 **canonical owner**，而非别名绑定本身。
 
 ---
 
@@ -225,7 +225,7 @@ graph TD
 
 ### 权限检查
 
-四个生命周期变更方法（`expire_in`、`expire_at`、`persist`、`update_cache_mode_and_ttl`）都会调用 `_check_owner_permission`，当 `meta.owner != self.canonical_name` 时抛出 `LifecyclePermissionError`。你不能直接变更匿名子对象的生命周期 —— 必须在拥有该子树的自持祖先上变更。
+四个生命周期变更方法（`expire_in`、`expire_at`、`persist`、`update_cache_mode_and_ttl`）都会调用 `_check_owner_permission`，当 `meta.owner` 非空且与 `self.canonical_name` 不同时抛出 `LifecyclePermissionError`。你不能直接变更匿名子对象的生命周期 —— 必须在拥有该子树的自持祖先上变更。
 
 ### `take_ownership()`
 
@@ -287,7 +287,7 @@ graph TD
 
 1. **最后一个引用者释放** —— 当引用该匿名对象的最后一个槽位被移除（元素被覆盖或 pop，或父对象自身被删除并遍历其子对象）。GPDC 检查 `has_referrers`；若为空且目标是匿名的，则级联。
 2. **自持父对象被删除** —— `del ns["matrix"]` 删除父对象绑定，然后 `_cascade_delete_anonymous` 遍历父对象存储的原始数据，释放嵌套引用，并递归删除任何成为孤儿的匿名对象。
-3. **编码会话回滚** —— 若异常从 `encode_session` 中传播出来（例如 `CyclicReferenceError`），本次会话期间创建的每个匿名对象都会被删除，让 Redis 保持原样。
+3. **编码会话回滚** —— 若异常从 `encode_session` 中传播出来（例如 `CyclicReferenceError`），本次会话期间创建的每个匿名对象都会被删除，不留孤儿匿名对象。（父容器自身的元信息 key 在编码会话开启之前写入，因此不会被这条路径回滚。）
 
 ### 重要后果
 
@@ -305,7 +305,7 @@ graph TD
 ns["alias"] = ns["original"]   # 两个名字现在都解析到同一份 canonical 数据
 ```
 
-这会写入一个 `obj:alias` 字符串 key，并把 `original` 的引用者计数加一。**不拷贝任何数据。** 引用继承 namespace 默认策略（而非 canonical owner 的策略）。
+这会写入一个 `obj:alias` 字符串 key，并把 `original` 的引用者计数加一。**不拷贝任何数据。** 引用绑定本身没有策略元信息，也没有应用 TTL —— 通过引用读取 `cache_mode`/`ttl` 返回的是 **canonical owner 的**策略，因为元信息是从 canonical key 加载的。
 
 ### 读取
 
@@ -322,9 +322,7 @@ ns["alias"] = ns["original"]   # 两个名字现在都解析到同一份 canonic
 
 ### 引用绑定自身的生命周期
 
-引用自身的 `obj:` key 有自己的 TTL（独立于 canonical owner 的 TTL）。若引用过期，canonical 数据不受影响 —— 只是别名绑定消失。
-
-`take_ownership()`（见 [§7](#7-ownership所有者模型)）是逃生口：它把引用提升为数据的所有者，此后该对象表现为自持。
+引用的 `obj:alias` key **没有应用 TTL**；它会一直存在，直到被显式删除。在引用上调用的生命周期变更方法作用于 **canonical owner**，而非别名绑定 —— 使用 `take_ownership()`（见 [§7](#7-ownership所有者模型)）可以把引用提升为自持、拥有自身策略的对象。
 
 ---
 
@@ -397,7 +395,7 @@ domain.run_gc("analytics")      # 单个 namespace
 | “`ttl` 模式带 `ttl=0` 被接受了” | 绝不会。会抛 `ValueError`。 | 严格校验：`ttl`/`sliding` 要求 `ttl > 0`。 |
 | “我的 `permanent` 对象消失了” | 有东西删除了它（`del`、namespace `clear()`、`destroy()`，或对孤儿匿名对象的 GC）。 | `permanent` 只意味着无 TTL，并非永生。 |
 | “我把祖先改成 `permanent`，但某个子对象仍有 TTL” | 传播只抵达**所属**子对象。 | 被引用但**不被**祖先拥有的子对象保留自身策略。 |
-| “写入中途崩溃后我的数据没了” | 编码会话回滚了失败写入期间创建的所有匿名对象。 | 这是有意为之：失败的写入让 Redis 保持原样。 |
+| “写入中途崩溃后我的数据没了” | 编码会话回滚了失败写入期间创建的所有匿名对象。 | 这是有意为之：失败的写入不留孤儿匿名对象（父容器自身的元信息 key 在编码会话之前写入，因此不会被回滚）。 |
 
 ---
 

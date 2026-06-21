@@ -57,7 +57,7 @@ Redis 是唯一的数据真相来源。没有客户端缓存层，因此也不�
 | 3 | **标量原生，容器活跃** | 标量读取返回 Python 值；容器读取返回活跃对象，让变更直接命中 Redis。 |
 | 4 | **引用共享以 namespace 为界** | 禁止跨 namespace 引用，因此可以安全地批量删除 namespace。 |
 | 5 | **生命周期与并发都是显式的** | 缓存模式位于每个对象之上；加锁可选，且永远不会自动触发。 |
-| 6 | **以 Codec 驱动扩展** | 每种类型都是注册到全局注册表的一个 `(python_type, object_class, codec_class)` 三元组。 |
+| 6 | **以 Codec 驱动扩展** | 每种类型都是注册到全局注册表的一个 `(python_type, gpdc_type, object_class, codec_class)` 条目（外加一个可选的 `priority`）。 |
 
 原则 **#3** 最具特色：正是它让本库用起来像本地数据结构，而非远程缓存。
 
@@ -79,7 +79,7 @@ Redis 是唯一的数据真相来源。没有客户端缓存层，因此也不�
 
 ## 3. 整体架构
 
-`gpdatacached` 分为五层，每层只依赖其下方各层。
+`gpdatacached` 分为五层，每层**应当**只依赖其下方各层；`namespace`（第 2 层）是一个有据可查的例外 —— 它会向上触达第 3 层的类型注册表，因为在编码/解码时需要解析 codec。
 
 ```mermaid
 graph TD
@@ -222,7 +222,7 @@ graph LR
         ORF["ref:matrix<br/>HASH 引用者"]
     end
     subgraph Alias["Reference 绑定（名称 = 'alias'）"]
-        AO["obj:alias<br/>STRING = &quot;ref:obj:matrix&quot;"]
+        AO["obj:alias<br/>STRING = &quot;ref:gpdc:{domain}:{ns}:obj:matrix&quot;<br/>（完整规范 key，图中省略前缀）"]
     end
     subgraph Anon["匿名子对象（名称 = '~anon:uuid'）"]
         ANM["obj:~anon:uuid<br/>HASH 元信息（owner = 'matrix'）"]
@@ -394,7 +394,7 @@ GC 在处理每个 canonical name 时会获取同一把对象级锁。绕过加�
 
 1. 编写一个 `GPDCScalarCodec`（单值）或 `GPDCContainerCodec`（带元素的 raw key）的子类。
 2. 编写一个 `GPDCScalarObject` 或 `GPDCContainerObject` 的子类，给出唯一的 `TYPE`。
-3. 用 `GPDCTypeRegistry.register(...)` 注册一个 `(python_type, gpdc_type, object_class, codec_class)` 元组。
+3. 用 `GPDCTypeRegistry.register(...)` 注册一个 `(python_type, gpdc_type, object_class, codec_class)` 条目（外加一个可选的 `priority`）。
 
 此后，`ns["x"] = MyValue()` 与内建类型完全一致 —— 包括嵌套引用、生命周期与加锁。
 

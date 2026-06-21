@@ -203,7 +203,7 @@ Base class for container-mode pydantic objects. Subclasses must set `TYPE = "col
 
 | Operation | Behaviour |
 |---|---|
-| `obj["field"]` | Read one field. Falls back to the field's `default` / `default_factory` if the stored hash slot is missing; raises `KeyError` otherwise. Unknown fields raise `KeyError`. |
+| `obj["field"]` | Read one field. Falls back to the field's `default` / `default_factory` if the stored hash slot is missing; raises `KeyError` if the field has no default. Unknown fields raise `KeyError`. **Note:** in the current implementation, a required field (no default, no `default_factory`) with a missing slot returns pydantic's `PydanticUndefined` sentinel rather than raising — prefer declaring a default, or call `.value` to materialise the full model. |
 | `obj["field"] = value` | Write one field. Unknown fields raise `KeyError`. Releases the previous ref held by the overwritten value and applies sliding-TTL semantics. |
 | `del obj["field"]` | **Rejected** — model fields are structural and cannot be deleted. Always raises `TypeError`. |
 | `"field" in obj` | `True` if `field` is a declared model field. |

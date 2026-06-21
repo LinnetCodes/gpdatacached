@@ -53,13 +53,13 @@ graph TD
 
 | 操作 | 成本量级 | 说明（已对照源码核实） |
 |---|---|---|
-| `ns[k] = scalar` | O(1)，新建约 3 RTT / 覆盖约 4 RTT | `TYPE`（解析）+ `HSET`（元信息）+ 一次 TTL 应用（`PERSIST`/`EXPIRE`）。覆盖还会在解析阶段重读旧 meta。 |
+| `ns[k] = scalar` | O(1)，新建约 5 RTT / 覆盖约 4 RTT | `TYPE`（解析）+ `HGET` ×2（namespace 默认策略）+ `HSET`（元信息）+ 一次 TTL 应用（`PERSIST`/`EXPIRE`）。覆盖会复用现有策略（无需读 namespace 默认值），转而在解析阶段重读旧 meta（`HGETALL`）。 |
 | `ns[k]`（标量读） | O(1)，约 3 RTT | `_resolve_binding`（`TYPE` + `HGETALL`）**再加**标量 `.value` getter 重新加载 meta（`HGETALL`）。 |
-| `ns[k] = [a, b, c]`（扁平、元素为标量的容器） | O(N) 本地编码，数据写入 **O(1)** RTT | 一次 `encode_session` + 一次批量 `create_raw`（单条 `RPUSH`/`HSET`/`SADD` 携带全部元素）+ 元信息 `HSET` + 对 obj/raw/ref key 的 TTL 应用（共约 6 RTT，与 N 无关，对标量元素成立）。 |
+| `ns[k] = [a, b, c]`（扁平、元素为标量的容器） | O(N) 本地编码，数据写入 **O(1)** RTT | 一次 `encode_session` + 一次批量 `create_raw`（单条 `RPUSH`/`HSET`/`SADD` 携带全部元素）+ `HGET` ×2（namespace 默认策略）+ 元信息 `HSET` + 对 obj/raw/ref key 的 TTL 应用（共约 8 RTT，与 N 无关，对标量元素成立）。 |
 | `ns[k] = [[...], ...]`（嵌套容器） | O(**嵌套容器数量**) RTT + O(N) 本地 | 每个嵌套容器成为一个匿名对象（meta `HSET` + 自身 `create_raw` + `HINCRBY` 引用 + TTL 应用，每个约 5–6 RTT）。**深度不乘** —— 决定规模的是总节点数。 |
 | `container.append(x)` / `container[k] = v`（标量元素、非 sliding） | O(1)，约 5–6 RTT | `HGETALL`（取策略）+ 数据写入（`RPUSH`/`HSET`）+ `_touch`（`LLEN`/`HLEN` + `HGETALL` + `HSET`）。**若 `cache_mode="sliding"` 再加子树遍历**（§3）；**若元素本身是容器，再加约 5–6 RTT**（创建匿名对象）。 |
 | `iter(ns)` / `len(ns)` | O(N)，批量 SCAN | 每 ~100 个 key 一页若干 RTT（`len` 委托给 `iter`）。不要放进热循环。 |
-| `k in ns` | O(1)，1–3 RTT | 直接对该具名 key 做 `TYPE` + `HGETALL` —— **不是** SCAN。不随 namespace 大小而增长。 |
+| `k in ns` | O(1)，1–4 RTT | 直接对该具名 key 做 `TYPE` + `HGETALL`（owner 绑定 1–2 RTT）；引用会再加一次 `GET` + 另一次 `TYPE`（别名最多 4 RTT）。**不是** SCAN。不随 namespace 大小而增长。 |
 | `del ns[k]`（容器 owner） | O(所属子树大小) | `_teardown_owner_container` 释放每个嵌套引用（`HDEL`）并级联删除成为孤儿的匿名子对象；每节点约 1+ RTT。若仍存在活跃的别名引用者则抛 `CanonicalObjectReferencedError` —— 先删别名。 |
 | `ns[k] = new_container`（覆盖） | O(旧 + 新子树大小) | 旧的完整拆解 + 新的完整编码 —— 见 [§8](#8-容器整体覆盖-vs-就地变更)。 |
 | `obj.lock()` + 释放（无竞争） | +2 RTT | `SET NX EX` + 一段 Lua 释放脚本。 |
@@ -82,7 +82,7 @@ graph TD
 2. 递归下钻每个**所属子对象**：每个子对象都做一次 `HGETALL`（读取该子对象自身的策略），并把其 TTL 重新应用到它的 key。
 3. 直到整棵所属子树都被遍历完才返回。
 
-因此，对一个拥有 1000 个匿名子对象的 sliding list 做一次 `append`，代价是**数千次** Redis 往返 —— 每个所属子对象一次 `HGETALL` + TTL 重应用（按子树层级部分流水线化，但仍是 O(子树大小)）。在频繁写入的循环里，这会把你的表观写入代价放大到子树大小倍。
+因此，对一个拥有 1000 个匿名子对象的 sliding list 做一次 `append`，代价是**数千次** Redis 往返 —— 每个所属子对象一次 `HGETALL` + TTL 重应用（每一步都是一次单独的往返；这条路径并未流水线化，不像 `persist()`/`update_cache_mode_and_ttl()` 那样按子树层级批量成一条流水线）。在频繁写入的循环里，这会把你的表观写入代价放大到子树大小倍。
 
 ```mermaid
 graph TD
@@ -126,7 +126,7 @@ GPDC 支持任意深度的容器嵌套（`ns["x"] = [[[[1]]]]` 可行）。但�
 - 一次引用者集合自增（`HINCRBY`）。
 - 一次 TTL 应用（`EXPIRE` / `PERSIST`）。
 
-**读取**时，`.value` 会递归遍历同一棵树，解码每个匿名对象。
+**读取**时，`.value` 会加载每个匿名子对象的元信息（每个 `ref:` 元素一次 `HGETALL`）并返回一个活跃的 `GPDCContainerObject` 句柄 —— 它**不会**递归解码嵌套数据。若你需要完整解码的 Python 结构，请使用 `.deepcopy()`（它会递归物化每一层）。
 
 **变更**时，sliding 刷新与级联删除的开销都与子树大小成正比（见 [§3](#3-滥用-sliding-ttl) 与 [§10](#10-引用抖动)）。
 
@@ -263,7 +263,7 @@ ns["matrix"][0][0] = 99            # 一次定向写入
 
 `iter(ns)` 与 `len(ns)` 是 **基于 SCAN** 的，开销是 O(N)，N 为 namespace 中的具名对象数。它们会被批量流水线化（每个 SCAN 页一条流水线），但仍线性增长。（`len(ns)` 委托给 `iter(ns)`。）
 
-> 注意：`k in ns` **不属于**这一类 —— 它直接解析该具名 key（`TYPE` + `HGETALL`，或对引用做 `GET` + `TYPE` + `HGETALL`）。它是 O(1)，每次检查 1–3 RTT，与 namespace 大小无关。只有在紧凑循环里、连 1–3 RTT 的累积都成问题时，才值得替换。
+> 注意：`k in ns` **不属于**这一类 —— 它直接解析该具名 key（`TYPE` + `HGETALL`，或对引用做 `GET` + `TYPE` + `HGETALL`）。它是 O(1)，每次检查 1–4 RTT，与 namespace 大小无关。只有在紧凑循环里、连 1–4 RTT 的累积都成问题时，才值得替换。
 
 ### 反模式
 

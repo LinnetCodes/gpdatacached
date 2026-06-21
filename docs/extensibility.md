@@ -316,7 +316,7 @@ assert ns["background"] == Color(10, 20, 30)   # reads back as a native Color
 # It composes with everything else for free.
 ns["palette"] = [Color(255, 0, 0), Color(0, 255, 0)]   # nested in a list
 ns["theme"] = {"bg": Color(0, 0, 0)}                   # nested in a dict
-ns.get_object("background").expire_in(60)              # lifecycle works
+ns.get_object("background").update_cache_mode_and_ttl("ttl", 60)  # lifecycle works
 ```
 
 The codec is also invoked automatically when your type appears as a list/dict element or a tuple member — you do not need to teach the containers about `Color`.
@@ -464,7 +464,7 @@ class CounterObject(GPDCContainerObject, collections.abc.MutableMapping):
 ### Step 4 — register and use
 
 ```python
-from gpdatacached import GPDCTypeRegistry
+from gpdatacached import GPDCTypeRegistry, GPDCDomain, GPDCDomainConfig
 
 GPDCTypeRegistry.register(
     python_type=Counter,
@@ -473,6 +473,9 @@ GPDCTypeRegistry.register(
     codec_class=CounterCodec,
     priority=10,          # Counter subclasses dict → must outrank dict (priority 0)
 )
+
+domain = GPDCDomain("counterapp", GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379))
+ns = domain.ensure_namespace("words")
 
 ns["word_counts"] = Counter({"hello": 3, "world": 1})
 counts = ns["word_counts"]            # → CounterObject (live)
@@ -590,7 +593,7 @@ Two optional extensions ship with the library and are written on exactly the pub
 | Extension | Family | Pattern | Notes |
 |---|---|---|---|
 | [`pydantic_support`](./pydantic-support.md) | Scalar **and** container | Per-model registration: thin object subclass + `PydanticModelScalarCodec` (scalar mode) or `PydanticModelContainerCodec` + `BaseModelContainerObject` (container mode) | Lets you cache pydantic `BaseModel` records with optional field-level access. |
-| [`pandas_support`](./pandas_support.py) | Container | One `register()` call registers both `Series` and `DataFrame` | Caches pandas structures as live objects with selective online accessors. |
+| [`pandas_support`](./pandas-support.md) | Container | One `register()` call registers both `Series` and `DataFrame` | Caches pandas structures as live objects with selective online accessors. |
 
 Reading their source (`src/gpdatacached/extensions/`) is the best way to see the full codec/object pattern applied to non-trivial types.
 

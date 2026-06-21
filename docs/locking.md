@@ -47,7 +47,7 @@ Every locked operation pays a concrete cost over its unlocked equivalent. Unders
 | Operation | Redis round-trips | Notes |
 |---|---|---|
 | `obj.lock()` (uncontended fast path) | **1** | `SET NX EX` |
-| `obj.lock()` (contended) | 1 + 1 per retry | `SET NX EX` fails → `BLPOP` waits → retry. Each retry is another round-trip. |
+| `obj.lock()` (contended) | 1 + 2 per retry | `SET NX EX` fails → `BLPOP` waits (one round-trip) → `SET NX EX` retry. Each retry cycle is two round-trips (BLPOP wait + SET). |
 | `held.release()` | **1** | One Lua script (`GET`+`DEL`+`RPUSH`+`EXPIRE` batched server-side) |
 
 So an **uncontended** critical section costs **+2 round-trips minimum** (acquire + release) versus the unlocked path. On a typical LAN that is ~0.2–2 ms; over a WAN it can be 10–100 ms.
@@ -64,7 +64,7 @@ If the critical section itself is fast (e.g. a single increment) and N processes
 
 ### Latency under contention
 
-A waiter blocks in `BLPOP` until either the holder releases (wake-up via `RPUSH`) or the lock's TTL expires. Worst-case waiter latency ≈ the holder's critical-section duration (plus the wake-up round-trip). If the holder crashes mid-section, waiters recover within ~`ttl` seconds.
+A waiter blocks in `BLPOP` (whose timeout is capped at the lock's `ttl`) until either the holder releases (wake-up via `RPUSH`) or the BLPOP's own timeout elapses. On timeout, the waiter retries `SET NX EX`, succeeding once the lock's TTL has expired. Worst-case waiter latency ≈ the holder's critical-section duration (plus the wake-up round-trip). If the holder crashes mid-section, waiters recover within ~`ttl` seconds (BLPOP timeout, then a successful `SET NX EX` retry).
 
 ### Hidden multipliers
 

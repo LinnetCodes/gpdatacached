@@ -213,8 +213,8 @@ For MultiIndex columns, keys are tuples and prefix matching applies:
 | `df[(a, b, ...)]` | Full-depth tuple → that single column as a `pd.Series`. |
 | `df[level0]` or `df[(a, b)]` | Partial-depth prefix → sub-`pd.DataFrame` of the matching columns. |
 | `df[list_of_keys]` | Sub-`pd.DataFrame` (each key may be a scalar prefix or a full-depth tuple). |
-| `df[col_tuple] = values` | Add or replace a full-depth column. Partial/list column mutation on MultiIndex columns is rejected with a `TypeError` — call `.value`. |
-| `del df[col_tuple]` | Drop a full-depth column. Partial/list deletion on MultiIndex columns is rejected with a `TypeError` — call `.value`. |
+| `df[col_tuple] = values` | Add or replace a full-depth column. A partial-depth tuple raises `ValueError`; a non-tuple or list key raises `TypeError` — call `.value`. |
+| `del df[col_tuple]` | Drop a full-depth column. A partial-depth tuple raises `ValueError`; a non-tuple or list key raises `TypeError` — call `.value`. |
 
 **Dunder protocols**
 

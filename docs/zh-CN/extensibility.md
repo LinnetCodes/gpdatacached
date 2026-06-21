@@ -316,7 +316,7 @@ assert ns["background"] == Color(10, 20, 30)   # 读回来是原生 Color
 # 它自动与一切组合。
 ns["palette"] = [Color(255, 0, 0), Color(0, 255, 0)]   # 嵌入 list
 ns["theme"] = {"bg": Color(0, 0, 0)}                   # 嵌入 dict
-ns.get_object("background").expire_in(60)              # 生命周期可用
+ns.get_object("background").update_cache_mode_and_ttl("ttl", 60)  # 生命周期可用
 ```
 
 当你的类型作为 list/dict 元素或 tuple 成员出现时，codec 也会被自动调用 —— 你不需要教容器认识 `Color`。
@@ -464,7 +464,7 @@ class CounterObject(GPDCContainerObject, collections.abc.MutableMapping):
 ### 第 4 步 —— 注册并使用
 
 ```python
-from gpdatacached import GPDCTypeRegistry
+from gpdatacached import GPDCTypeRegistry, GPDCDomain, GPDCDomainConfig
 
 GPDCTypeRegistry.register(
     python_type=Counter,
@@ -473,6 +473,9 @@ GPDCTypeRegistry.register(
     codec_class=CounterCodec,
     priority=10,          # Counter 是 dict 子类 → 必须压过 dict（priority 0）
 )
+
+domain = GPDCDomain("counterapp", GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379))
+ns = domain.ensure_namespace("words")
 
 ns["word_counts"] = Counter({"hello": 3, "world": 1})
 counts = ns["word_counts"]            # → CounterObject（活跃）
@@ -590,7 +593,7 @@ def __setitem__(self, key, value):
 | 扩展 | 值族 | 模式 | 说明 |
 |---|---|---|---|
 | [`pydantic_support`](./pydantic-support.md) | 标量**与**容器 | 按模型注册：薄对象子类 + `PydanticModelScalarCodec`（标量模式）或 `PydanticModelContainerCodec` + `BaseModelContainerObject`（容器模式） | 让你缓存 pydantic `BaseModel` 记录，可选字段级访问。 |
-| [`pandas_support`](./pandas_support.py) | 容器 | 一次 `register()` 同时注册 `Series` 与 `DataFrame` | 把 pandas 结构缓存为活跃对象，带选择性在线访问器。 |
+| [`pandas_support`](./pandas-support.md) | 容器 | 一次 `register()` 同时注册 `Series` 与 `DataFrame` | 把 pandas 结构缓存为活跃对象，带选择性在线访问器。 |
 
 阅读其源码（`src/gpdatacached/extensions/`）是看清完整 codec/对象模式如何应用于非平凡类型的最佳途径。
 

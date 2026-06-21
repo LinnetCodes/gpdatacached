@@ -80,7 +80,7 @@ stateDiagram-v2
 
 The policy is validated strictly:
 
-- `permanent` requires `ttl == 0`.
+- `permanent` accepts any `ttl >= 0` (the value is silently ignored — Redis `PERSIST` is applied, so the object never expires).
 - `ttl` and `sliding` require `ttl > 0`.
 - `ttl` may never be negative.
 
@@ -129,7 +129,7 @@ When GPDC applies a policy to an object, it walks the object's Redis keys and ru
 | Scalar | `obj:{name}` (the metadata hash, which also holds the encoded value) |
 | Container (canonical owner) | `obj:{name}` + `raw:{name}` + `ref:{name}` (all three share the object's TTL) |
 
-This is why a container's metadata, raw data, and referrer set always vanish together — they share one TTL clock. Reference (alias) bindings have their own `obj:` key with their own TTL (independent of the canonical owner), but in practice aliases are created with the same policy as everything else.
+This is why a container's metadata, raw data, and referrer set always vanish together — they share one TTL clock. Reference (alias) bindings are stored as plain Redis string keys with **no TTL applied** at creation — the alias persists until explicitly deleted. Lifecycle methods invoked through a reference (e.g. `expire_in`, `persist`) operate on the **canonical owner**, not on the alias binding.
 
 ---
 
@@ -225,7 +225,7 @@ Every object has an `owner` field in its metadata. Ownership determines who cont
 
 ### The permission check
 
-The four lifecycle mutators (`expire_in`, `expire_at`, `persist`, `update_cache_mode_and_ttl`) call `_check_owner_permission`, which raises `LifecyclePermissionError` unless `meta.owner == self.canonical_name`. You cannot change the lifecycle of an anonymous child directly — you must change it on the self-owned ancestor that owns the subtree.
+The four lifecycle mutators (`expire_in`, `expire_at`, `persist`, `update_cache_mode_and_ttl`) call `_check_owner_permission`, which raises `LifecyclePermissionError` when `meta.owner` is non-empty and differs from `self.canonical_name`. You cannot change the lifecycle of an anonymous child directly — you must change it on the self-owned ancestor that owns the subtree.
 
 ### `take_ownership()`
 
@@ -287,7 +287,7 @@ graph TD
 
 1. **Last referrer release** — when the last slot referencing the anon is removed (an element is overwritten or popped, or the parent itself is deleted and walks its children). GPDC checks `has_referrers`; if empty and the target is anonymous, it cascades.
 2. **Self-owned parent deletion** — `del ns["matrix"]` deletes the parent's binding, then `_cascade_delete_anonymous` walks the parent's stored raw data, releases nested refs, and recursively deletes any orphaned anons.
-3. **Encode-session rollback** — if an exception propagates out of an `encode_session` (e.g. a `CyclicReferenceError`), every anonymous object created during that session is deleted, leaving Redis untouched.
+3. **Encode-session rollback** — if an exception propagates out of an `encode_session` (e.g. a `CyclicReferenceError`), every anonymous object created during that session is deleted, leaving no orphan anons behind. (The parent container's own metadata key, written before the encode session opened, is not rolled back by this path.)
 
 ### Important consequence
 
@@ -305,7 +305,7 @@ A **reference** is a named binding (`obj:alias` STRING holding `ref:{canonical_o
 ns["alias"] = ns["original"]   # both names now resolve to the same canonical data
 ```
 
-This writes a single `obj:alias` string key and bumps `original`'s referrer count. **No data is copied.** The reference inherits the namespace-default policy (not the canonical owner's policy).
+This writes a single `obj:alias` string key and bumps `original`'s referrer count. **No data is copied.** The reference binding itself has no policy metadata and no TTL applied — reading `cache_mode`/`ttl` through a reference returns the **canonical owner's** policy, because metadata is loaded from the canonical key.
 
 ### Reading
 
@@ -322,9 +322,7 @@ This protection is intentional: silently deleting data that other names still po
 
 ### Lifecycle of a reference binding itself
 
-A reference's own `obj:` key has its own TTL (independent of the canonical owner's TTL). If a reference expires, the canonical data is unaffected — only the alias binding disappears.
-
-`take_ownership()` (see [§7](#7-the-ownership-model)) is the escape hatch: it promotes a reference to own its data, after which it behaves as a self-owned object.
+A reference's `obj:alias` key has **no TTL applied**; it persists until explicitly deleted. Lifecycle mutators called on a reference operate on the **canonical owner**, not on the alias binding — use `take_ownership()` (see [§7](#7-the-ownership-model)) to promote a reference to a self-owned object with its own policy.
 
 ---
 
@@ -397,7 +395,7 @@ A short list of "I expected X, but got Y" scenarios, resolved.
 | "`ttl` mode with `ttl=0` was accepted" | Never. It raises `ValueError`. | Strict validation: `ttl`/`sliding` require `ttl > 0`. |
 | "My `permanent` object disappeared" | Something deleted it (`del`, namespace `clear()`, `destroy()`, or GC of an orphaned anon). | `permanent` only means no TTL; it is not immortality. |
 | "I changed the ancestor to `permanent` but a child still has a TTL" | Propagation only reaches **owned** children. | Children referenced but not **owned** by the ancestor keep their own policy. |
-| "My data vanished after a crash mid-write" | The encode session rolled back all anonymous objects created during the failed write. | This is intentional: a failed write leaves Redis untouched. |
+| "My data vanished after a crash mid-write" | The encode session rolled back all anonymous objects created during the failed write. | This is intentional: a failed write leaves no orphan anons behind (the parent container's own metadata key, written before the encode session, is not rolled back). |
 
 ---
 
