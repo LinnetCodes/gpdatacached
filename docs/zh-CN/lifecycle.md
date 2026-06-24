@@ -183,7 +183,7 @@ graph TD
 | 方法 | 效果 | 权限 |
 |---|---|---|
 | `expire_in(seconds)` | 设置新 TTL。要求已处于 `cache_mode == "ttl"`。 | 仅 owner。 |
-| `expire_at(when)` | 设置绝对过期时间。要求 `cache_mode == "ttl"`。若 `when` 已过去则立即删除。 | 仅 owner。 |
+| `expire_at(when)` | 设置绝对过期时间。要求 `cache_mode == "ttl"`。若 `when` 已过去则立即删除（等价于 `del ns[name]`：完整拆卸含匿名子树；若仍被引用则抛出 `CanonicalObjectReferencedError` —— 可先用 `has_referrers()` 检查）。 | 仅 owner。 |
 | `persist()` | 切换为 `permanent` 且 `ttl=0`。 | 仅 owner。 |
 | `update_cache_mode_and_ttl(mode, ttl)` | 用 `(mode, ttl)` 替换整个策略。 | 仅 owner。 |
 

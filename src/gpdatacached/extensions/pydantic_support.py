@@ -123,12 +123,18 @@ class BaseModelContainerObject(GPDCContainerObject, collections.abc.MutableMappi
             raise KeyError(key)
         encoded_val = self._redis().hget(self.raw_key, key)
         if encoded_val is None:
+            # Missing slot (model evolution, external ops, GC edge cases): fall back to
+            # the field's declared default. Use is_required() rather than checking
+            # field.default — pydantic stores "no default" as the PydanticUndefined
+            # sentinel (which is not None), so a naive `default is not None` test would
+            # both miss `default=None` fields and leak the sentinel for factory/required
+            # fields.
             field = self._model_class.model_fields[key]
-            if field.default is not None:
-                return field.default
+            if field.is_required():
+                raise KeyError(key)
             if field.default_factory is not None:
                 return field.default_factory()
-            raise KeyError(key)
+            return field.default
         return decode_element(encoded_val, self._namespace)
 
     def __setitem__(self, key: str, value: object) -> None:

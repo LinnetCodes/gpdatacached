@@ -322,7 +322,7 @@ Abstract base class for every GPDC data object. Subclasses are split into [`GPDC
 | Method | Description |
 |---|---|
 | `expire_in(seconds)` | Set a new TTL. Object must be in `cache_mode="ttl"`. Requires ownership. |
-| `expire_at(when)` | Set absolute expiry time. Object must be in `cache_mode="ttl"`. Requires ownership. Deletes the object immediately if `when` is in the past. |
+| `expire_at(when)` | Set absolute expiry time. Object must be in `cache_mode="ttl"`. Requires ownership. Deletes the object immediately if `when` is in the past (equivalent to `del ns[name]`: cleans `obj:`/`raw:`/`ref:` and cascade-deletes anonymous subtrees; raises `CanonicalObjectReferencedError` if the owner is still referenced — check `has_referrers()` first). |
 | `persist()` | Switch to `cache_mode="permanent"` with `ttl=0`. Requires ownership. |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | Replace the full cache policy. Requires ownership. |
 | `refresh_ttl()` | Re-apply this object's own TTL to its keys and cascade-refresh its owned subtree (used by the sliding-window path). No-op for permanent objects. |
@@ -341,6 +341,7 @@ Abstract base class for every GPDC data object. Subclasses are split into [`GPDC
 
 - `obj == other` compares by `(domain, namespace, canonical_name)`.
 - `obj.referrers()` (containers only) — set of names referencing this container's raw data.
+- `obj.has_referrers()` (containers only) — cheap boolean: whether any name references this container's raw data. Tells you whether a `del`/`expire_at` of the owner would raise `CanonicalObjectReferencedError`.
 - `__hash__ = None` — GPDC objects are unhashable.
 
 ---
@@ -379,6 +380,7 @@ Abstract base for every container object. A container stores its elements in a d
 |---|---|
 | `value` | Property: decode the whole container into a native Python value. Setter always raises — containers must be mutated via their explicit methods. |
 | `referrers()` | Set of object names that reference this container's raw data. |
+| `has_referrers()` | Cheap boolean check: `True` if any object references this container's raw data. Use it to tell whether a `del`/`expire_at` of the owner would be blocked by outstanding references (raising `CanonicalObjectReferencedError`). |
 | `copy()` | Shallow copy: returns the decoded Python value (sharing anonymous-object refs). |
 | `deepcopy()` | Deep copy: recursively clone every anonymous child and return a fully independent Python value. |
 

@@ -310,6 +310,68 @@ class TestCacheModeAndTTL:
         with pytest.raises(KeyError):
             _ = ns["x"]
 
+    def test_expire_at_past_time_deletes_container_fully(self, ns, clean_redis):
+        # expire_at(past) must do a full teardown on a container owner, not just
+        # delete the obj: key (which would leak raw:/ref:). This mirrors __delitem__.
+        ns["c"] = [1, 2, 3]
+        obj = ns.get_object("c")
+        obj.update_cache_mode_and_ttl("ttl", 200)
+        obj_key = make_object_key("testdomain", "testns", "c")
+        raw_key = make_raw_key("testdomain", "testns", "c")
+        ref_key = make_ref_key("testdomain", "testns", "c")
+        assert clean_redis.exists(obj_key, raw_key)
+
+        past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=100)
+        ns.get_object("c").expire_at(past)
+
+        assert not clean_redis.exists(obj_key)
+        assert not clean_redis.exists(raw_key)
+        assert not clean_redis.exists(ref_key)
+        with pytest.raises(KeyError):
+            _ = ns["c"]
+
+    def test_expire_at_past_time_cascades_anonymous_subtree(self, ns, clean_redis):
+        # A nested container owns anonymous child objects; expire_at(past) on the
+        # owner must cascade-delete them, not leave them orphaned.
+        ns["nested"] = {"a": [1, 2], "b": [3, 4]}
+        obj = ns.get_object("nested")
+        obj.update_cache_mode_and_ttl("ttl", 200)
+        anon_before = [k for k in clean_redis.scan_iter("gpdc:testdomain:testns:obj:~anon:*")]
+        assert len(anon_before) >= 2
+
+        past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=100)
+        ns.get_object("nested").expire_at(past)
+
+        anon_after = [k for k in clean_redis.scan_iter("gpdc:testdomain:testns:obj:~anon:*")]
+        assert anon_after == []
+
+    def test_expire_at_past_time_referenced_owner_raises(self, ns, clean_redis):
+        # Direction A: expire_at(past) reuses __delitem__, so a canonical owner
+        # still referenced by an alias raises CanonicalObjectReferencedError —
+        # the caller is responsible for resolving references before expiry.
+        ns["base"] = [1, 2, 3]
+        ns["base"].update_cache_mode_and_ttl("ttl", 200)
+        ns["alias"] = ns["base"]  # alias -> reference binding to canonical "base"
+
+        past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=100)
+        with pytest.raises(CanonicalObjectReferencedError):
+            ns.get_object("base").expire_at(past)
+        # Nothing was deleted because the expiry was blocked.
+        assert clean_redis.exists(make_object_key("testdomain", "testns", "base"))
+
+    def test_container_has_referrers_helper(self, ns, clean_redis):
+        # has_referrers() lets users check whether references would block a
+        # delete/expire of this owner before attempting it.
+        ns["owner"] = [1, 2, 3]
+        owner = ns["owner"]
+        assert owner.has_referrers() is False
+
+        ns["alias"] = ns["owner"]  # one reference
+        assert owner.has_referrers() is True
+
+        del ns["alias"]
+        assert owner.has_referrers() is False
+
     def test_sliding_mode_resets_ttl_on_write(self, ns, clean_redis):
         ns["x"] = 1
         obj = ns.get_object("x")
@@ -343,24 +405,23 @@ class TestCacheModeAndTTL:
         remaining = clean_redis.ttl(key)
         assert 290 <= remaining <= 300
 
-    def test_scalar_to_container_overwrite_preserves_and_reapplies_ttl(self, ns, clean_redis):
+    def test_scalar_to_container_overwrite_resets_policy_to_default(self, ns, clean_redis):
+        # Design intent (per docs): only scalar-overwrites-scalar preserves policy.
+        # Overwriting a scalar with a container must tear down and reset to namespace
+        # defaults (permanent / ttl 0), exactly like a container->container overwrite.
         ns["x"] = 1
         obj = ns.get_object("x")
         obj.update_cache_mode_and_ttl("ttl", 300)
         key = make_object_key("testdomain", "testns", "x")
 
-        time.sleep(2)
-        remaining_before = clean_redis.ttl(key)
-        assert remaining_before < 300
-
         ns["x"] = [1, 2, 3]
 
         data = clean_redis.hgetall(key)
         assert data["type"].startswith("collection:")
-        assert data["cache_mode"] == "ttl"
-        assert data["ttl"] == "300"
-        remaining = clean_redis.ttl(key)
-        assert 290 <= remaining <= 300
+        # Policy reset to namespace defaults, not the inherited ttl/300.
+        assert data["cache_mode"] == "permanent"
+        assert data["ttl"] in ("", "0")
+        assert clean_redis.ttl(key) == -1  # permanent → no expiry
 
 
 class TestNamespaceInitWithConfig:

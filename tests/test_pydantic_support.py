@@ -4,7 +4,7 @@ import datetime
 import threading
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gpdatacached.scalar import GPDCScalarObject
 from gpdatacached.types import GPDCTypeRegistry
@@ -89,6 +89,14 @@ class OrderWithDict(BaseModel):
     metadata: dict[str, str]
 
 
+# Model exercising every default-declaration shape for __getitem__ fallback coverage.
+class FieldDefaultsModel(BaseModel):
+    required_name: str  # required, no default
+    opt_default_none: str | None = None  # optional, default None
+    opt_default_value: int = 5  # optional, default value
+    factory_tags: list[str] = Field(default_factory=list)  # optional, default_factory
+
+
 class OrderModelObject(BaseModelContainerObject):
     TYPE = "collection:OrderModel"
 
@@ -99,6 +107,10 @@ class OrderWithListObject(BaseModelContainerObject):
 
 class OrderWithDictObject(BaseModelContainerObject):
     TYPE = "collection:OrderWithDict"
+
+
+class FieldDefaultsModelObject(BaseModelContainerObject):
+    TYPE = "collection:FieldDefaultsModel"
 
 
 @pytest.fixture(autouse=True)
@@ -378,6 +390,13 @@ def register_container_types():
             codec_class=PydanticModelContainerCodec,
             priority=0,
         )
+        GPDCTypeRegistry.register(
+            python_type=FieldDefaultsModel,
+            gpdc_type="collection:FieldDefaultsModel",
+            object_class=FieldDefaultsModelObject,
+            codec_class=PydanticModelContainerCodec,
+            priority=0,
+        )
         yield
     finally:
         GPDCTypeRegistry._by_gpdc_type = original_gpdc
@@ -451,6 +470,59 @@ class TestPydanticContainerNamespaceIntegration:
         obj = ns["order1"]
         assert obj["order_id"] == "ORD-001"
         assert obj["total"] == 99.5
+
+    def test_field_level_get_unknown_field_raises(self, ns, register_container_types):
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        with pytest.raises(KeyError, match="nonexistent"):
+            obj["nonexistent"]
+
+    def test_field_fallback_when_slot_present(self, ns, register_container_types):
+        # Baseline: with all slots present, every field reads its stored value.
+        # Note: factory_tags is a list field, so its slot holds a live ListObject.
+        ns["fd"] = FieldDefaultsModel(required_name="alice")
+        obj = ns["fd"]
+        assert obj["required_name"] == "alice"
+        assert obj["opt_default_none"] is None
+        assert obj["opt_default_value"] == 5
+        assert obj["factory_tags"].value == []
+
+    def test_field_fallback_default_none_on_missing_slot(self, ns, register_container_types):
+        # A field with an explicit default of None must return None when its hash
+        # slot is missing (defensive: model evolution, external ops, GC edge cases),
+        # not raise KeyError.
+        ns["fd"] = FieldDefaultsModel(required_name="alice")
+        obj = ns["fd"]
+        ns._redis().hdel(obj.raw_key, "opt_default_none")
+        assert obj["opt_default_none"] is None
+
+    def test_field_fallback_default_value_on_missing_slot(self, ns, register_container_types):
+        # A field with a non-None default returns that default on a missing slot.
+        ns["fd"] = FieldDefaultsModel(required_name="alice")
+        obj = ns["fd"]
+        ns._redis().hdel(obj.raw_key, "opt_default_value")
+        assert obj["opt_default_value"] == 5
+
+    def test_field_fallback_default_factory_on_missing_slot(self, ns, register_container_types):
+        # A field with a default_factory must invoke the factory on a missing slot,
+        # never leak pydantic's PydanticUndefined sentinel.
+        from pydantic_core import PydanticUndefined
+
+        ns["fd"] = FieldDefaultsModel(required_name="alice")
+        obj = ns["fd"]
+        ns._redis().hdel(obj.raw_key, "factory_tags")
+        result = obj["factory_tags"]
+        assert result is not PydanticUndefined
+        assert result == []
+
+    def test_field_required_raises_on_missing_slot(self, ns, register_container_types):
+        # A required field (no default, no default_factory) with a missing slot
+        # raises KeyError rather than returning the PydanticUndefined sentinel.
+        ns["fd"] = FieldDefaultsModel(required_name="alice")
+        obj = ns["fd"]
+        ns._redis().hdel(obj.raw_key, "required_name")
+        with pytest.raises(KeyError, match="required_name"):
+            obj["required_name"]
 
     def test_field_level_set(self, ns, register_container_types):
         ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)

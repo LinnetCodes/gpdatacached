@@ -183,7 +183,7 @@ You rarely need to change policy mid-life, but when you do, GPDC propagates the 
 | Method | Effect | Permission |
 |---|---|---|
 | `expire_in(seconds)` | Set new TTL. Requires existing `cache_mode == "ttl"`. | Owner only. |
-| `expire_at(when)` | Set absolute expiry time. Requires `cache_mode == "ttl"`. Deletes immediately if `when` is in the past. | Owner only. |
+| `expire_at(when)` | Set absolute expiry time. Requires `cache_mode == "ttl"`. Deletes immediately if `when` is in the past (equivalent to `del ns[name]`: full teardown incl. anonymous subtrees; raises `CanonicalObjectReferencedError` if still referenced — check `has_referrers()` first). | Owner only. |
 | `persist()` | Switch to `permanent` with `ttl=0`. | Owner only. |
 | `update_cache_mode_and_ttl(mode, ttl)` | Replace the full policy with `(mode, ttl)`. | Owner only. |
 

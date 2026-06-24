@@ -322,7 +322,7 @@ class GPDCDataObject(name, namespace, *, canonical_name=None)   # ABC
 | 方法 | 说明 |
 |---|---|
 | `expire_in(seconds)` | 设置新的 TTL。对象必须处于 `cache_mode="ttl"`。需要 ownership。 |
-| `expire_at(when)` | 设置绝对过期时间。对象必须处于 `cache_mode="ttl"`。需要 ownership。若 `when` 已过去则立即删除对象。 |
+| `expire_at(when)` | 设置绝对过期时间。对象必须处于 `cache_mode="ttl"`。需要 ownership。若 `when` 已过去则立即删除对象（等价于 `del ns[name]`：清理 `obj:`/`raw:`/`ref:` 并级联删除匿名子树；若 owner 仍被引用则抛出 `CanonicalObjectReferencedError` —— 可先用 `has_referrers()` 检查）。 |
 | `persist()` | 切换为 `cache_mode="permanent"` 且 `ttl=0`。需要 ownership。 |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | 替换整个缓存策略。需要 ownership。 |
 | `refresh_ttl()` | 将对象自身的 TTL 重新应用到其 key，并级联刷新其拥有的子树（用于滑动窗口刷新路径）。永久对象为空操作。 |
@@ -341,6 +341,7 @@ class GPDCDataObject(name, namespace, *, canonical_name=None)   # ABC
 
 - `obj == other` 按 `(domain, namespace, canonical_name)` 比较。
 - `obj.referrers()`（仅容器）—— 引用该容器原始数据的名称集合。
+- `obj.has_referrers()`（仅容器）—— 轻量布尔：是否有名称引用该容器的原始数据。用于判断对 owner 执行 `del`/`expire_at` 是否会抛出 `CanonicalObjectReferencedError`。
 - `__hash__ = None` —— GPDC 对象不可哈希。
 
 ---
@@ -379,6 +380,7 @@ class GPDCContainerObject(name, namespace, *, canonical_name=None)   # GPDCDataO
 |---|---|
 | `value` | 属性：将整个容器解码为原生 Python 值。setter 永远抛错 —— 容器必须通过显式方法进行变更。 |
 | `referrers()` | 引用该容器原始数据的对象名集合。 |
+| `has_referrers()` | 轻量布尔检查：若任何对象引用了该容器的原始数据则返回 `True`。用于判断对 owner 执行 `del`/`expire_at` 是否会因存在未解除的引用而被阻塞（抛出 `CanonicalObjectReferencedError`）。 |
 | `copy()` | 浅拷贝：返回解码后的 Python 值（共享匿名对象引用）。 |
 | `deepcopy()` | 深拷贝：递归克隆所有匿名子对象，返回完全独立的 Python 值。 |
 

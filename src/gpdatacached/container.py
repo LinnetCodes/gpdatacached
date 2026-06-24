@@ -174,6 +174,20 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, owner_name)
         return get_referrers(self._redis(), ref_key)
 
+    def has_referrers(self) -> bool:
+        """Return whether any other object references this container's raw data.
+
+        This is a cheap boolean check (no full set materialisation) to let callers
+        decide whether a ``del``/``expire_at`` of the owner would be blocked by
+        outstanding references. Resolving references before deletion/expiry is the
+        caller's responsibility — the library raises
+        :class:`~gpdatacached.exceptions.CanonicalObjectReferencedError` to *signal*
+        a blocked teardown, not to handle it.
+        """
+        owner_name = self._data_owner_name()
+        ref_key = make_ref_key(self._namespace.domain.name, self._namespace.name, owner_name)
+        return has_referrers(self._redis(), ref_key)
+
     def copy(self) -> object:
         """Shallow copy: return Python value with shared anon object refs."""
         return self.value

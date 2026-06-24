@@ -203,7 +203,7 @@ class BaseModelContainerObject(GPDCContainerObject, collections.abc.MutableMappi
 
 | 操作 | 行为 |
 |---|---|
-| `obj["field"]` | 读取单个字段。若存储的 hash 槽缺失，则回退到字段的 `default` / `default_factory`；若字段没有默认值则抛出 `KeyError`。未知字段抛出 `KeyError`。**注意：** 在当前实现中，必填字段（没有 `default`、也没有 `default_factory`）槽位缺失时，返回的是 pydantic 的 `PydanticUndefined` 哨兵值而非抛出异常 —— 建议为字段声明默认值，或调用 `.value` 物化完整模型。 |
+| `obj["field"]` | 读取单个字段。若存储的 hash 槽存在，返回存储的值。若槽位缺失（模型演进、外部操作、GC 边界情况），则回退到字段声明的 `default_factory`（调用）或 `default` —— 包括显式 `default=None`，此时正确返回 `None`。*必填*字段（无 `default`、无 `default_factory`）槽位缺失时抛出 `KeyError`。未知字段抛出 `KeyError`。 |
 | `obj["field"] = value` | 写入单个字段。未知字段抛出 `KeyError`。会释放被覆盖值原先持有的引用，并应用滑动 TTL 语义。 |
 | `del obj["field"]` | **被拒绝** —— 模型字段属于结构，不能删除。始终抛出 `TypeError`。 |
 | `"field" in obj` | 当 `field` 是声明的模型字段时为 `True`。 |

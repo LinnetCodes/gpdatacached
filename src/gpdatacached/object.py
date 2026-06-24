@@ -232,7 +232,14 @@ class GPDCDataObject(ABC):
         self._check_owner_permission(ctx.meta)
         seconds = max(0, int((when - datetime.datetime.now(datetime.UTC)).total_seconds()))
         if seconds == 0:
-            self._redis().delete(ctx.key)
+            # Past timestamp → "delete immediately" (per docs/api.md & lifecycle.md).
+            # Delegate to namespace __delitem__ so the teardown is complete: it cleans
+            # obj:/raw:/ref: and cascade-deletes anonymous subtrees, matching the
+            # documented "immediate deletion" rather than leaking raw:/ref:/anons.
+            # A canonical owner still referenced by aliases raises
+            # CanonicalObjectReferencedError — callers must resolve references first
+            # (see GPDCContainerObject.has_referrers()).
+            del self._namespace[self._canonical_name]
             return
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds)
         self.set_lifecycle(policy)

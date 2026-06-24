@@ -337,7 +337,12 @@ class GPDCNamespace(MutableMapping):
                 r.delete(obj_key)
             elif existing.binding_kind == "reference":
                 self._cleanup_alias_binding(key, existing)
-            elif existing.binding_kind == "owner":
+            elif existing.binding_kind == "owner" and not entry.is_container:
+                # Design intent (docs/lifecycle.md "Overwrite caveat"): only
+                # scalar-overwrites-scalar preserves the previous policy. When the
+                # new value is a container, fall through to the default-policy path
+                # below — the scalar owner binding is torn down and re-created like
+                # any container overwrite.
                 is_new = False
                 from .lifecycle import policy_from_meta
 
