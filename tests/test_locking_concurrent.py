@@ -65,6 +65,56 @@ def _worker_holder_then_crash(domain_name: str, ns_name: str, key: str, started_
         os._exit(1)
 
 
+def _worker_hold_and_record_release(
+    domain_name: str,
+    ns_name: str,
+    key: str,
+    release_time_q,
+    lock_timeout: float = 5.0,
+    hold_seconds: float = 0.5,
+):
+    """Worker: acquire lock, hold, then push the release timestamp to a queue.
+
+    Module-level (not a closure) so it survives pickling under Windows' ``spawn``
+    multiprocessing start method, where children re-import ``__main__`` and look up
+    the target by qualified name.
+    """
+    d = GPDCDomain(domain_name, _make_config())
+    try:
+        ns = d.ensure_namespace(ns_name)
+        obj = ns.get_object(key)
+        with obj.lock(timeout=lock_timeout):
+            time.sleep(hold_seconds)
+            release_time_q.put(time.monotonic())
+    finally:
+        d.close()
+
+
+def _writer_lock_and_append(
+    domain_name: str,
+    ns_name: str,
+    key: str,
+    num_elements: int = 20,
+    lock_timeout: float = 5.0,
+):
+    """Worker: append ``num_elements`` items under a per-append lock.
+
+    Module-level (not a closure) so it is picklable under Windows' ``spawn``
+    multiprocessing start method.
+    """
+    cfg = _make_config()
+    cfg.gc_enabled = False
+    d = GPDCDomain(domain_name, cfg)
+    try:
+        ns = d.ensure_namespace(ns_name)
+        obj = ns.get_object(key)
+        for i in range(num_elements):
+            with obj.lock(timeout=lock_timeout):
+                obj.append(i)
+    finally:
+        d.close()
+
+
 class TestCrossProcessMutex:
     def test_two_processes_serialize(self, clean_redis):
         """Two processes both append under lock; entries interleave never."""
@@ -170,18 +220,10 @@ class TestCrossProcessMutex:
         release_time_q = manager.Queue()
         acquired_time_q = manager.Queue()
 
-        def holder():
-            d = GPDCDomain(domain_name, _make_config())
-            try:
-                ns = d.ensure_namespace(ns_name)
-                obj = ns.get_object(key)
-                with obj.lock(timeout=5.0):
-                    time.sleep(0.5)  # hold for 500ms
-                    release_time_q.put(time.monotonic())
-            finally:
-                d.close()
-
-        proc = mp.Process(target=holder)
+        proc = mp.Process(
+            target=_worker_hold_and_record_release,
+            args=(domain_name, ns_name, key, release_time_q),
+        )
         proc.start()
 
         # Give the holder a moment to acquire.
@@ -221,21 +263,11 @@ class TestGCConcurrency:
         ns[key] = []
         d.close()
 
-        def writer():
-            cfg = _make_config()
-            cfg.gc_enabled = False
-            d = GPDCDomain(domain_name, cfg)
-            try:
-                ns = d.ensure_namespace(ns_name)
-                obj = ns.get_object(key)
-                for i in range(20):
-                    with obj.lock(timeout=5.0):
-                        obj.append(i)
-            finally:
-                d.close()
-
         # Run writer in a process.
-        wp = mp.Process(target=writer)
+        wp = mp.Process(
+            target=_writer_lock_and_append,
+            args=(domain_name, ns_name, key),
+        )
         wp.start()
 
         # Concurrently run GC from this process.
