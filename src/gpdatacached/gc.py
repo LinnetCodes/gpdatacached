@@ -92,6 +92,12 @@ def _gc_process_obj_key(r: "redis.Redis", obj_key: str, raw_to_obj: dict[str, st
             return 0
 
     elif key_type == "string":
+        # An alias binding: obj:alias -> "ref:<canonical_obj_key>". Deleting it when its
+        # canonical target is gone is correct GC, NOT a race or dangling-reference risk:
+        # a container element never stores a ref to an *alias* binding — elements store
+        # "ref:<canonical_owner_obj_key>", so the only thing referencing an alias is the
+        # name→canonical mapping itself. See docs/lifecycle.md §10 (GC) and container.py
+        # _encode_as_ref_value / namespace.py _setitem_container_ref.
         ref_value = r.get(obj_key)
         if not ref_value or not ref_value.startswith("ref:"):
             r.delete(obj_key)

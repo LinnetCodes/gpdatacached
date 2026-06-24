@@ -133,6 +133,12 @@ def _propagate_ttl_refresh(r, domain: str, namespace: str, parent_name: str, vis
     if parent_meta is None or not parent_meta.is_collection():
         return
 
+    # Two-pass walk mirroring _propagate_lifecycle: first gather this level's
+    # owned children and their TTL keys, then batch the apply_ttl calls into a
+    # single pipeline (one round-trip per level instead of one per child).
+    # Owned children with no expiry are skipped for TTL re-apply but still
+    # recursed into so deeper descendants are reached.
+    children = []
     for child_name in dict.fromkeys(collect_ref_names_from_raw(r, parent_meta.value, parent_meta.type)):
         if child_name in visited:
             continue
@@ -149,6 +155,17 @@ def _propagate_ttl_refresh(r, domain: str, namespace: str, parent_name: str, vis
             if child_meta.is_collection():
                 keys.append(child_meta.value)
                 keys.append(make_ref_key(domain, namespace, child_name))
-            apply_ttl(r, keys, child_policy)
+            children.append((child_name, keys, child_policy))
+        else:
+            # No TTL to re-apply, but still recurse to reach owned descendants.
+            children.append((child_name, None, None))
 
+    if any(keys is not None for _, keys, _ in children):
+        pipe = r.pipeline(transaction=False)
+        for _, keys, child_policy in children:
+            if keys is not None:
+                apply_ttl(pipe, keys, child_policy)
+        pipe.execute()
+
+    for child_name, _, _ in children:
         _propagate_ttl_refresh(r, domain, namespace, child_name, visited)

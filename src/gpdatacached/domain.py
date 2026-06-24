@@ -313,9 +313,15 @@ class GPDCDomain(GPConfigurable):
         return False
 
     def __del__(self):
-        if not getattr(self, "_closed", True):
-            logger.warning("GPDCDomain %r was not explicitly closed; auto-closing in __del__", self._name)
-            self.close()
+        # __del__ must never raise: during interpreter shutdown module globals
+        # (incl. `logger`) may have been nulled, and an exception here only adds
+        # "Exception ignored" noise. Swallow defensively so auto-close stays silent.
+        try:
+            if not getattr(self, "_closed", True):
+                logger.warning("GPDCDomain %r was not explicitly closed; auto-closing in __del__", self._name)
+                self.close()
+        except Exception:
+            pass
 
 
 def reset_domain_config(name: str, config: "GPDCDomainConfig") -> None:

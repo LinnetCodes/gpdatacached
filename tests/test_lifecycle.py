@@ -176,6 +176,46 @@ class TestSlidingRefresh:
         finally:
             d.close()
 
+    def test_deep_subtree_sliding_refresh_reaches_all_owned_children(self, clean_redis):
+        # A deeper, wider owned subtree: a dict with two list children, one of
+        # which has its own dict child. Every owned node's TTL must be refreshed
+        # on a parent mutation, regardless of tree depth/width. Guards the
+        # _propagate_ttl_refresh walk (incl. its per-level pipeline batching).
+        cfg = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_db=1,
+            redis_password="123456",
+            gc_enabled=False,
+            default_cache_mode="sliding",
+            default_ttl_seconds=10,
+        )
+        d = GPDCDomain("slide_deep", cfg)
+        try:
+            r = d.redis
+            ns = d.ensure_namespace("ns")
+            # Two list children; "nested" itself has a dict child with a list.
+            ns["root"] = {"a": [1, 2], "b": [3, 4], "nested": {"inner": [5, 6]}}
+
+            # Collect every owned raw key in the subtree.
+            anon_a = _extract_anon_name_from_dict(r, "slide_deep", "ns", "root", "a")
+            anon_b = _extract_anon_name_from_dict(r, "slide_deep", "ns", "root", "b")
+            anon_nested = _extract_anon_name_from_dict(r, "slide_deep", "ns", "root", "nested")
+            anon_inner = _extract_anon_name_from_dict(r, "slide_deep", "ns", anon_nested, "inner")
+            raws = [make_raw_key("slide_deep", "ns", n) for n in (anon_a, anon_b, anon_nested, anon_inner)]
+
+            time.sleep(1.5)
+            before = [r.ttl(raw) for raw in raws]
+            assert all(b < 10 for b in before), f"not all decayed: {before}"
+
+            ns["root"]["z"] = "new"  # mutate root -> cascade refresh across whole subtree
+            after = [r.ttl(raw) for raw in raws]
+            for i, (b, a) in enumerate(zip(before, after)):
+                assert a > b, f"node {i} not refreshed: {b} -> {a}"
+                assert a >= 9, f"node {i} not reset toward declared_ttl: {a}"
+        finally:
+            d.close()
+
 
 class TestApplyTtl:
     def test_persist_called_when_expire_seconds_is_none(self):

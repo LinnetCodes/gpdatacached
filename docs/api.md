@@ -212,7 +212,7 @@ class GPDCNamespace(name, domain, *, config=None)   # MutableMapping
 
 A logical isolation space inside a `GPDCDomain`. Implements the full `MutableMapping` protocol backed by Redis.
 
-**Naming rule:** names may use letters, digits, `.` and `_`; names wrapped in `__xxx__` are reserved. Anonymous objects (internal names starting with `~`) are hidden from the public mapping API.
+**Naming rule:** names may use letters, digits, `.` and `_`; names wrapped in `__xxx__` are reserved. Anonymous objects (internal names starting with `~`) are hidden from the public mapping API. Common characters that are **rejected** because they fall outside the allow-list (and, for `:`, collide with the Redis key separator): hyphen `-`, spaces, and `:` — use `_` or `.` instead.
 
 **Properties**
 

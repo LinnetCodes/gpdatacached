@@ -113,7 +113,14 @@ def validate_namespace_name(name: str) -> None:
 
 
 def collect_ref_names_from_raw(r, raw_key: str, raw_type: str) -> list[str]:
-    """Scan a container's raw Redis data and return the names of all referenced objects."""
+    """Scan a container's raw Redis data and return the names of all referenced objects.
+
+    Only ``hash`` (dict) and ``list`` element data is scanned. ``set`` is intentionally
+    NOT handled here: SetCodec stores elements via ``encode_key`` (types.py), which
+    hard-rejects container types, so a set's elements are always scalar-encoded and
+    never carry ``ref:`` references. There are therefore no ref names to collect for a
+    set — the absence of a ``set`` branch is by design, not an omission.
+    """
     if not raw_key:
         return []
     names: list[str] = []
