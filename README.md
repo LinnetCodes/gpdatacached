@@ -110,6 +110,25 @@ Optional built-in extensions under `gpdatacached.extensions`:
 
 ---
 
+## Running Tests
+
+The test suite expects a **local Redis instance** reachable at `127.0.0.1:6379` with password `123456`:
+
+- **Linux** — run Redis directly on the host.
+- **Windows** — run Redis inside WSL; it will be reachable at `localhost` / `127.0.0.1` from the Windows side.
+
+> ⚠️ Some tests **flush the Redis database** (`FLUSHDB`). Always use a dedicated Redis instance for testing — never point the tests at a production database.
+
+Run the suite with:
+
+```bash
+pytest
+```
+
+You can edit the Redis settings in `tests/conftest.py` to point at a different instance, but this is not recommended — running a dedicated throwaway test Redis is usually cheaper and safer.
+
+---
+
 ## License
 
 [MIT](./LICENSE) © Linnet Codes

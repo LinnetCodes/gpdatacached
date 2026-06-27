@@ -110,6 +110,25 @@ GPDCDomain ── GPDCNamespace ── GPDCDataObject (标量 | 容器)
 
 ---
 
+## 运行测试
+
+测试套件需要一个**本地 Redis 实例**，可通过 `127.0.0.1:6379` 访问，密码为 `123456`：
+
+- **Linux** —— 直接在主机上运行 Redis。
+- **Windows** —— 在 WSL 中运行 Redis；从 Windows 侧可通过 `localhost` / `127.0.0.1` 访问。
+
+> ⚠️ 某些测试会**清空 Redis 数据库**（`FLUSHDB`）。请务必使用专供测试用的 Redis 实例 —— 切勿将测试指向生产数据库。
+
+运行测试：
+
+```bash
+pytest
+```
+
+你也可以修改 `tests/conftest.py` 中的 Redis 配置来适配自己的实例，但不推荐这样做 —— 运行一个专用的、一次性的测试 Redis 通常成本更低也更安全。
+
+---
+
 ## 许可证
 
 [MIT](./LICENSE) © Linnet Codes
