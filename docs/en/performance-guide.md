@@ -4,27 +4,6 @@ This guide lists the usage patterns that can **seriously degrade** `gpdatacached
 
 Most of these pitfalls are not bugs — they are inherent costs of operations GPDC *can* perform but that you should use deliberately, not by default.
 
-> Read this in another language: [简体中文](./zh-CN/performance-guide.md)
-
----
-
-## Table of Contents
-
-- [1. The Cost Model](#1-the-cost-model)
-- [2. Cost-per-Operation Reference](#2-cost-per-operation-reference)
-- [3. Sliding TTL Overuse](#3-sliding-ttl-overuse)
-- [4. Excessive Container Nesting](#4-excessive-container-nesting)
-- [5. Unnecessary Garbage Collection](#5-unnecessary-garbage-collection)
-- [6. Lock Misuse](#6-lock-misuse)
-- [7. Round-Trip Anti-Patterns](#7-round-trip-anti-patterns)
-- [8. Container Overwrite vs In-Place Mutation](#8-container-overwrite-vs-in-place-mutation)
-- [9. Enumeration Costs](#9-enumeration-costs)
-- [10. Reference Churn](#10-reference-churn)
-- [11. Network Topology](#11-network-topology)
-- [12. Do / Don't Summary](#12-do--dont-summary)
-
----
-
 ## 1. The Cost Model
 
 Three things dominate GPDC performance. Internalise them and the rest of this guide follows naturally.

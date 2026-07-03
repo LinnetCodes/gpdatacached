@@ -1,0 +1,134 @@
+# MkDocs configuration for gpdatacached.
+#
+# Build locally:
+#   pip install mkdocs mkdocs-material mkdocs-static-i18n
+#   mkdocs serve              # http://127.0.0.1:8000
+#   mkdocs build              # -> site/
+#
+# Deployment (GitHub Pages) is handled separately by the maintainer's workflow.
+#
+# i18n strategy: mkdocs-static-i18n plugin with `docs_structure: folder`.
+#   - English source lives under docs/en/  -> served at  /<page>/
+#   - Simplified-Chinese source under docs/zh/ -> served at /zh/<page>/
+#   - The plugin auto-generates a stay-on-page language selector in the header
+#     (switching language navigates to the SAME page's translation, not the
+#     other language's index). Locale is `zh` (not `zh-CN`) because mkdocs-material
+#     ships a `partials/languages/zh.html` but no `zh-CN.html`.
+#   - Note: a single `nav` below is auto-cloned to both locales by the plugin.
+
+site_name: gpdatacached
+site_url: https://linnetcodes.github.io/gpdatacached/
+site_description: >-
+  Redis-based cross-process data sharing and caching library for Python.
+  Share live, mutable, typed data structures across processes with reference
+  semantics, per-object lifecycle control, and optional distributed locking.
+site_author: Linnet Codes
+repo_url: https://github.com/linnetcodes/gpdatacached
+repo_name: linnetcodes/gpdatacached
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.action.view
+    - search.suggest
+    - search.highlight
+    - search.share
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  icon:
+    logo: material/database-cog
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/linnetcodes/gpdatacached
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/gpdatacached/
+
+plugins:
+  - search:
+      lang:
+        - en
+  - i18n:
+      docs_structure: folder
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+          site_name: gpdatacached
+        - locale: zh
+          name: 简体中文
+          build: true
+          site_name: gpdatacached (中文)
+          # mkdocs-material search supports Chinese via lunr stemmer; keep lang 'zh'
+          # (lunr has no 'zh-CN', the plugin warns and falls back, which is fine).
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - abbr
+  - attr_list
+  - md_in_html
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: "#"
+      toc_depth: 3
+
+# Single nav; the i18n plugin auto-clones it for each locale. Doc paths are
+# relative to the locale folder (docs/en/ or docs/), so just use bare names.
+nav:
+  - Home: index.md
+  - Overview: overview.md
+  - API Reference: api.md
+  - Lifecycle: lifecycle.md
+  - Locking: locking.md
+  - Performance Guide: performance-guide.md
+  - Pydantic Support: pydantic-support.md
+  - Pandas Support: pandas-support.md
+  - Extensibility: extensibility.md

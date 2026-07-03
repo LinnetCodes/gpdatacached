@@ -4,10 +4,6 @@
 
 This index is the entry point for the documentation. Each section below links to a focused document; start with the Overview if you are new to the library.
 
-> Read this in another language: [简体中文](./zh-CN/index.md)
-
----
-
 ## Start here
 
 - **[Overview](./overview.md)** — *design purpose, philosophy, and end-to-end architecture.* Read this first to understand the Domain → Namespace → Object model, the Redis key layout, the ownership/reference/anonymous-object model, and where each subsequent document fits in.

@@ -8,23 +8,6 @@ pandas 是**可选**依赖 —— 请使用 `pandas` 扩展进行安装：
 pip install "gpdatacached[pandas]"
 ```
 
-> 其他语言：[English](../pandas-support.md)
-
----
-
-## 目录
-
-- [设计理念](#设计理念)
-- [支持范围概览](#支持范围概览)
-- [注册](#注册)
-- [快速开始](#快速开始)
-- [访问器成本指南](#访问器成本指南)
-- [SeriesObject](#seriesobject)
-- [DataFrameObject](#dataframeobject)
-- [异常](#异常)
-
----
-
 ## 设计理念
 
 `gpdatacached` 是一个**跨进程共享的缓存**，并非进程内的 pandas 工作区。其预期使用模式是：

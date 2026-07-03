@@ -2,25 +2,6 @@
 
 This document explains **why** `gpdatacached` exists, **how** it is organised, and the **concepts** you need to understand its architecture. It is intentionally light on API usage — for that, see the [API Reference](./api.md).
 
-> Read this in another language: [简体中文](./zh-CN/overview.md)
-
----
-
-## Table of Contents
-
-- [1. Why gpdatacached?](#1-why-gpdatacached)
-- [2. Design Philosophy](#2-design-philosophy)
-- [3. Architecture](#3-architecture)
-- [4. The Domain → Namespace → Object Model](#4-the-domain--namespace--object-model)
-- [5. Redis Key Layout](#5-redis-key-layout)
-- [6. Object Model: Owners, References, Anonymous Objects](#6-object-model-owners-references-anonymous-objects)
-- [7. Encoding & Codec System](#7-encoding--codec-system)
-- [8. Lifecycle & Garbage Collection](#8-lifecycle--garbage-collection)
-- [9. Concurrency Model](#9-concurrency-model)
-- [10. Extensibility](#10-extensibility)
-
----
-
 ## 1. Why gpdatacached?
 
 ### The problem

@@ -2,27 +2,6 @@
 
 `gpdatacached` provides an opt-in distributed lock for serializing access to a `GPDCDataObject` across multiple processes.
 
-> Read this in another language: [简体中文](./zh-CN/locking.md)
-
----
-
-## Table of Contents
-
-- [When you need locking](#when-you-need-locking)
-- [Performance Impact](#performance-impact)
-- [Usage](#usage)
-- [Recommended Usage](#recommended-usage)
-- [Lock scope](#lock-scope)
-- [Acquiring multiple locks](#acquiring-multiple-locks)
-- [Non-blocking try](#non-blocking-try)
-- [GC interaction](#gc-interaction)
-- [Configuration](#configuration)
-- [Changing lock config](#changing-lock-config)
-- [Failure modes](#failure-modes)
-- [Known limitations](#known-limitations)
-
----
-
 ## When you need locking
 
 | Scenario | Locks needed? |

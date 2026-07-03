@@ -2,25 +2,6 @@
 
 本文阐述 `gpdatacached` **为什么**存在、是**如何**组织的，以及理解其架构所需掌握的**概念**。文中刻意不展开 API 用法 —— 相关内容请参阅 [API 参考](./api.md)。
 
-> 其他语言：[English](../overview.md)
-
----
-
-## 目录
-
-- [1. 为什么需要 gpdatacached？](#1-为什么需要-gpdatacached)
-- [2. 设计理念](#2-设计理念)
-- [3. 整体架构](#3-整体架构)
-- [4. Domain → Namespace → Object 模型](#4-domain--namespace--object-模型)
-- [5. Redis Key 布局](#5-redis-key-布局)
-- [6. 对象模型：Owner、Reference 与 Anonymous](#6-对象模型ownerreference-与-anonymous)
-- [7. 编码与 Codec 系统](#7-编码与-codec-系统)
-- [8. 生命周期与垃圾回收](#8-生命周期与垃圾回收)
-- [9. 并发模型](#9-并发模型)
-- [10. 可扩展性](#10-可扩展性)
-
----
-
 ## 1. 为什么需要 gpdatacached？
 
 ### 要解决的问题
@@ -172,7 +153,7 @@ graph TD
 - **binding name（绑定名）** —— 用户获取该对象时使用的 key。
 - **canonical name（规范名）** —— 真正持有底层 Redis 数据的那个名字。
 
-对于普通对象，两者一致。对于**引用（别名）**，两者不同，多个 binding name 可以指向同一个 canonical owner。详见 [§6](#6-对象模型ownerreference-与-anonymous)。
+对于普通对象，两者一致。对于**引用（别名）**，两者不同，多个 binding name 可以指向同一个 canonical owner。详见 [§6](#6-ownerreference-anonymous)。
 
 ---
 
@@ -206,7 +187,7 @@ gpdc:{domain}:{ns}:locknotify:{name}            LIST  —— 锁的 BLPOP 唤醒
 
 **每个对象的三类 key 族。** 一个 canonical 容器对象最多持有三个 key —— `obj:`（元信息 hash）、`raw:`（元素数据）、`ref:`（引用者集合）。标量只持有 `obj:`。别名只持有一个存放 `ref:` 指针的 `obj:` 字符串。
 
-**保留名。** 形如 `__xxx__` 的名称被保留（供上面的 meta key 使用），会被校验器拒绝。以 `~` 开头的名称是匿名对象（见 [§6](#6-对象模型ownerreference-与-anonymous)），对公开的映射 API 不可见。
+**保留名。** 形如 `__xxx__` 的名称被保留（供上面的 meta key 使用），会被校验器拒绝。以 `~` 开头的名称是匿名对象（见 [§6](#6-ownerreference-anonymous)），对公开的映射 API 不可见。
 
 ---
 

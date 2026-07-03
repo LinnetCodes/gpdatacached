@@ -1,28 +1,7 @@
 # Extensibility
 
 This document explains how `gpdatacached`'s type system works and how to add support for **your own types** — both scalar and container — by writing a codec, an object class, and registering them. The built-in scalar types (`int`, `str`, …), container types (`list`, `dict`, `set`), and the optional extensions (pydantic, pandas) are all built on exactly the same public mechanism described here.
-
-> Read this in another language: [简体中文](./zh-CN/extensibility.md)
-
 > **Do you need to read this?** For the large majority of users and use cases, GPDC's built-in types — together with the bundled [Pydantic](./pydantic-support.md) and [Pandas](./pandas-support.md) extensions — are already enough. If you do need a custom type, a **scalar** type or a **flat (non-nested) container** type will cover most real-world extension needs, and both are relatively straightforward to write. Reach for the full machinery described here only when you are extending a genuinely complex type (something on the order of `pandas.Series` / `pandas.DataFrame`). In that case, read this document carefully **and** study the [Lifecycle](./lifecycle.md), [Locking](./locking.md), and [Performance Guide](./performance-guide.md) documents as well — getting a complex type right requires a fairly complete mental model of GPDC; otherwise it is easy to introduce subtle bugs.
-
----
-
-## Table of Contents
-
-- [1. The Type System at a Glance](#1-the-type-system-at-a-glance)
-- [2. The Registration Triple](#2-the-registration-triple)
-- [3. Type Resolution: encode vs decode](#3-type-resolution-encode-vs-decode)
-- [4. The Codec Contract](#4-the-codec-contract)
-- [5. The Object Class Contract](#5-the-object-class-contract)
-- [6. The Four-Step Extension Recipe](#6-the-four-step-extension-recipe)
-- [7. Worked Example: A Custom Scalar Type (`Color`)](#7-worked-example-a-custom-scalar-type-color)
-- [8. Priority in Practice: Subclass Relationships](#8-priority-in-practice-subclass-relationships)
-- [9. Worked Example: A Custom Container Type (`Counter`)](#9-worked-example-a-custom-container-type-counter)
-- [10. Element Encoding: Scalar Members vs Nested Containers](#10-element-encoding-scalar-members-vs-nested-containers)
-- [11. Mutation Hooks Every Container Must Call](#11-mutation-hooks-every-container-must-call)
-- [12. Registration Checklist & Gotchas](#12-registration-checklist--gotchas)
-- [13. Built-in Extensions](#13-built-in-extensions)
 
 ---
 

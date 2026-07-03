@@ -1,28 +1,7 @@
 # 可扩展性
 
 本文阐述 `gpdatacached` 的类型系统如何工作，以及如何通过编写 codec、对象类并注册它们，来**为你自己的类型**添加支持 —— 包括标量与容器两种。内建的标量类型（`int`、`str` …）、容器类型（`list`、`dict`、`set`）以及可选扩展（pydantic、pandas）全都构建在本文所描述的同一套公开机制之上。
-
-> 其他语言：[English](../extensibility.md)
-
 > **你需要读这份文档吗？** 对绝大多数用户和绝大多数场景而言，GPDC 的内建类型 —— 加上自带的 [Pydantic](./pydantic-support.md) 与 [Pandas](./pandas-support.md) 扩展 —— 就已经够用了。即使确实需要自定义类型，扩展一个**标量**类型、或一个**扁平（元素不嵌套容器）的容器**类型，就能满足大多数现实中的扩展需求，而且这两者写起来相对简单。只有当你需要扩展的类型足够复杂（量级类似 `pandas.Series` / `pandas.DataFrame`）时，才需要用到本文档描述的完整机制；这种情况下，请仔细通读本文档，**并**同时研读[生命周期管理](./lifecycle.md)、[多进程加锁](./locking.md) 与[性能指南](./performance-guide.md) —— 把一个复杂类型做对，需要对 GPDC 有相当全面的认知，否则很容易引入难以察觉的 bug。
-
----
-
-## 目录
-
-- [1. 类型系统概览](#1-类型系统概览)
-- [2. 注册三元组](#2-注册三元组)
-- [3. 类型解析：编码 vs 解码](#3-类型解析编码-vs-解码)
-- [4. Codec 契约](#4-codec-契约)
-- [5. 对象类契约](#5-对象类契约)
-- [6. 四步扩展配方](#6-四步扩展配方)
-- [7. 完整示例：自定义标量类型（`Color`）](#7-完整示例自定义标量类型color)
-- [8. 优先级的实际用法：子类关系](#8-优先级的实际用法子类关系)
-- [9. 完整示例：自定义容器类型（`Counter`）](#9-完整示例自定义容器类型counter)
-- [10. 元素编码：标量成员 vs 嵌套容器](#10-元素编码标量成员-vs-嵌套容器)
-- [11. 每个容器都必须调用的变更钩子](#11-每个容器都必须调用的变更钩子)
-- [12. 注册检查清单与陷阱](#12-注册检查清单与陷阱)
-- [13. 内建扩展](#13-内建扩展)
 
 ---
 
@@ -55,7 +34,7 @@ graph LR
 | **标量（scalar）** | 单个编码字符串，存于对象元信息 hash 内 | `GPDCScalarCodec` | `GPDCScalarObject` | `int`、`str`、`datetime`、`tuple`、`None` |
 | **容器（container）** | 元素数据存放在独立的 Redis key（`raw:`）中 | `GPDCContainerCodec` | `GPDCContainerObject` | `list`、`dict`、`set` |
 
-> 注意：`tuple` 被注册为**标量**（一种以单个 JSON 字符串存储的“复合标量”），而非容器。某个类型是标量还是容器，是你在注册时做出的设计选择 —— 见 [§4](#4-codec-契约)。
+> 注意：`tuple` 被注册为**标量**（一种以单个 JSON 字符串存储的“复合标量”），而非容器。某个类型是标量还是容器，是你在注册时做出的设计选择 —— 见 [§4](#4-codec)。
 
 ---
 
@@ -101,7 +80,7 @@ graph TD
 
 ### 优先级规则
 
-注册表按 **`priority` 降序**遍历条目，返回第一个其 `python_type` 能通过 `isinstance` 匹配 `value` 的条目。这一点在你自定义的类型**子类化了某个已注册类型**时至关重要。内建类型就依赖它：`bool` 以 `priority=10` 注册，`int` 以 `priority=0` 注册，因此 `True` 会优先命中 `bool`（否则会被错误地路由到 `int`，因为 `bool` 是 `int` 的子类）。见 [§8](#8-优先级的实际用法子类关系)。
+注册表按 **`priority` 降序**遍历条目，返回第一个其 `python_type` 能通过 `isinstance` 匹配 `value` 的条目。这一点在你自定义的类型**子类化了某个已注册类型**时至关重要。内建类型就依赖它：`bool` 以 `priority=10` 注册，`int` 以 `priority=0` 注册，因此 `True` 会优先命中 `bool`（否则会被错误地路由到 `int`，因为 `bool` 是 `int` 的子类）。见 [§8](#8)。
 
 ---
 
@@ -170,7 +149,7 @@ class GPDCContainerCodec(ABC):
 | `read_raw(namespace, raw_key) -> object` | 在 `.value` 读取时 | 从 Redis 重构并返回一个普通 Python 对象。 |
 | `delete_raw(namespace, raw_key)` | 重新创建前，以及拆解时 | 删除 raw key。 |
 
-`namespace` 参数提供 `namespace._redis()`（Redis 客户端）以及 `namespace.domain.name` / `namespace.name`（用于构造 key）。`owner_name`、`cache_mode`、`ttl` 被透传，以便嵌套元素编码（见 [§10](#10-元素编码标量成员-vs-嵌套容器)）能应用正确的策略。
+`namespace` 参数提供 `namespace._redis()`（Redis 客户端）以及 `namespace.domain.name` / `namespace.name`（用于构造 key）。`owner_name`、`cache_mode`、`ttl` 被透传，以便嵌套元素编码（见 [§10](#10-vs)）能应用正确的策略。
 
 ---
 
@@ -215,7 +194,7 @@ class MyObject(GPDCScalarObject):
 - 所混入 ABC 的全部抽象方法（`__getitem__`、`__setitem__`、`__delitem__`、`__len__`、`__iter__`、`insert` …）。
 - 一个 `deepcopy()` 方法。
 
-你继承 `_touch()`、引用追踪辅助（`_release_element_ref`、`_data_owner_name`、`referrers()`）以及 encode/decode 辅助 —— 它们是 [§11](#11-每个容器都必须调用的变更钩子) 的积木。
+你继承 `_touch()`、引用追踪辅助（`_release_element_ref`、`_data_owner_name`、`referrers()`）以及 encode/decode 辅助 —— 它们是 [§11](#11) 的积木。
 
 ---
 
@@ -362,7 +341,7 @@ GPDCTypeRegistry.register(
 from collections import Counter
 ```
 
-`Counter` 是 `dict` 的子类 —— 因此我们需要 `priority > 0` 才能在 `dict` 之前被匹配（见 [§8](#8-优先级的实际用法子类关系)）。
+`Counter` 是 `dict` 的子类 —— 因此我们需要 `priority > 0` 才能在 `dict` 之前被匹配（见 [§8](#8)）。
 
 ### 第 2 步 —— codec
 
@@ -396,7 +375,7 @@ class CounterCodec(GPDCContainerCodec):
 
 说明：
 
-- 成员是**标量**，所以我们用 `encode_key` / `decode_key`（键编码辅助）。对于元素本身可能是容器的情形，应改用 `encode_element` / `decode_element` —— 见 [§10](#10-元素编码标量成员-vs-嵌套容器)。
+- 成员是**标量**，所以我们用 `encode_key` / `decode_key`（键编码辅助）。对于元素本身可能是容器的情形，应改用 `encode_element` / `decode_element` —— 见 [§10](#10-vs)。
 - 计数以普通十进制字符串存储。它们是标量，但我们内联存储，而非把 `int` 注册为“计数”，因为计数的含义仅对本容器局部有效。
 - `value` 为空时 `create_raw` 是空操作 —— GPDC 让 raw key 不存在，`read_raw` 返回空 `Counter`。
 
@@ -498,7 +477,7 @@ assert "world" not in counts
 | `encode_key(value)` / `decode_key(encoded)` | 可哈希标量元素（dict 键、set 成员、本例 Counter 的成员） | 始终是 `prefix:payload` 字符串；拒绝容器和空元组 |
 | `encode_element(value, namespace, owner_name, policy)` / `decode_element(encoded, namespace)` | 元素**既可能**是标量**也可能**是容器 | 一个标量编码字符串，**或**一个解析为活跃 `GPDCContainerObject` 的 `ref:{obj_key}` 指针 |
 
-例如，内建 `DictCodec` 对键（始终标量）使用 `encode_key`，但对值（可能是嵌套 list/dict/set）使用 `encode_element`。内建 `ListCodec` 对每个元素都用 `encode_element`。当你移除或覆盖一个后来发现是 `ref:` 指针的元素时，必须调用 `self._release_element_ref(old_encoded)`，以便递减匿名子对象的引用者计数（并在最后一个引用者消失时级联删除） —— 见 [§11](#11-每个容器都必须调用的变更钩子)。
+例如，内建 `DictCodec` 对键（始终标量）使用 `encode_key`，但对值（可能是嵌套 list/dict/set）使用 `encode_element`。内建 `ListCodec` 对每个元素都用 `encode_element`。当你移除或覆盖一个后来发现是 `ref:` 指针的元素时，必须调用 `self._release_element_ref(old_encoded)`，以便递减匿名子对象的引用者计数（并在最后一个引用者消失时级联删除） —— 见 [§11](#11)。
 
 当 `create_raw` 在一次调用中编码**多个兄弟元素**时，请用 **`encode_session`** 上下文管理器包裹编码循环。它提供循环检测与原子回滚：编码中途失败时，会删除本次调用期间创建的所有匿名对象，让 Redis 保持原样：
 
@@ -518,7 +497,7 @@ def create_raw(cls, namespace, raw_key, value, owner_name, cache_mode, ttl):
 
 > 完整参考可研读 `src/gpdatacached/builtins/list_object.py` 与 `dict_object.py` —— 它们展示了针对嵌套容器型容器的完整 encode/decode/release 模式。
 
-> ⚠️ **性能提示。** 每个嵌套容器都会成为独立的匿名对象，拥有自己的 key、引用追踪与 TTL。深嵌套会在存储、读取、sliding 刷新、级联删除上叠加此代价。何时该扁平化，见[性能指南 §4](./performance-guide.md#4-过深的容器嵌套)。
+> ⚠️ **性能提示。** 每个嵌套容器都会成为独立的匿名对象，拥有自己的 key、引用追踪与 TTL。深嵌套会在存储、读取、sliding 刷新、级联删除上叠加此代价。何时该扁平化，见[性能指南 §4](./performance-guide.md#4)。
 
 ---
 
@@ -555,7 +534,7 @@ def __setitem__(self, key, value):
 
 ### c) 多元素编码时使用 `encode_session`
 
-见 [§10](#10-元素编码标量成员-vs-嵌套容器)。单元素变更（`append`、单值 `__setitem__`）不需要 —— 编码路径内部会开启一个回退会话。
+见 [§10](#10-vs)。单元素变更（`append`、单值 `__setitem__`）不需要 —— 编码路径内部会开启一个回退会话。
 
 > 这些钩子参与的所有权与引用计数模型，完整说明见[生命周期管理](./lifecycle.md)。
 

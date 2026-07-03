@@ -8,23 +8,6 @@ pandas is an **optional** dependency — install it with the `pandas` extra:
 pip install "gpdatacached[pandas]"
 ```
 
-> Read this in another language: [简体中文](./zh-CN/pandas-support.md)
-
----
-
-## Table of Contents
-
-- [Design Philosophy](#design-philosophy)
-- [Scope at a Glance](#scope-at-a-glance)
-- [Registration](#registration)
-- [Quick Start](#quick-start)
-- [Accessor Cost Guide](#accessor-cost-guide)
-- [SeriesObject](#seriesobject)
-- [DataFrameObject](#dataframeobject)
-- [Exceptions](#exceptions)
-
----
-
 ## Design Philosophy
 
 `gpdatacached` is a **cache shared across processes**, not an in-process pandas workspace. The intended usage pattern is:

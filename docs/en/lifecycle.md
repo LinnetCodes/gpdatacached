@@ -4,27 +4,6 @@ This document describes how `gpdatacached` manages the lifecycle of data objects
 
 Most users never need to manage lifecycle manually. The purpose of this document is to give you **correct expectations** about when objects appear, refresh, expire, and disappear, so that the library's automatic behaviour does not surprise you.
 
-> Read this in another language: [简体中文](./zh-CN/lifecycle.md)
-
----
-
-## Table of Contents
-
-- [1. What "lifecycle" means here](#1-what-lifecycle-means-here)
-- [2. The Policy Model](#2-the-policy-model)
-- [3. Policy Resolution: where defaults come from](#3-policy-resolution-where-defaults-come-from)
-- [4. TTL Application Semantics](#4-ttl-application-semantics)
-- [5. Sliding-Window Refresh](#5-sliding-window-refresh)
-- [6. Manual Policy Changes & Cascade Propagation](#6-manual-policy-changes--cascade-propagation)
-- [7. The Ownership Model](#7-the-ownership-model)
-- [8. Anonymous Object Lifecycle](#8-anonymous-object-lifecycle)
-- [9. Reference (Alias) Lifecycle](#9-reference-alias-lifecycle)
-- [10. Garbage Collection](#10-garbage-collection)
-- [11. The Manual Lifecycle API](#11-the-manual-lifecycle-api)
-- [12. Expectations & Common Pitfalls](#12-expectations--common-pitfalls)
-
----
-
 ## 1. What "lifecycle" means here
 
 A GPDC object's lifecycle has four phases:
@@ -263,7 +242,7 @@ Each anonymous object gets a generated name (`~anon:{uuid}`), its own `obj:`/`ra
 Anonymous objects inherit the policy that was active during encoding — i.e. the parent container's effective policy at create time (`policy_from_defaults` computed from the parent's context). After creation, their lifecycle is **driven by the owner chain**, not by their own policy alone:
 
 - A `sliding` mutation on any descendant refreshes the self-owned ancestor's TTL (see [§5](#5-sliding-window-refresh)).
-- A policy change on the self-owned ancestor propagates down to owned children (see [§6](#6-manual-policy-changes--cascade-propagation)).
+- A policy change on the self-owned ancestor propagates down to owned children (see [§6](#6-manual-policy-changes-cascade-propagation)).
 
 ### Reference counting
 

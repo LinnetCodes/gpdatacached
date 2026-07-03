@@ -4,41 +4,6 @@
 
 This document is the complete reference for the public API exported by `gpdatacached.__init__`.
 
-> Read this in another language: [简体中文](./zh-CN/api.md)
-
----
-
-## Table of Contents
-
-- [Installation](#installation)
-- [Core Concepts](#core-concepts)
-- [Quick Start](#quick-start)
-- [Core Types](#core-types)
-  - [GPDCDomain](#gpdcdomain)
-  - [GPDCDomainConfig](#gpdcdomainconfig)
-  - [GPDCNamespace](#gpdcnamespace)
-  - [GPDCNamespaceConfig](#gpdcnamespaceconfig)
-  - [reset_domain_config](#reset_domain_config)
-- [Data Objects](#data-objects)
-  - [GPDCDataObject](#gpdcdataobject)
-  - [GPDCScalarObject](#gpdcscalarobject)
-  - [GPDCContainerObject](#gpdccontainerobject)
-- [Built-in Scalar Types](#built-in-scalar-types)
-- [Built-in Container Types](#built-in-container-types)
-- [Codecs](#codecs)
-  - [GPDCCodec](#gpdccodec)
-  - [GPDCScalarCodec](#gpdcscalarcodec)
-  - [GPDCContainerCodec](#gpdccontainercodec)
-- [Type Registry](#type-registry)
-- [Key & URI Utilities](#key--uri-utilities)
-- [Exceptions](#exceptions)
-- [Cache Modes & Lifecycle](#cache-modes--lifecycle)
-- [Extensions](#extensions)
-  - [Pydantic Support](#pydantic-support)
-  - [Pandas Support](#pandas-support)
-
----
-
 ## Installation
 
 ```bash

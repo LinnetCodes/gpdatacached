@@ -4,41 +4,6 @@
 
 本文档是 `gpdatacached.__init__` 所导出公共 API 的完整参考。
 
-> 其他语言：[English](../api.md)
-
----
-
-## 目录
-
-- [安装](#安装)
-- [核心概念](#核心概念)
-- [快速开始](#快速开始)
-- [核心类型](#核心类型)
-  - [GPDCDomain](#gpdcdomain)
-  - [GPDCDomainConfig](#gpdcdomainconfig)
-  - [GPDCNamespace](#gpdcnamespace)
-  - [GPDCNamespaceConfig](#gpdcnamespaceconfig)
-  - [reset_domain_config](#reset_domain_config)
-- [数据对象](#数据对象)
-  - [GPDCDataObject](#gpdcdataobject)
-  - [GPDCScalarObject](#gpdcscalarobject)
-  - [GPDCContainerObject](#gpdccontainerobject)
-- [内建标量类型](#内建标量类型)
-- [内建容器类型](#内建容器类型)
-- [编解码器（Codec）](#编解码器codec)
-  - [GPDCCodec](#gpdccodec)
-  - [GPDCScalarCodec](#gpdcscalarcodec)
-  - [GPDCContainerCodec](#gpdccontainercodec)
-- [类型注册表](#类型注册表)
-- [Key 与 URI 工具函数](#key-与-uri-工具函数)
-- [异常](#异常)
-- [缓存模式与生命周期](#缓存模式与生命周期)
-- [扩展（Extensions）](#扩展extensions)
-  - [Pydantic 支持](#pydantic-支持)
-  - [Pandas 支持](#pandas-支持)
-
----
-
 ## 安装
 
 ```bash
@@ -502,7 +467,7 @@ GPDC 类型 `collection:set`，底层为 Redis set。
 
 ## 编解码器（Codec）
 
-Codec 负责 Python 值与 Redis 存储表示之间的相互转换。注册到 [`GPDCTypeRegistry`](#类型注册表) 的每种类型都必须提供一个 codec。
+Codec 负责 Python 值与 Redis 存储表示之间的相互转换。注册到 [`GPDCTypeRegistry`](#_8) 的每种类型都必须提供一个 codec。
 
 > 本节为 API 摘要。有关编写 codec 的完整指南 —— 标量与容器，含实战示例（`Color`、`Counter`）以及每个容器都必须调用的变更钩子 —— 见专门的[可扩展性](./extensibility.md)文档。
 

@@ -2,25 +2,6 @@
 
 `gpdatacached.extensions.pydantic_support` 让 [pydantic](https://docs.pydantic.dev/) 的 `BaseModel` 子类可以作为 GPDC 对象被缓存。pydantic 本身就是 `gpdatacached` 的核心依赖，因此无需额外安装。
 
-> 其他语言：[English](../pydantic-support.md)
-
----
-
-## 目录
-
-- [概述](#概述)
-- [两种存储模式](#两种存储模式)
-- [注册](#注册)
-- [快速开始](#快速开始)
-- [标量模式](#标量模式)
-  - [PydanticModelScalarCodec](#pydanticmodelscalarcodec)
-- [容器模式](#容器模式)
-  - [PydanticModelContainerCodec](#pydanticmodelcontainercodec)
-  - [BaseModelContainerObject](#basemodelcontainerobject)
-- [如何选择模式](#如何选择模式)
-
----
-
 ## 概述
 
 pydantic 的 `BaseModel` 是一组具名字段。`pydantic_support` 提供两种缓存方式：

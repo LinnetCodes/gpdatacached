@@ -2,25 +2,6 @@
 
 `gpdatacached.extensions.pydantic_support` makes [pydantic](https://docs.pydantic.dev/) `BaseModel` subclasses cacheable as GPDC objects. Pydantic is already a core dependency of `gpdatacached`, so no extra install is required.
 
-> Read this in another language: [简体中文](./zh-CN/pydantic-support.md)
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Two Storage Modes](#two-storage-modes)
-- [Registration](#registration)
-- [Quick Start](#quick-start)
-- [Scalar Mode](#scalar-mode)
-  - [PydanticModelScalarCodec](#pydanticmodelscalarcodec)
-- [Container Mode](#container-mode)
-  - [PydanticModelContainerCodec](#pydanticmodelcontainercodec)
-  - [BaseModelContainerObject](#basemodelcontainerobject)
-- [Choosing a Mode](#choosing-a-mode)
-
----
-
 ## Overview
 
 A pydantic `BaseModel` is a record of named fields. `pydantic_support` gives you two ways to cache one:
