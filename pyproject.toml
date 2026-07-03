@@ -11,7 +11,7 @@ authors = [
 ]
 keywords = ["redis", "cache", "cross-process", "data-sharing"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -54,6 +54,7 @@ Homepage = "https://github.com/linnetcodes/gpdatacached"
 Documentation = "https://linnetcodes.github.io/gpdatacached"
 Repository = "https://github.com/linnetcodes/gpdatacached"
 Issues = "https://github.com/linnetcodes/gpdatacached/issues"
+Changelog = "https://github.com/LinnetCodes/gpdatacached/releases"
 
 [build-system]
 requires = ["hatchling>=1.27"]
