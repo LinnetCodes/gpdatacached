@@ -2,7 +2,7 @@
 
 # Software library version (SemVer), tracks feature releases and bugfixes.
 # Independent of GPDC_PROTOCOL_VERSION in domain.py.
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .codec import GPDCCodec, GPDCContainerCodec, GPDCScalarCodec
 from .config import GPDCDomainConfig, GPDCNamespaceConfig

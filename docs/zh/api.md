@@ -57,7 +57,7 @@ config = GPDCDomainConfig(
     redis_db=0,
     redis_password="secret",
 )
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 
 # 2. 获取或创建 namespace。
 ns = domain.ensure_namespace("analytics")
@@ -95,7 +95,7 @@ domain.close()
 ### `GPDCDomain`
 
 ```python
-class GPDCDomain(name: str, config: GPDCDomainConfig)
+class GPDCDomain(config: GPDCDomainConfig, name: str | None = None)
 ```
 
 配置根与 Redis 连接池。构造时会：
@@ -239,7 +239,7 @@ def reset_domain_config(name: str, config: GPDCDomainConfig) -> None
 
 ```python
 reset_domain_config("mydomain", old_config)     # 必须在构造之前调用
-domain = GPDCDomain("mydomain", new_config)     # 写入新的锁配置
+domain = GPDCDomain(new_config, name="mydomain")     # 写入新的锁配置
 ```
 
 只会读取 `config` 中的 Redis 连接字段；传入 config 上的锁字段会被忽略。

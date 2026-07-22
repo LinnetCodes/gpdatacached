@@ -67,7 +67,7 @@
 from gpdatacached import GPDCDomain, GPDCDomainConfig
 
 config = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_password="...")
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 ns = domain.ensure_namespace("myns")
 
 ns["counter"] = 0
@@ -174,7 +174,7 @@ new_config = GPDCDomainConfig(
     redis_host="127.0.0.1", redis_port=6379, redis_password="...",
     default_lock_ttl_seconds=60,
 )
-domain = GPDCDomain("mydomain", new_config)
+domain = GPDCDomain(new_config, name="mydomain")
 ```
 
 ---

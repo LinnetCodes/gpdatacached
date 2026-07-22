@@ -103,7 +103,7 @@ GPDCTypeRegistry.register(
 
 # ── Use ──────────────────────────────────────────────────────────
 config = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_password="secret")
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 ns = domain.ensure_namespace("app")
 
 # Scalar mode: atomic read/write of the whole model.

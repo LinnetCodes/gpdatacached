@@ -57,7 +57,7 @@ config = GPDCDomainConfig(
     redis_db=0,
     redis_password="secret",
 )
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 
 # 2. Get or create a namespace.
 ns = domain.ensure_namespace("analytics")
@@ -95,7 +95,7 @@ domain.close()
 ### `GPDCDomain`
 
 ```python
-class GPDCDomain(name: str, config: GPDCDomainConfig)
+class GPDCDomain(config: GPDCDomainConfig, name: str | None = None)
 ```
 
 The configuration root and Redis connection pool. On construction it:
@@ -239,7 +239,7 @@ Delete the four lock-config fields (`default_lock_ttl_seconds`, `default_lock_ac
 
 ```python
 reset_domain_config("mydomain", old_config)     # must be called BEFORE construction
-domain = GPDCDomain("mydomain", new_config)     # writes the new lock config
+domain = GPDCDomain(new_config, name="mydomain")     # writes the new lock config
 ```
 
 Only the Redis connection fields on `config` are read; lock fields on the passed config are ignored.

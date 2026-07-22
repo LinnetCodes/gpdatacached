@@ -110,7 +110,7 @@ class TestGCCleanupOnDomainClose:
             redis_password="123456",
             gc_enabled=True,
         )
-        domain = GPDCDomain("testdomain", config)
+        domain = GPDCDomain(config, name="testdomain")
         domain.close()
         assert domain._gc_thread is None or not domain._gc_thread.is_alive()
 

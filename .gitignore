@@ -177,6 +177,9 @@ CLAUDE.md
 AGENTS.md
 .opencode/
 
+# ZCode
+.zcode/
+
 # Github Copilot
 .github/copilot-instructions.md
 

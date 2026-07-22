@@ -25,7 +25,7 @@ class TestRedisConnectionFailure:
 
             with patch("gpdatacached.domain.redis.Redis", return_value=mock_redis_instance):
                 with pytest.raises(redis.ConnectionError, match="Connection refused"):
-                    GPDCDomain("failing_domain", cfg)
+                    GPDCDomain(cfg, name="failing_domain")
 
     def test_connection_error_on_pool_creation(self):
         cfg = GPDCDomainConfig(
@@ -39,4 +39,4 @@ class TestRedisConnectionFailure:
             "gpdatacached.domain.redis.ConnectionPool", side_effect=redis.ConnectionError("Pool creation failed")
         ):
             with pytest.raises(redis.ConnectionError, match="Pool creation failed"):
-                GPDCDomain("failing_domain", cfg)
+                GPDCDomain(cfg, name="failing_domain")

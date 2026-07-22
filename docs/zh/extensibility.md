@@ -286,7 +286,7 @@ GPDCTypeRegistry.register(
     priority=0,
 )
 
-domain = GPDCDomain("app", GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379))
+domain = GPDCDomain(GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379), name="app")
 ns = domain.ensure_namespace("ui")
 
 ns["background"] = Color(10, 20, 30)
@@ -453,7 +453,7 @@ GPDCTypeRegistry.register(
     priority=10,          # Counter 是 dict 子类 → 必须压过 dict（priority 0）
 )
 
-domain = GPDCDomain("counterapp", GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379))
+domain = GPDCDomain(GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379), name="counterapp")
 ns = domain.ensure_namespace("words")
 
 ns["word_counts"] = Counter({"hello": 3, "world": 1})

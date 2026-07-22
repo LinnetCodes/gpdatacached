@@ -52,7 +52,7 @@ config = GPDCDomainConfig(
     redis_port=6379,
     redis_password="secret",
 )
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 ns = domain.ensure_namespace("analytics")
 
 # 标量读取出来是原生 Python 值。

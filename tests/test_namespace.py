@@ -1742,7 +1742,7 @@ class TestNamespaceErrorPaths:
         r = redis_lib.Redis(host="127.0.0.1", port=6379, db=1, password="123456", decode_responses=True)
         r.flushdb()
         cfg = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_db=1, redis_password="123456")
-        domain = GPDCDomain("testdomain", cfg)
+        domain = GPDCDomain(cfg, name="testdomain")
         ns1 = domain.ensure_namespace("ns1")
         ns2 = domain.ensure_namespace("ns2")
         ns1["lst"] = [1, 2, 3]
