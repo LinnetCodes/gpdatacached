@@ -1,0 +1,30 @@
+# Integration-test domain config: "core_domain".
+#
+# Uses the shared default test Redis instance (see tests/conftest.py):
+#   host 127.0.0.1, port 6379, db 1, password "123456"  (tests FLUSH this DB).
+#
+# Two namespaces, both with non-default lifecycle policies so integration tests
+# exercise real TTL/sliding propagation rather than the permanent default:
+#   - core_app   : ttl cache mode (fixed 1h expiry)
+#   - core_cache : sliding cache mode (refreshed on every mutation)
+cfg_class_name: GPDCDomainConfig
+configured_class_name: GPDCDomain
+redis_host: 127.0.0.1
+redis_port: 6379
+redis_db: 1
+redis_password: "123456"
+default_cache_mode: permanent
+default_ttl_seconds: 0
+gc_enabled: false
+gc_interval_seconds: 300
+default_lock_ttl_seconds: 30
+default_lock_acquire_timeout_seconds: 30
+gc_lock_ttl_seconds: 30
+gc_lock_wait_seconds: 5
+namespaces:
+  core_app:
+    default_cache_mode: ttl
+    default_ttl_seconds: 3600
+  core_cache:
+    default_cache_mode: sliding
+    default_ttl_seconds: 7200
