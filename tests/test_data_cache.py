@@ -1,9 +1,43 @@
 # tests/test_data_cache.py
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from gpdatacached.exceptions import ObjectNotFoundByURIError, GPDCError
+
+CONFIGS_DIR = Path(__file__).parent / "configs"
+
+
+@pytest.fixture
+def gpdc_config_folder():
+    """A GPConfigFolder rooted at tests/configs/gpdc, built from tests/configs."""
+    from gpconfig import GPConfigManager
+
+    mgr = GPConfigManager("gpdatacached", cfg_folder=str(CONFIGS_DIR))
+    return mgr.get_config("gpdc")
+
+
+@pytest.fixture
+def data_cache(gpdc_config_folder, clean_redis):
+    """A GPDataCache over the sample configs. Closes on teardown.
+
+    clean_redis (from conftest.py) flushes db 1 before the test, so the
+    domains constructed from core_domain.yaml / edge_domain.yaml start empty.
+    """
+    from gpdatacached.data_cache import GPDataCache
+
+    cache = GPDataCache(gpdc_config_folder)
+    yield cache
+    cache.close()
+
+
+class TestConfigFolderFixture:
+    def test_folder_lists_sample_domains(self, gpdc_config_folder):
+        names = gpdc_config_folder.list_configs()
+        assert "core_domain" in names
+        assert "edge_domain" in names
 
 
 class TestObjectNotFoundByURIError:
