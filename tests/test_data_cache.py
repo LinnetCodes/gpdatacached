@@ -122,3 +122,49 @@ class TestGPDataCacheDomainManagement:
             d = cache.get_domain("core_domain")
             assert d._closed is False
         assert d._closed is True
+
+
+class TestGetObjectByURIRoot:
+    def test_scalar_root_returns_object_not_value(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["counter"] = 42
+
+        obj = data_cache.get_object_by_uri("gpdc://core_domain/core_app/counter")
+        from gpdatacached import IntObject
+
+        assert isinstance(obj, IntObject)
+        assert obj.value == 42
+
+    def test_container_root_returns_object(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["config"] = {"a": 1}
+
+        obj = data_cache.get_object_by_uri("gpdc://core_domain/core_app/config")
+        from gpdatacached import DictObject
+
+        assert isinstance(obj, DictObject)
+
+    def test_missing_scheme_raises(self, data_cache):
+        with pytest.raises(ObjectNotFoundByURIError) as ei:
+            data_cache.get_object_by_uri("http://d/ns/x")
+        assert "gpdc://" in str(ei.value.reason)
+
+    def test_too_few_segments_raises(self, data_cache):
+        with pytest.raises(ObjectNotFoundByURIError):
+            data_cache.get_object_by_uri("gpdc://d/ns")
+
+    def test_unknown_domain_raises(self, data_cache):
+        with pytest.raises(ObjectNotFoundByURIError) as ei:
+            data_cache.get_object_by_uri("gpdc://no_such_domain/ns/x")
+        assert ei.value.uri == "gpdc://no_such_domain/ns/x"
+
+    def test_missing_namespace_raises(self, data_cache):
+        with pytest.raises(ObjectNotFoundByURIError):
+            data_cache.get_object_by_uri("gpdc://core_domain/no_such_ns/x")
+
+    def test_missing_root_object_raises(self, data_cache):
+        with pytest.raises(ObjectNotFoundByURIError) as ei:
+            data_cache.get_object_by_uri("gpdc://core_domain/core_app/no_such_obj")
+        assert "no_such_obj" in str(ei.value.reason) or "no_such_obj" in str(ei.value)

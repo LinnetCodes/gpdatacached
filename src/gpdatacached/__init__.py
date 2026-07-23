@@ -12,6 +12,7 @@ from .exceptions import (
     GPDCLockConfigInconsistentError,
     LockAcquisitionTimeout,
     ObjectGoneError,
+    ObjectNotFoundByURIError,
 )
 from .domain import GPDCDomain, reset_domain_config
 from .keys import make_uri, uri_to_redis_key, validate_object_name
@@ -56,6 +57,7 @@ __all__ = [
     "CanonicalObjectReferencedError",
     "CyclicReferenceError",
     "ObjectGoneError",
+    "ObjectNotFoundByURIError",
     "GPDCLockConfigInconsistentError",
     "LockAcquisitionTimeout",
     "GPDCDomain",

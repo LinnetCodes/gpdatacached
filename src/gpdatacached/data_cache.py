@@ -5,6 +5,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from gpconfig import ConfigNotFoundError
+
+from .exceptions import ObjectNotFoundByURIError
+
 if TYPE_CHECKING:
     from gpconfig import GPConfigFolder
 
@@ -56,6 +60,76 @@ class GPDataCache:
         if domain_name not in self._domains:
             self._domains[domain_name] = self._folder.get_object(domain_name)
         return self._domains[domain_name]
+
+    def get_object_by_uri(self, uri: str) -> "GPDCDataObject":
+        """Resolve a GPDC URI to a GPDCDataObject.
+
+        ``uri`` must be ``gpdc://{domain}/{namespace}/{name}`` optionally
+        followed by path segments that descend into nested containers via
+        ``__getitem__`` (e.g. ``gpdc://d/ns/obj/key/0``).
+
+        Always returns a GPDCDataObject — never a native value. A path that
+        terminates on a scalar value raises ObjectNotFoundByURIError.
+
+        Raises ObjectNotFoundByURIError for every failure mode: malformed
+        URI, missing domain config, missing namespace, missing root object,
+        broken path, scalar terminal.
+        """
+        self._check_open()
+        domain_name, ns_name, obj_name, path_parts = self._parse_uri(uri)
+
+        # Domain: wrap ConfigNotFoundError into the URI exception contract.
+        try:
+            domain = self.get_domain(domain_name)
+        except ConfigNotFoundError as e:
+            raise ObjectNotFoundByURIError(uri, f"domain {domain_name!r} not configured") from e
+
+        # Namespace: get_namespace raises KeyError if absent.
+        try:
+            ns = domain.get_namespace(ns_name)
+        except KeyError:
+            raise ObjectNotFoundByURIError(
+                uri, f"namespace {ns_name!r} not found in domain {domain_name!r}"
+            )
+
+        # Root object: get_object returns the object itself (not a value).
+        try:
+            root = ns.get_object(obj_name)
+        except KeyError:
+            raise ObjectNotFoundByURIError(
+                uri, f"object {obj_name!r} not found in namespace {ns_name!r}"
+            )
+
+        # Path traversal is added in a later task; with no path_parts the
+        # root IS the terminal. A root scalar object is itself a GPDCDataObject,
+        # so it passes the terminal check.
+        return self._traverse(root, path_parts, uri)
+
+    @staticmethod
+    def _parse_uri(uri: str) -> tuple[str, str, str, list[str]]:
+        """Split a GPDC URI into (domain, namespace, name, path_parts)."""
+        if not uri.startswith("gpdc://"):
+            raise ObjectNotFoundByURIError(uri, "URI must start with 'gpdc://'")
+        rest = uri[len("gpdc://"):]
+        parts = rest.split("/")
+        if len(parts) < 3:
+            raise ObjectNotFoundByURIError(
+                uri, "URI must have at least domain/namespace/name segments"
+            )
+        if any(p == "" for p in parts):
+            raise ObjectNotFoundByURIError(uri, "URI contains an empty segment")
+        domain, ns_name, obj_name = parts[0], parts[1], parts[2]
+        path_parts = parts[3:]
+        return domain, ns_name, obj_name, path_parts
+
+    @staticmethod
+    def _traverse(root, path_parts, uri):
+        """Descend from root along path_parts. Fully implemented in Task 6."""
+        # Placeholder: Task 6 fills in real traversal. For now, only the
+        # no-path case (path_parts empty) is valid and returns root.
+        if path_parts:
+            raise ObjectNotFoundByURIError(uri, "path traversal not yet supported")
+        return root
 
     def close(self) -> None:
         """Close every cached GPDCDomain. Idempotent."""
