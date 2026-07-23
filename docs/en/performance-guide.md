@@ -46,6 +46,9 @@ A quick reference. "RTT" = Redis round-trip. N = number of elements; counts are 
 | `obj.persist()` / `update_cache_mode_and_ttl(...)` | O(owned subtree size) | Rewrites metadata (`HSET`) + re-applies TTL across the subtree, one pipeline per level. |
 | `domain.run_gc()` | O(N canonical names) | Three `SCAN` families + per-name lock acquire + type/existence checks. See [§5](#5-unnecessary-garbage-collection). |
 | `.value` (full container read) | flat: 1 RTT + O(N) local; nested: +O(nested count) RTT | One bulk read (`LRANGE`/`HGETALL`/`SMEMBERS`); each `ref:` element adds one `HGETALL` + decode for its anonymous object. |
+| `name in cache` (`GPDataCache`) | **local, 0 RTT** | Pure config-snapshot check via `folder.list_configs()`. Does not touch Redis and does not construct a domain. The cheapest membership test in the library. |
+| `cache.get_domain(name)` | 1st call: domain construction (domain-meta read/verify); subsequent: **0 RTT** | First access constructs and caches the `GPDCDomain` via gpconfig's factory; later calls return the cached instance. Does not re-read config files. |
+| `cache.get_object_by_uri(uri)` | root: ~4–5 RTT; **+1 RTT per path segment** | `get_namespace` (`SISMEMBER` + namespace-meta `HGETALL`, ~2 RTT) + root resolve (`TYPE` + `HGETALL`, ~2–3 RTT). Each extra path segment is one `__getitem__` read (`LINDEX` for `ListObject`, `HGET` for `DictObject`). `cache.has_uri(uri)` has the same cost (it calls `get_object_by_uri` under a try/except). The domain is only constructed on the first access; later URIs in the same domain reuse the cached domain. |
 
 ---
 
@@ -257,6 +260,7 @@ for name in ns:                    # SCAN
 
 - **Don't put `iter(ns)` / `len(ns)` in hot loops.** Cache the result if you need it more than once.
 - **For high-frequency membership tests, don't put `k in ns` in a tight loop either** — each check is still a Redis round-trip. Either maintain your own index (a `SetObject` of valid names), or just try to read and catch `KeyError`.
+- **`cache.has_uri(uri)` / `cache.get_object_by_uri(uri)` are not free either** — each costs a Redis round-trip (plus one per path segment; see [§2](#2-cost-per-operation-reference)). For a tight existence-check loop over the same set of URIs, cache the result locally rather than re-resolving each iteration. (`name in cache`, by contrast, is a local 0-RTT config check.)
 - **For namespace-wide cleanup, prefer `ns.clear()`** (one bulk SCAN+DELETE) over repeated `del ns[k]` calls.
 
 ---

@@ -191,6 +191,12 @@ class BaseModelContainerObject(GPDCContainerObject, collections.abc.MutableMappi
 | `iter(obj)` | 遍历声明的字段名。 |
 | `len(obj)` | 声明字段的数量。 |
 
+!!! tip "URI 路径遍历可作用于容器模式模型"
+
+    由于 `BaseModelContainerObject` 是 `MutableMapping`，带有额外路径分段的 GPDC URI 会按字段名深入容器模式模型：`gpdc://d/ns/order_obj/order_id` 等价于 `obj["order_id"]`。如果某个字段的值本身是嵌套容器，还可以继续遍历（`gpdc://d/ns/order_obj/items/0`）。终止于**标量**字段的 URI 会抛出 `ObjectNotFoundByURIError` —— `get_object_by_uri` 返回数据对象，绝不返回值。
+
+    标量模式的 pydantic 模型（即基于原子 JSON 的 `PydanticModelScalarCodec` / 普通 `GPDCScalarObject` 子类）**没有 `__getitem__`**，因此根对象之外的任何路径分段都会抛出 `ObjectNotFoundByURIError`。根对象本身（`gpdc://d/ns/order_obj`，无路径）在两种模式下都能正常解析。
+
 **其他成员**
 
 | 成员 | 说明 |

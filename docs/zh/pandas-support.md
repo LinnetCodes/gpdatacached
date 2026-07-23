@@ -21,6 +21,15 @@ pip install "gpdatacached[pandas]"
 
 **变更仅以追加为主。** `SeriesObject` 与 `DataFrameObject` 均支持 `extend(...)` 进行行追加。`DataFrameObject` 另外支持通过 `__setitem__` / `__delitem__` 做结构性的列新增/替换/删除。**没有单元格级**或原地行变更能力 —— 如需此类操作，请调用 `.value` 在本地 pandas 对象上操作。
 
+!!! warning "pandas 对象无法通过 GPDC URI 路径分段导航"
+
+    [`GPDataCache.get_object_by_uri`](./api.md#get_object_by_uri) 可以把裸 `gpdc://d/ns/df_obj`（无路径）解析到 `DataFrameObject` / `SeriesObject` 自身，这与其他对象并无二致。但它**无法**通过额外的路径分段深入 pandas 对象：
+
+    - `DataFrameObject.__getitem__(col)` 会选取一列并返回一个**普通 `pd.Series`**（原生值，而非 `GPDCDataObject`），因此终止于此处的 URI 会抛出 `ObjectNotFoundByURIError`（`get_object_by_uri` 只返回对象，绝不返回值）。
+    - `SeriesObject` 根本没有 `__getitem__`，因此根对象之外的任何分段都会抛出 `ObjectNotFoundByURIError`。
+
+    若需读取已缓存 DataFrame/Series 的子集，请对你获取到的对象使用在线访问器（`.iloc`、`.loc`、`df[col]`）或 `.value` —— 而非 URI 路径分段。
+
 ---
 
 ## 支持范围概览

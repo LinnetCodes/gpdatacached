@@ -21,6 +21,15 @@ Two corollaries:
 
 **Mutation is append-focused only.** Both `SeriesObject` and `DataFrameObject` support `extend(...)` for row appends. `DataFrameObject` additionally supports structural column add/replace/drop via `__setitem__` / `__delitem__`. There is **no cell-level** or in-place row mutation — for that, call `.value` and work on the local pandas object.
 
+!!! warning "Pandas objects are not navigable by GPDC URI path segments"
+
+    [`GPDataCache.get_object_by_uri`](./api.md#get_object_by_uri) resolves a bare `gpdc://d/ns/df_obj` (no path) to the `DataFrameObject` / `SeriesObject` itself, just like any other object. But it **cannot descend into** a pandas object via extra path segments:
+
+    - `DataFrameObject.__getitem__(col)` selects a column and returns a **plain `pd.Series`** (a native value, not a `GPDCDataObject`), so a URI terminating there raises `ObjectNotFoundByURIError` (`get_object_by_uri` returns objects, never values).
+    - `SeriesObject` has no `__getitem__` at all, so any segment beyond the root raises `ObjectNotFoundByURIError`.
+
+    To read subsets of a cached DataFrame/Series, use the online accessors (`.iloc`, `.loc`, `df[col]`) or `.value` on the object you fetched — not URI path segments.
+
 ---
 
 ## Scope at a Glance

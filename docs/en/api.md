@@ -90,6 +90,43 @@ domain.close()
 
 ---
 
+## Managing Domains via Configuration: `GPDataCache`
+
+When your application drives many domains from configuration files managed by
+[`gpconfig`](https://github.com/linnetcodes/gpconfig), `GPDataCache` is the
+higher-level entry point. It holds a `GPConfigFolder`, lazily constructs and
+caches `GPDCDomain` instances from it, and resolves GPDC URIs to data objects.
+
+```python
+from gpconfig import GPConfigManager
+import gpdatacached                                       # registers GPDCDomain with gpconfig
+from gpdatacached import GPDataCache
+
+# 1. Build a GPConfigFolder for the "gpdc" subfolder of your config folder.
+mgr = GPConfigManager("myproject", cfg_folder="/path/to/configs")
+folder = mgr.get_config("gpdc")        # -> GPConfigFolder; sample layouts in tests/configs/gpdc
+
+# 2. GPDataCache manages the domains found in that folder.
+with GPDataCache(folder) as cache:
+    "core_domain" in cache                                  # True iff a config exists (no Redis)
+    domain = cache.get_domain("core_domain")                # lazy construct + cache
+
+    # 3. Resolve objects by GPDC URI — including anonymous nested objects.
+    ns = domain.get_namespace("core_app")
+    ns["config"] = {"server": {"host": "localhost", "port": 8080}, "tags": ["a", "b"]}
+
+    cfg = cache.get_object_by_uri("gpdc://core_domain/core_app/config")
+    server = cache.get_object_by_uri("gpdc://core_domain/core_app/config/server")
+    cache.has_uri("gpdc://core_domain/core_app/missing")    # False
+# close() on exit closes every cached domain (idempotent).
+```
+
+See [`GPDataCache`](#gpdatacache) below for the full API and the [URI resolution
+rules](#get_object_by_uri) (path traversal, scalar terminals, `ListObject`
+index coercion).
+
+---
+
 ## Core Types
 
 ### `GPDCDomain`
@@ -243,6 +280,124 @@ domain = GPDCDomain(new_config, name="mydomain")     # writes the new lock confi
 ```
 
 Only the Redis connection fields on `config` are read; lock fields on the passed config are ignored.
+
+---
+
+### `GPDataCache`
+
+```python
+class GPDataCache(folder: gpconfig.GPConfigFolder)   # context manager
+```
+
+A facade that manages `GPDCDomain` instances discovered in a
+[`gpconfig`](https://github.com/linnetcodes/gpconfig) `GPConfigFolder`, and
+resolves GPDC URIs to [`GPDCDataObject`](#gpdcdataobject) instances. It is the
+recommended entry point when your domains are driven by config files rather
+than constructed ad-hoc in code.
+
+**Construction.** Built from a `GPConfigFolder`. On construction it stores the
+folder reference only — **no domain is created**. Domains are constructed
+lazily (via gpconfig's object factory `folder.get_object(name)`) on first
+[`get_domain`](#get_domain) access, and cached in an internal dict. The cache
+is a snapshot: config files edited after construction are **not** re-read;
+rebuild the `GPDataCache` to pick up changes.
+
+`GPDataCache` does **not** create domains lacking a config file — for ad-hoc
+domains use [`GPDCDomain`](#gpdcdomain) directly.
+
+> **Registration side effect.** `import gpdatacached` registers `GPDCDomain`
+> and `GPDCDomainConfig` with gpconfig's object factory (idempotent), which is
+> what makes `folder.get_object(name)` able to construct a `GPDCDomain`. No
+> extra setup is needed.
+
+**Dunder protocols**
+
+- `name in cache` → `True` iff a config named `name` exists in the folder (a pure config-snapshot check — does **not** touch Redis, does not construct a domain).
+- `with cache as c` / `__exit__` → closes every cached domain on exit; `close()` is idempotent.
+
+**Methods**
+
+| Method | Description |
+|---|---|
+| `get_domain(name)` | Return the cached `GPDCDomain` for `name`, constructing it lazily on first access. Propagates gpconfig's `ConfigNotFoundError` if no config exists for `name`. |
+| [`get_object_by_uri(uri)`](#get_object_by_uri) | Resolve a GPDC URI to a `GPDCDataObject`. |
+| `has_uri(uri)` | Return `True` iff `get_object_by_uri(uri)` would succeed. |
+| `close()` | Close every cached domain. Idempotent. |
+
+---
+
+#### `get_object_by_uri`
+
+```python
+def get_object_by_uri(self, uri: str) -> GPDCDataObject
+```
+
+Resolve a GPDC URI to a [`GPDCDataObject`](#gpdcdataobject). The URI must begin
+with `gpdc://` and has the form:
+
+```
+gpdc://{domain}/{namespace}/{name}[/{path_segment}...]
+```
+
+- The first three segments (`domain` / `namespace` / `name`) locate the **root
+  object**, fetched via `namespace.get_object(name)` — so the root is always
+  returned as a `GPDCDataObject`, **even when it is a scalar** (unlike
+  `ns[name]`, which unwraps scalars to native values).
+- Any further segments form a **path** that descends into the object via
+  `__getitem__`, one segment at a time. This is how anonymous nested containers
+  become reachable: `gpdc://d/ns/obj/key/0` walks `obj["key"][0]`.
+
+**Returns objects, never values.** `get_object_by_uri` always returns a
+`GPDCDataObject`. It cannot be used to read a scalar value or an element value
+directly.
+
+**Path-segment rules**
+
+| Current object | Segment handling |
+|---|---|
+| `ListObject` | The segment must be a **non-negative integer** (a pure-digit string); it is converted to `int` before indexing. Negative indices, decimals, and slices are rejected. |
+| `DictObject` / pydantic container-mode model / other subscriptable container | The segment is used as-is (a string key). |
+| `SetObject`, scalar objects | Have no `__getitem__` — any further path segment raises `ObjectNotFoundByURIError`. |
+
+**Scalar terminals are rejected.** Scalars nested inside a container are stored
+as inlined values (not as referenced objects), so descending into a scalar
+element yields a native Python value. Because `get_object_by_uri` returns
+objects only, a path that terminates on a scalar raises `ObjectNotFoundByURIError`.
+For example, given `ns["cfg"] = {"port": 8080}`, `gpdc://d/ns/cfg/port` raises
+(the value `8080` is a scalar, not a data object).
+
+**Errors.** Every failure mode raises [`ObjectNotFoundByURIError`](#objectnotfoundbyurierror)
+(carries `.uri` and `.reason`): malformed URI (missing `gpdc://`, fewer than
+three segments, empty segment), unknown domain, missing namespace, missing root
+object, a path segment that fails (`KeyError`/`IndexError`/`TypeError`), and a
+scalar terminal.
+
+**Example.** Given `ns["cfg"] = {"server": {"host": "x"}, "tags": ["a","b"]}`:
+
+| URI | Result |
+|---|---|
+| `gpdc://d/ns/cfg` | the `DictObject` for `cfg` |
+| `gpdc://d/ns/cfg/server` | the nested `DictObject` for `server` |
+| `gpdc://d/ns/cfg/server/host` | raises — `host` is the scalar `"x"` |
+| `gpdc://d/ns/cfg/tags/0` | raises — `tags[0]` is the scalar `"a"` |
+| `gpdc://d/ns/cfg/missing` | raises — `KeyError` on the path segment |
+
+---
+
+### `ObjectNotFoundByURIError`
+
+```python
+class ObjectNotFoundByURIError(GPDCError)
+```
+
+Raised by [`GPDataCache.get_object_by_uri`](#get_object_by_uri) when a GPDC URI
+cannot be resolved to a `GPDCDataObject`. Covers every failure mode: malformed
+URI syntax, unknown domain (no config), missing namespace, missing root object,
+a path segment that fails, and a scalar terminal. Carries `.uri` (the URI
+string) and `.reason` (a short explanation).
+
+`has_uri` swallows only this exception; infrastructure errors (e.g. Redis
+connection failures) propagate.
 
 ---
 
@@ -562,7 +717,10 @@ GPDCTypeRegistry.register(
 
 ## Key & URI Utilities
 
-Low-level helpers for working with GPDC's key/URI scheme. Most applications never need these directly.
+Low-level helpers for working with GPDC's key/URI scheme. For actually
+*resolving* a URI to a data object, use
+[`GPDataCache.get_object_by_uri`](#get_object_by_uri) — these helpers only build
+or convert URI/key strings and are rarely needed directly.
 
 ### `make_uri`
 

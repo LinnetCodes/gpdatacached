@@ -196,6 +196,13 @@ class MyObject(GPDCScalarObject):
 
 你继承 `_touch()`、引用追踪辅助（`_release_element_ref`、`_data_owner_name`、`referrers()`）以及 encode/decode 辅助 —— 它们是 [§11](#11) 的积木。
 
+!!! note "你的 `__getitem__` 还有第二个调用者：URI 遍历"
+
+    [`GPDataCache.get_object_by_uri`](./api.md#get_object_by_uri) 会通过 `__getitem__` 逐段深入一个容器。对自定义容器而言有两点影响：
+
+    - 遍历只对 `ListObject` 把分段**强转**为 `int`；其他所有容器收到的都是原始的**字符串**分段。如果你的容器需要非字符串 key，它就无法通过 URI 路径分段到达（分段会以字符串形式到达）。
+    - 遍历返回的是**对象，绝不是值**。如果你的 `__getitem__` 返回原生 Python 值（正如内建 `DictObject`/`ListObject` 对标量元素所做的那样），那么终止于此处的 URI 会抛出 `ObjectNotFoundByURIError`。这是有意为之 —— 与 `__getitem__` 对标量元素返回原生值的行为保持一致。
+
 ---
 
 ## 6. 四步扩展配方

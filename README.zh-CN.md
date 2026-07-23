@@ -22,6 +22,7 @@
 - **生命周期控制** —— 每个对象可设置 `permanent` / `ttl` / `sliding`（滑动窗口）缓存模式，并将策略级联传播到所拥有的子树。
 - **后台 GC** —— 自动回收过期或成为孤儿的匿名对象。
 - **可选的分布式锁** —— 通过 `obj.lock()` 在多进程间串行化写入。
+- **基于 URI 的访问** —— 通过 `GPDataCache` 从配置管理多个 domain，并将 `gpdc://{domain}/{namespace}/{name}` 形式的 URI 解析为数据对象，包括对匿名嵌套容器的遍历。
 - **可选扩展** —— 可缓存 [pydantic](https://docs.pydantic.dev/) `BaseModel` 记录与 [pandas](https://pandas.pydata.org/) `Series` / `DataFrame`（见[扩展](#扩展)）。
 
 ---

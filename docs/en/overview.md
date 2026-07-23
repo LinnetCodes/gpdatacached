@@ -22,6 +22,7 @@ Sharing **mutable state across processes** is hard.
 - **Per-object lifecycle** — `permanent` / `ttl` / `sliding-window` cache modes with cascade propagation.
 - **Background GC** — reclaims expired and orphaned objects.
 - **Opt-in distributed locking** — serialize writes across processes when you actually have contention.
+- **URI-based access** — resolve `gpdc://{domain}/{namespace}/{name}[/path]` to a data object via [`GPDataCache`](./api.md#gpdatacache), including traversal into anonymous nested containers.
 
 Redis is the single source of truth. There is no client-side cache layer, so there is no invalidation problem: every read goes to Redis and sees the latest committed write.
 
@@ -84,6 +85,7 @@ graph TD
         LIFE["lifecycle · meta"]
         GC["gc · refset"]
         LOCK["locking"]
+        DC["data_cache<br/>GPDataCache facade + URI access"]
     end
  subgraph L1["Layer 1 — Foundation"]
         KEYS["keys<br/>URI + Redis key builders"]
@@ -104,7 +106,7 @@ graph TD
 | Layer | Responsibility | Key modules |
 |---|---|---|
 | **Foundation** | Redis key builders, URI scheme, exceptions. No state. | `keys`, `exceptions` |
-| **Core services** | The Domain/Namespace façade, metadata model, lifecycle policy, GC, locking, ref counting. | `domain`, `namespace`, `config`, `meta`, `lifecycle`, `gc`, `locking`, `refset` |
+| **Core services** | The Domain/Namespace façade, metadata model, lifecycle policy, GC, locking, ref counting, multi-domain cache + URI access. | `domain`, `namespace`, `config`, `meta`, `lifecycle`, `gc`, `locking`, `refset`, `data_cache` |
 | **Type system** | The type registry, codec ABCs, object ABCs, encode/decode element protocol. | `types`, `codec`, `object`, `scalar`, `container` |
 | **Built-in types** | Concrete scalar/container classes and their codecs, auto-registered on import. | `builtins/*` |
 | **Extensions** | Optional type families for third-party libraries. | `extensions/pydantic_support`, `extensions/pandas_support` |
@@ -115,7 +117,7 @@ Everything below Layer 5 is loaded automatically by `import gpdatacached`. Exten
 
 ## 4. The Domain → Namespace → Object Model
 
-GPDC organises data in three nesting levels. Each level is a logical scope; together they form the GPDC **URI** `gpdc://{domain}/{namespace}/{name}`.
+GPDC organises data in three nesting levels. Each level is a logical scope; together they form the GPDC **URI** `gpdc://{domain}/{namespace}/{name}`. The URI is not just an identifier — it is a resolvable access path. [`GPDataCache`](./api.md#gpdatacache) resolves a URI to the data object it points at, and optional extra path segments descend into nested containers (e.g. `gpdc://prod/analytics/report/title` walks `ns["report"]["title"]`).
 
 ```mermaid
 graph TD
@@ -145,6 +147,10 @@ graph TD
 - **Domain** is the deployment unit: one Redis database, one set of lock/GC parameters. Multiple processes open the same domain to share data.
 - **Namespace** is the isolation unit: a flat name space that can be cleared, listed, and deleted independently. This is also the **boundary for reference sharing** — see principle #4.
 - **Object** is the value unit: one logical piece of data with its own lifecycle and (optionally) lock.
+
+### Opening domains: direct vs managed
+
+A single domain is opened directly with [`GPDCDomain`](./api.md#gpdcdomain) (see the [Quick Start](./api.md#quick-start)). When your application uses many domains driven by [gpconfig](https://github.com/linnetcodes/gpconfig) config files, [`GPDataCache`](./api.md#gpdatacache) is the managed entry point: it takes a `GPConfigFolder`, lazily constructs and caches the `GPDCDomain` for each config, and resolves GPDC URIs to data objects. Domains without a config file cannot be created through `GPDataCache` — use `GPDCDomain` directly for those.
 
 ### Identity: canonical name vs binding name
 

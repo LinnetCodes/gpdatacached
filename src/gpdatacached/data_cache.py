@@ -87,22 +87,22 @@ class GPDataCache:
         # Namespace: get_namespace raises KeyError if absent.
         try:
             ns = domain.get_namespace(ns_name)
-        except KeyError:
+        except KeyError as e:
             raise ObjectNotFoundByURIError(
                 uri, f"namespace {ns_name!r} not found in domain {domain_name!r}"
-            )
+            ) from e
 
         # Root object: get_object returns the object itself (not a value).
         try:
             root = ns.get_object(obj_name)
-        except KeyError:
+        except KeyError as e:
             raise ObjectNotFoundByURIError(
                 uri, f"object {obj_name!r} not found in namespace {ns_name!r}"
-            )
+            ) from e
 
-        # Path traversal is added in a later task; with no path_parts the
-        # root IS the terminal. A root scalar object is itself a GPDCDataObject,
-        # so it passes the terminal check.
+        # _traverse descends path_parts via __getitem__ (int-coercing ListObject
+        # segments) and enforces the object-only terminal contract; with no
+        # path_parts the root itself is the terminal.
         return self._traverse(root, path_parts, uri)
 
     def has_uri(self, uri: str) -> bool:
@@ -146,6 +146,11 @@ class GPDataCache:
         strings. A scalar terminal (or a scalar encountered mid-path) raises
         ObjectNotFoundByURIError — get_object_by_uri returns objects only.
         """
+        # Imported lazily inside the method rather than at module top. A
+        # module-level import would also work today (data_cache is loaded only
+        # after these modules via __init__), but keeping the references local
+        # decouples this module from the package's import order so it can be
+        # imported standalone if ever needed.
         from .object import GPDCDataObject
         from .builtins.list_object import ListObject
 

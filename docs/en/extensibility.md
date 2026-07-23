@@ -196,6 +196,13 @@ Subclasses mix in a `collections.abc` interface (`MutableSequence`, `MutableMapp
 
 You inherit `_touch()`, ref-tracking helpers (`_release_element_ref`, `_data_owner_name`, `referrers()`), and the encode/decode helpers — these are the building blocks for [§11](#11-mutation-hooks-every-container-must-call).
 
+!!! note "Your `__getitem__` has a second caller: URI traversal"
+
+    [`GPDataCache.get_object_by_uri`](./api.md#get_object_by_uri) descends into a container via `__getitem__`, one path segment at a time. Two consequences for a custom container:
+
+    - The traversal only **coerces** a segment to `int` for `ListObject`; every other container receives the raw **string** segment. If your container expects non-string keys, it is not reachable by URI path segments (the segment will arrive as a string).
+    - The traversal returns **objects, never values**. If your `__getitem__` returns a native Python value (as the built-in `DictObject`/`ListObject` do for scalar elements), a URI that terminates there raises `ObjectNotFoundByURIError`. This is by design — it mirrors `__getitem__` returning native values for scalar elements.
+
 ---
 
 ## 6. The Four-Step Extension Recipe

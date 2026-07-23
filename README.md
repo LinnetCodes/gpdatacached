@@ -22,6 +22,7 @@ Sharing mutable state across processes is painful. `multiprocessing.Manager` is 
 - **Lifecycle control** — per-object `permanent` / `ttl` / `sliding-window` cache modes, with cascade propagation to owned subtrees.
 - **Background GC** — reclaims expired and orphaned anonymous objects.
 - **Opt-in distributed locking** — serialize writes across processes with `obj.lock()`.
+- **URI-based access** — manage multiple domains from config and resolve `gpdc://{domain}/{namespace}/{name}` URIs to data objects via `GPDataCache`, including traversal into anonymous nested containers.
 - **Optional extensions** — cache [pydantic](https://docs.pydantic.dev/) `BaseModel` records and [pandas](https://pandas.pydata.org/) `Series` / `DataFrame` (see [Extensions](#extensions)).
 
 ---

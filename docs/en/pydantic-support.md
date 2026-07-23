@@ -191,6 +191,12 @@ Base class for container-mode pydantic objects. Subclasses must set `TYPE = "col
 | `iter(obj)` | Iterate the declared field names. |
 | `len(obj)` | Number of declared fields. |
 
+!!! tip "URI path traversal works on container-mode models"
+
+    Because `BaseModelContainerObject` is a `MutableMapping`, a GPDC URI with extra path segments descends into a container-mode model by field name: `gpdc://d/ns/order_obj/order_id` walks `obj["order_id"]`. A field whose value is itself a nested container can be traversed further (`gpdc://d/ns/order_obj/items/0`). A URI that terminates on a **scalar** field raises `ObjectNotFoundByURIError` — `get_object_by_uri` returns data objects, never values.
+
+    Scalar-mode pydantic models (the atomic-JSON `PydanticModelScalarCodec` / a plain `GPDCScalarObject` subclass) have **no `__getitem__`**, so any path segment beyond the root raises `ObjectNotFoundByURIError`. The root object itself (`gpdc://d/ns/order_obj`, no path) resolves fine in either mode.
+
 **Other members**
 
 | Member | Description |

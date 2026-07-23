@@ -46,6 +46,9 @@ graph TD
 | `obj.persist()` / `update_cache_mode_and_ttl(...)` | O(所属子树大小) | 跨子树重写元信息（`HSET`）+ 重新应用 TTL，每层级一条流水线。 |
 | `domain.run_gc()` | O(N 个 canonical name) | 三类 `SCAN` + 每对象加锁 + 类型/存在性检查。见 [§5](#5-gc)。 |
 | `.value`（完整容器读取） | 扁平：1 RTT + O(N) 本地；嵌套：+O(嵌套数) RTT | 一次批量读（`LRANGE`/`HGETALL`/`SMEMBERS`）；每个 `ref:` 元素再加一次 `HGETALL` + 解码其匿名对象。 |
+| `name in cache`（`GPDataCache`） | **本地，0 RTT** | 纯配置快照检查，通过 `folder.list_configs()` 实现。不触碰 Redis，也不会构造 domain。是本库中最便宜的成员测试。 |
+| `cache.get_domain(name)` | 首次调用：domain 构造（读/校验 domain meta）；后续：**0 RTT** | 首次访问时经由 gpconfig 的工厂构造并缓存 `GPDCDomain`；之后的调用返回已缓存实例。不会重新读取配置文件。 |
+| `cache.get_object_by_uri(uri)` | 根：约 4–5 RTT；**每条路径分段 +1 RTT** | `get_namespace`（`SISMEMBER` + namespace-meta `HGETALL`，约 2 RTT）+ 根对象解析（`TYPE` + `HGETALL`，约 2–3 RTT）。每条额外路径分段是一次 `__getitem__` 读取（`ListObject` 用 `LINDEX`，`DictObject` 用 `HGET`）。`cache.has_uri(uri)` 成本相同（它用 try/except 调用 `get_object_by_uri`）。domain 仅在首次访问时构造；同一 domain 之后的 URI 会复用已缓存的 domain。 |
 
 ---
 
@@ -257,6 +260,7 @@ for name in ns:                    # SCAN
 
 - **不要把 `iter(ns)` / `len(ns)` 放进热循环。** 需要多次使用时，把结果缓存起来。
 - **高频成员测试，也不要把 `k in ns` 放进紧凑循环** —— 每次检查仍是一次 Redis 往返。要么自维护一份索引（一个 `SetObject` 存合法名称），要么直接读并捕获 `KeyError`。
+- **`cache.has_uri(uri)` / `cache.get_object_by_uri(uri)` 同样并非免费** —— 每次都要一次 Redis 往返（外加每条路径分段一次；见 [§2](#2)）。对同一组 URI 做紧凑的存在性检查循环时，应把结果缓存到本地，而非每次迭代都重新解析。（相比之下，`name in cache` 是一次本地 0-RTT 的配置检查。）
 - **namespace 级清理优先用 `ns.clear()`**（一次批量 SCAN+DELETE），而非反复 `del ns[k]`。
 
 ---
