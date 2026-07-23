@@ -310,3 +310,55 @@ class TestHasURI:
 
     def test_too_few_segments(self, data_cache):
         assert data_cache.has_uri("gpdc://d/ns") is False
+
+
+class TestCrossDomainIntegration:
+    def test_two_domains_coexist(self, data_cache):
+        d_core = data_cache.get_domain("core_domain")
+        d_edge = data_cache.get_domain("edge_domain")
+        assert d_core is not d_edge
+        assert d_core.name == "core_domain"
+        assert d_edge.name == "edge_domain"
+
+    def test_uri_is_domain_scoped(self, data_cache):
+        # Write to core_domain, ensure edge_domain doesn't see it via URI.
+        d_core = data_cache.get_domain("core_domain")
+        ns_core = d_core.get_namespace("core_app")
+        ns_core["secret"] = "core"
+
+        # edge_blob namespace in edge_domain is empty for this object.
+        with pytest.raises(ObjectNotFoundByURIError):
+            data_cache.get_object_by_uri("gpdc://edge_domain/edge_blob/secret")
+
+    def test_has_uri_and_get_object_agree(self, data_cache):
+        d = data_cache.get_domain("edge_domain")
+        ns = d.get_namespace("edge_session")
+        ns["nested"] = {"inner": {"deep": [1, 2, 3]}}
+
+        # Matrix of agreement
+        cases = [
+            ("gpdc://edge_domain/edge_session/nested", True),
+            ("gpdc://edge_domain/edge_session/nested/inner", True),
+            # deep is a dict; deep/nosuch missing
+            ("gpdc://edge_domain/edge_session/nested/inner/nosuch", False),
+            # deep contains list [1,2,3]; deep/0 is scalar 1 -> not an object
+            ("gpdc://edge_domain/edge_session/nested/inner/deep/0", False),
+            ("gpdc://edge_domain/edge_session/missing", False),
+            ("gpdc://nope/ns/x", False),
+        ]
+        for uri, expected in cases:
+            assert data_cache.has_uri(uri) is expected, f"has_uri mismatch for {uri}"
+            if expected:
+                obj = data_cache.get_object_by_uri(uri)
+                assert obj is not None
+            else:
+                with pytest.raises(ObjectNotFoundByURIError):
+                    data_cache.get_object_by_uri(uri)
+
+    def test_get_domain_unknown_after_successful_get(self, data_cache):
+        # Cache is populated by a successful get; an unknown domain still raises.
+        data_cache.get_domain("core_domain")
+        from gpconfig import ConfigNotFoundError
+
+        with pytest.raises(ConfigNotFoundError):
+            data_cache.get_domain("no_such_domain")
