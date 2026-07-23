@@ -22,3 +22,19 @@ class TestObjectNotFoundByURIError:
         assert err.reason == ""
         assert "gpdc://d/ns/x" in str(err)
         assert ":" not in str(err).split("gpdc://d/ns/x")[1]
+
+
+class TestImportTimeRegistration:
+    def test_gpdc_domain_is_configurable(self):
+        from gpconfig import GPConfigManager
+        from gpdatacached.domain import GPDCDomain
+
+        import gpdatacached  # ensure registration ran
+        assert GPConfigManager._configurable_classes.get("GPDCDomain") is GPDCDomain
+
+    def test_gpdc_domain_config_is_registered(self):
+        from gpconfig import GPConfigManager
+        from gpdatacached.config import GPDCDomainConfig
+
+        import gpdatacached  # ensure registration ran
+        assert GPConfigManager._config_classes.get("GPDCDomainConfig") is GPDCDomainConfig

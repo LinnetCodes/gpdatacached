@@ -31,6 +31,14 @@ from .builtins.set_object import SetObject
 from .builtins.str_object import StrObject
 from .builtins.tuple_object import TupleObject
 
+# Register GPDCDomain / GPDCDomainConfig with gpconfig's object factory so
+# that folder.get_object(name) can construct a GPDCDomain from a config file.
+# Both calls are idempotent for the same class (gpconfig guarantees this).
+from gpconfig import GPConfigManager as _GPConfigManager
+
+_GPConfigManager.register_configurable_class(GPDCDomain)
+_GPConfigManager.register_config_class(GPDCDomainConfig)
+
 from .builtins.bool_object import BoolCodec as BoolCodec  # noqa: F401
 from .builtins.datetime_object import DateCodec as DateCodec, DateTimeCodec as DateTimeCodec, TimeCodec as TimeCodec  # noqa: F401
 from .builtins.dict_object import DictCodec as DictCodec  # noqa: F401
