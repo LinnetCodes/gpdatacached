@@ -311,6 +311,14 @@ class TestHasURI:
     def test_too_few_segments(self, data_cache):
         assert data_cache.has_uri("gpdc://d/ns") is False
 
+    def test_propagates_non_not_found_errors(self, data_cache):
+        # has_uri must swallow ONLY ObjectNotFoundByURIError. A closed cache
+        # raises RuntimeError from _check_open() — which is not an
+        # ObjectNotFoundByURIError — so it must propagate, not return False.
+        data_cache.close()
+        with pytest.raises(RuntimeError):
+            data_cache.has_uri("gpdc://core_domain/core_app/anything")
+
 
 class TestCrossDomainIntegration:
     def test_two_domains_coexist(self, data_cache):
