@@ -63,14 +63,14 @@ class TestImportTimeRegistration:
         from gpconfig import GPConfigManager
         from gpdatacached.domain import GPDCDomain
 
-        import gpdatacached  # ensure registration ran
+        import gpdatacached  # noqa: F401  # ensure registration ran
         assert GPConfigManager._configurable_classes.get("GPDCDomain") is GPDCDomain
 
     def test_gpdc_domain_config_is_registered(self):
         from gpconfig import GPConfigManager
         from gpdatacached.config import GPDCDomainConfig
 
-        import gpdatacached  # ensure registration ran
+        import gpdatacached  # noqa: F401  # ensure registration ran
         assert GPConfigManager._config_classes.get("GPDCDomainConfig") is GPDCDomainConfig
 
 
