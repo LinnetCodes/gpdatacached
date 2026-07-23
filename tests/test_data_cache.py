@@ -168,3 +168,98 @@ class TestGetObjectByURIRoot:
         with pytest.raises(ObjectNotFoundByURIError) as ei:
             data_cache.get_object_by_uri("gpdc://core_domain/core_app/no_such_obj")
         assert "no_such_obj" in str(ei.value.reason) or "no_such_obj" in str(ei.value)
+
+
+class TestGetObjectByURIPathTraversal:
+    def test_nested_dict_path(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["cfg"] = {"server": {"host": "localhost", "port": 8080}}
+
+        obj = data_cache.get_object_by_uri("gpdc://core_domain/core_app/cfg/server")
+        from gpdatacached import DictObject
+
+        assert isinstance(obj, DictObject)
+
+    def test_deeply_nested_path(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["deep"] = {"a": {"b": {"c": {"d": 1}}}}
+
+        obj = data_cache.get_object_by_uri("gpdc://core_domain/core_app/deep/a/b/c")
+        from gpdatacached import DictObject
+
+        assert isinstance(obj, DictObject)
+
+    def test_list_numeric_index_to_container(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["mixed"] = [{"k": 1}, {"k": 2}]  # list of dicts
+
+        obj = data_cache.get_object_by_uri("gpdc://core_domain/core_app/mixed/1")
+        from gpdatacached import DictObject
+
+        assert isinstance(obj, DictObject)
+        assert obj["k"] == 2
+
+    def test_scalar_terminal_in_path_raises(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["cfg"] = {"port": 8080}
+
+        with pytest.raises(ObjectNotFoundByURIError) as ei:
+            data_cache.get_object_by_uri("gpdc://core_domain/core_app/cfg/port")
+        assert "scalar" in str(ei.value.reason).lower()
+
+    def test_list_scalar_terminal_raises(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["nums"] = [10, 20, 30]
+
+        with pytest.raises(ObjectNotFoundByURIError):
+            data_cache.get_object_by_uri("gpdc://core_domain/core_app/nums/0")
+
+    def test_list_non_numeric_index_raises(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["nums"] = [10, 20]
+
+        with pytest.raises(ObjectNotFoundByURIError) as ei:
+            data_cache.get_object_by_uri("gpdc://core_domain/core_app/nums/abc")
+        assert "non-negative integer" in str(ei.value.reason)
+
+    def test_missing_dict_key_in_path_raises(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["cfg"] = {"a": 1}
+
+        with pytest.raises(ObjectNotFoundByURIError):
+            data_cache.get_object_by_uri("gpdc://core_domain/core_app/cfg/missing")
+
+    def test_set_descent_raises(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["s"] = {1, 2, 3}
+
+        with pytest.raises(ObjectNotFoundByURIError):
+            data_cache.get_object_by_uri("gpdc://core_domain/core_app/s/anything")
+
+    def test_set_root_without_path_ok(self, data_cache):
+        # SetObject as root (no path) is valid — it IS a GPDCDataObject.
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["s"] = {1, 2, 3}
+
+        obj = data_cache.get_object_by_uri("gpdc://core_domain/core_app/s")
+        from gpdatacached import SetObject
+
+        assert isinstance(obj, SetObject)
+
+    def test_path_descends_past_scalar_raises(self, data_cache):
+        # tags[0] is scalar "web"; descending further must raise.
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["cfg"] = {"tags": ["web", "api"]}
+
+        with pytest.raises(ObjectNotFoundByURIError):
+            data_cache.get_object_by_uri("gpdc://core_domain/core_app/cfg/tags/0/extra")

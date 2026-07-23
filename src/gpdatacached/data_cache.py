@@ -124,12 +124,52 @@ class GPDataCache:
 
     @staticmethod
     def _traverse(root, path_parts, uri):
-        """Descend from root along path_parts. Fully implemented in Task 6."""
-        # Placeholder: Task 6 fills in real traversal. For now, only the
-        # no-path case (path_parts empty) is valid and returns root.
-        if path_parts:
-            raise ObjectNotFoundByURIError(uri, "path traversal not yet supported")
-        return root
+        """Descend from ``root`` along ``path_parts`` via __getitem__.
+
+        Key coercion is by current object type: ListObject segments must be
+        non-negative integers; DictObject/pydantic-container segments stay
+        strings. A scalar terminal (or a scalar encountered mid-path) raises
+        ObjectNotFoundByURIError — get_object_by_uri returns objects only.
+        """
+        from .object import GPDCDataObject
+        from .builtins.list_object import ListObject
+
+        current = root
+        for part in path_parts:
+            if not isinstance(current, GPDCDataObject):
+                # Defensive: a scalar was reached but path continues.
+                raise ObjectNotFoundByURIError(
+                    uri, f"path segment {part!r} cannot descend: current node is not a GPDCDataObject"
+                )
+            if not hasattr(current, "__getitem__"):
+                raise ObjectNotFoundByURIError(
+                    uri,
+                    f"path segment {part!r} cannot descend: "
+                    f"{current.canonical_uri} does not support subscript access",
+                )
+            # Type-based key coercion (decision D9).
+            if isinstance(current, ListObject):
+                if not part.isdigit():
+                    raise ObjectNotFoundByURIError(
+                        uri,
+                        f"path segment {part!r} invalid for ListObject: "
+                        f"must be a non-negative integer",
+                    )
+                key = int(part)
+            else:
+                key = part  # DictObject / pydantic container / etc.
+            try:
+                current = current[key]
+            except (KeyError, IndexError, TypeError) as e:
+                raise ObjectNotFoundByURIError(
+                    uri, f"path segment {part!r} failed at {current.canonical_uri}: {e}"
+                ) from e
+        # Terminal check: must be a GPDCDataObject, not a scalar value.
+        if not isinstance(current, GPDCDataObject):
+            raise ObjectNotFoundByURIError(
+                uri, "terminal is a scalar value; get_object_by_uri returns objects only"
+            )
+        return current
 
     def close(self) -> None:
         """Close every cached GPDCDomain. Idempotent."""
