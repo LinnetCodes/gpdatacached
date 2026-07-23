@@ -105,6 +105,21 @@ class GPDataCache:
         # so it passes the terminal check.
         return self._traverse(root, path_parts, uri)
 
+    def has_uri(self, uri: str) -> bool:
+        """Return True iff ``get_object_by_uri(uri)`` would succeed.
+
+        Returns False for every ObjectNotFoundByURIError failure mode
+        (missing domain/namespace/object, broken path, scalar terminal,
+        malformed URI). Infrastructure errors (e.g. Redis connection
+        failures) propagate — they are not "the URI doesn't exist".
+        """
+        self._check_open()
+        try:
+            self.get_object_by_uri(uri)
+        except ObjectNotFoundByURIError:
+            return False
+        return True
+
     @staticmethod
     def _parse_uri(uri: str) -> tuple[str, str, str, list[str]]:
         """Split a GPDC URI into (domain, namespace, name, path_parts)."""

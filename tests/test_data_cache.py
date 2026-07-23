@@ -263,3 +263,50 @@ class TestGetObjectByURIPathTraversal:
 
         with pytest.raises(ObjectNotFoundByURIError):
             data_cache.get_object_by_uri("gpdc://core_domain/core_app/cfg/tags/0/extra")
+
+
+class TestHasURI:
+    def test_existing_scalar_root(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["counter"] = 42
+        assert data_cache.has_uri("gpdc://core_domain/core_app/counter") is True
+
+    def test_existing_container_root(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["cfg"] = {"a": 1}
+        assert data_cache.has_uri("gpdc://core_domain/core_app/cfg") is True
+
+    def test_existing_nested_path(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["cfg"] = {"server": {"host": "x"}}
+        assert data_cache.has_uri("gpdc://core_domain/core_app/cfg/server") is True
+
+    def test_missing_root(self, data_cache):
+        assert data_cache.has_uri("gpdc://core_domain/core_app/no_such") is False
+
+    def test_missing_domain(self, data_cache):
+        assert data_cache.has_uri("gpdc://no_such_domain/ns/x") is False
+
+    def test_missing_namespace(self, data_cache):
+        assert data_cache.has_uri("gpdc://core_domain/no_such_ns/x") is False
+
+    def test_scalar_terminal(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["cfg"] = {"port": 8080}
+        assert data_cache.has_uri("gpdc://core_domain/core_app/cfg/port") is False
+
+    def test_broken_path(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["cfg"] = {"a": 1}
+        assert data_cache.has_uri("gpdc://core_domain/core_app/cfg/missing") is False
+
+    def test_malformed_uri(self, data_cache):
+        assert data_cache.has_uri("http://d/ns/x") is False
+
+    def test_too_few_segments(self, data_cache):
+        assert data_cache.has_uri("gpdc://d/ns") is False
