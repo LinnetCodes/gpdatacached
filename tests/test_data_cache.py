@@ -72,3 +72,53 @@ class TestImportTimeRegistration:
 
         import gpdatacached  # ensure registration ran
         assert GPConfigManager._config_classes.get("GPDCDomainConfig") is GPDCDomainConfig
+
+
+class TestGPDataCacheDomainManagement:
+    def test_contains_known_domain(self, data_cache):
+        assert "core_domain" in data_cache
+        assert "edge_domain" in data_cache
+
+    def test_contains_unknown_domain(self, data_cache):
+        assert "no_such_domain" not in data_cache
+
+    def test_get_domain_constructs_and_caches(self, data_cache):
+        d1 = data_cache.get_domain("core_domain")
+        d2 = data_cache.get_domain("core_domain")
+        assert d1 is d2  # same cached instance
+
+    def test_get_domain_returns_working_domain(self, data_cache):
+        from gpdatacached.domain import GPDCDomain
+
+        d = data_cache.get_domain("core_domain")
+        assert isinstance(d, GPDCDomain)
+        assert d.name == "core_domain"
+        # The constructed domain actually works against Redis
+        ns = d.get_namespace("core_app")
+        ns["k"] = "v"
+        assert ns["k"] == "v"
+
+    def test_get_domain_unknown_raises_config_not_found(self, data_cache):
+        from gpconfig import ConfigNotFoundError
+
+        with pytest.raises(ConfigNotFoundError):
+            data_cache.get_domain("no_such_domain")
+
+    def test_close_closes_cached_domains(self, data_cache):
+        d = data_cache.get_domain("core_domain")
+        assert d._closed is False
+        data_cache.close()
+        assert d._closed is True
+
+    def test_close_is_idempotent(self, data_cache):
+        data_cache.get_domain("core_domain")
+        data_cache.close()
+        data_cache.close()  # must not raise
+
+    def test_context_manager_closes_on_exit(self, gpdc_config_folder, clean_redis):
+        from gpdatacached.data_cache import GPDataCache
+
+        with GPDataCache(gpdc_config_folder) as cache:
+            d = cache.get_domain("core_domain")
+            assert d._closed is False
+        assert d._closed is True

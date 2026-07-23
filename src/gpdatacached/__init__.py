@@ -20,6 +20,7 @@ from .types import GPDCTypeRegistry
 from .object import GPDCDataObject
 from .scalar import GPDCScalarObject
 from .container import GPDCContainerObject
+from .data_cache import GPDataCache
 from .builtins.bool_object import BoolObject
 from .builtins.datetime_object import DateObject, DateTimeObject, TimeObject
 from .builtins.dict_object import DictObject
@@ -58,6 +59,7 @@ __all__ = [
     "GPDCLockConfigInconsistentError",
     "LockAcquisitionTimeout",
     "GPDCDomain",
+    "GPDataCache",
     "GPDCNamespace",
     "GPDCDomainConfig",
     "GPDCNamespaceConfig",
