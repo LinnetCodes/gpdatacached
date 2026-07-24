@@ -185,7 +185,13 @@ Base class for container-mode pydantic objects. Subclasses must set `TYPE = "col
 | Operation | Behaviour |
 |---|---|
 | `obj["field"]` | Read one field. If the stored hash slot is present, returns the stored value. If the slot is missing (model evolution, external ops, GC edge cases), falls back to the field's declared `default_factory` (called) or `default` — including an explicit `default=None`, which correctly returns `None`. A *required* field (no `default`, no `default_factory`) with a missing slot raises `KeyError`. Unknown fields raise `KeyError`. |
-| `obj["field"] = value` | Write one field. Unknown fields raise `KeyError`. Releases the previous ref held by the overwritten value and applies sliding-TTL semantics. |
+| `obj["field"] = value` | Write one field. The value is **validated against the field's declared type** before any Redis write — a type mismatch raises `pydantic.ValidationError` at the call site and leaves the object untouched. Unknown fields raise `KeyError`. Releases the previous ref held by the overwritten value and applies sliding-TTL semantics. |
+
+!!! warning "Container mode validates one field at a time"
+
+    `__setitem__` validates the value against **that field's type only** (using pydantic's default, coercing config — the same coercions a normal `Model(field=value)` construction accepts). It does **not** run cross-field / model-level validators (e.g. `@model_validator` rules relating two fields), because evaluating those requires the whole model snapshot. Container mode trades whole-model validation for field-level access.
+
+    If you need cross-field validation, register the model with the **scalar codec** ([`PydanticModelScalarCodec`](#scalar-mode-atomic-json)) instead — it stores and reconstructs the model atomically, so every validator runs on every read. Container mode is the right choice when you want field-level access and can tolerate single-field-only validation.
 | `del obj["field"]` | **Rejected** — model fields are structural and cannot be deleted. Always raises `TypeError`. |
 | `"field" in obj` | `True` if `field` is a declared model field. |
 | `iter(obj)` | Iterate the declared field names. |

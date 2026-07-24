@@ -185,7 +185,13 @@ class BaseModelContainerObject(GPDCContainerObject, collections.abc.MutableMappi
 | 操作 | 行为 |
 |---|---|
 | `obj["field"]` | 读取单个字段。若存储的 hash 槽存在，返回存储的值。若槽位缺失（模型演进、外部操作、GC 边界情况），则回退到字段声明的 `default_factory`（调用）或 `default` —— 包括显式 `default=None`，此时正确返回 `None`。*必填*字段（无 `default`、无 `default_factory`）槽位缺失时抛出 `KeyError`。未知字段抛出 `KeyError`。 |
-| `obj["field"] = value` | 写入单个字段。未知字段抛出 `KeyError`。会释放被覆盖值原先持有的引用，并应用滑动 TTL 语义。 |
+| `obj["field"] = value` | 写入单个字段。在写入 Redis 之前，值会**按字段声明的类型校验** —— 类型不匹配会在调用处抛出 `pydantic.ValidationError`，对象状态不变。未知字段抛出 `KeyError`。会释放被覆盖值原先持有的引用，并应用滑动 TTL 语义。 |
+
+!!! warning "容器模式每次只校验单个字段"
+
+    `__setitem__` 只校验值**是否符合该字段的类型**（用 pydantic 默认的、允许 coercing 的配置 —— 与正常 `Model(field=value)` 构造接受的 coercions 相同）。它**不**跑跨字段 / model 级 validators（例如关联两个字段的 `@model_validator` 规则），因为评估这些需要整个 model 快照。容器模式用"整 model 校验"换取了"字段级访问"。
+
+    如果你需要跨字段校验，请改用**标量 codec**（[`PydanticModelScalarCodec`](#scalar-mode-atomic-json)）注册 model —— 它原子地存储和重建 model，因此每次读取都会跑所有 validator。当你需要字段级访问、且能接受"仅单字段校验"时，容器模式才是合适的选择。
 | `del obj["field"]` | **被拒绝** —— 模型字段属于结构，不能删除。始终抛出 `TypeError`。 |
 | `"field" in obj` | 当 `field` 是声明的模型字段时为 `True`。 |
 | `iter(obj)` | 遍历声明的字段名。 |
