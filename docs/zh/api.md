@@ -401,8 +401,9 @@ class GPDCDataObject(name, namespace, *, canonical_name=None)   # ABC
 
 | 方法 | 说明 |
 |---|---|
-| `expire_in(seconds)` | 设置新的 TTL。对象必须处于 `cache_mode="ttl"`。需要 ownership。 |
+| `expire_in(seconds)` | 设置新的 TTL。对象必须处于 `cache_mode="ttl"`。`seconds` 必须 `> 0` —— 要立即删除请用 `expire_now()`。需要 ownership。 |
 | `expire_at(when)` | 设置绝对过期时间。对象必须处于 `cache_mode="ttl"`。需要 ownership。若 `when` 已过去则立即删除对象（等价于 `del ns[name]`：清理 `obj:`/`raw:`/`ref:` 并级联删除匿名子树；若 owner 仍被引用则抛出 `CanonicalObjectReferencedError` —— 可先用 `has_referrers()` 检查）。 |
+| `expire_now()` | 立即删除本对象。等价于 `del ns[canonical_name]`：完整拆卸（obj:/raw:/ref: + 级联删除匿名子树）。适用于任何 `cache_mode`（不像 `expire_in`/`expire_at` 要求 `cache_mode="ttl"`）。需要 ownership；若 owner 仍被别名引用则抛出 `CanonicalObjectReferencedError` —— 可先用 `has_referrers()` 检查。 |
 | `persist()` | 切换为 `cache_mode="permanent"` 且 `ttl=0`。需要 ownership。 |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | 替换整个缓存策略。需要 ownership。 |
 | `refresh_ttl()` | 将对象自身的 TTL 重新应用到其 key，并级联刷新其拥有的子树（用于滑动窗口刷新路径）。永久对象为空操作。 |

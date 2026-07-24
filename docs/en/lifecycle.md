@@ -157,16 +157,17 @@ After refreshing the ancestor, GPDC also re-applies each owned child's **own** p
 
 You rarely need to change policy mid-life, but when you do, GPDC propagates the change across the owned subtree.
 
-### The four user-facing mutators
+### The user-facing mutators
 
 | Method | Effect | Permission |
 |---|---|---|
-| `expire_in(seconds)` | Set new TTL. Requires existing `cache_mode == "ttl"`. | Owner only. |
+| `expire_in(seconds)` | Set new TTL. Requires existing `cache_mode == "ttl"` and `seconds > 0`. To delete now, use `expire_now()`. | Owner only. |
 | `expire_at(when)` | Set absolute expiry time. Requires `cache_mode == "ttl"`. Deletes immediately if `when` is in the past (equivalent to `del ns[name]`: full teardown incl. anonymous subtrees; raises `CanonicalObjectReferencedError` if still referenced — check `has_referrers()` first). | Owner only. |
+| `expire_now()` | Delete this object immediately (equivalent to `del ns[canonical_name]`: full teardown incl. anonymous subtrees; raises `CanonicalObjectReferencedError` if still referenced). Works in any `cache_mode` — use this instead of `expire_in(0)`/`expire_at(past)` when you want an explicit, mode-independent "delete now". | Owner only. |
 | `persist()` | Switch to `permanent` with `ttl=0`. | Owner only. |
 | `update_cache_mode_and_ttl(mode, ttl)` | Replace the full policy with `(mode, ttl)`. | Owner only. |
 
-All four delegate to `set_lifecycle(policy)` after a permission check (see [§7](#7-the-ownership-model)).
+The four policy mutators (`expire_in`, `expire_at`, `persist`, `update_cache_mode_and_ttl`) delegate to `set_lifecycle(policy)` after a permission check (see [§7](#7-the-ownership-model)). `expire_now()` is the explicit delete-now entry point — it delegates to `del ns[canonical_name]` (full teardown), not to `set_lifecycle`.
 
 ### Cascade propagation
 
@@ -352,8 +353,9 @@ For reference, here is the complete set of user-facing lifecycle methods on `GPD
 
 | Method | Purpose |
 |---|---|
-| `expire_in(seconds)` | Set a new TTL (must already be in `ttl` mode). |
+| `expire_in(seconds)` | Set a new TTL (must already be in `ttl` mode; `seconds > 0`). |
 | `expire_at(when)` | Set absolute expiry (must already be in `ttl` mode). |
+| `expire_now()` | Delete this object now (any cache mode; full teardown incl. anonymous subtrees). |
 | `persist()` | Switch to `permanent`. |
 | `update_cache_mode_and_ttl(mode, ttl)` | Replace the full policy. |
 | `refresh_ttl()` | Force a sliding-window refresh of this object and its owned subtree. |

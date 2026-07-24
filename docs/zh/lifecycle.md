@@ -157,16 +157,17 @@ graph TD
 
 你很少需要在生命周期中途变更策略，但当你这么做时，GPDC 会把变更传播到所属子树。
 
-### 四个面向用户的变更方法
+### 面向用户的变更方法
 
 | 方法 | 效果 | 权限 |
 |---|---|---|
-| `expire_in(seconds)` | 设置新 TTL。要求已处于 `cache_mode == "ttl"`。 | 仅 owner。 |
+| `expire_in(seconds)` | 设置新 TTL。要求已处于 `cache_mode == "ttl"` 且 `seconds > 0`。要立即删除请用 `expire_now()`。 | 仅 owner。 |
 | `expire_at(when)` | 设置绝对过期时间。要求 `cache_mode == "ttl"`。若 `when` 已过去则立即删除（等价于 `del ns[name]`：完整拆卸含匿名子树；若仍被引用则抛出 `CanonicalObjectReferencedError` —— 可先用 `has_referrers()` 检查）。 | 仅 owner。 |
+| `expire_now()` | 立即删除本对象（等价于 `del ns[canonical_name]`：完整拆卸含匿名子树；若仍被引用则抛出 `CanonicalObjectReferencedError`）。适用于任何 `cache_mode` —— 当你想要一个明确、与模式无关的"立即删除"入口时，用它而非 `expire_in(0)`/`expire_at(过去)`。 | 仅 owner。 |
 | `persist()` | 切换为 `permanent` 且 `ttl=0`。 | 仅 owner。 |
 | `update_cache_mode_and_ttl(mode, ttl)` | 用 `(mode, ttl)` 替换整个策略。 | 仅 owner。 |
 
-四者在权限检查（见 [§7](#7-ownership)）后都委托给 `set_lifecycle(policy)`。
+四个策略变更方法（`expire_in`、`expire_at`、`persist`、`update_cache_mode_and_ttl`）在权限检查（见 [§7](#7-ownership)）后都委托给 `set_lifecycle(policy)`。`expire_now()` 是明确的"立即删除"入口 —— 它委托给 `del ns[canonical_name]`（完整拆卸），而非 `set_lifecycle`。
 
 ### 级联传播
 
@@ -352,8 +353,9 @@ domain.run_gc("analytics")      # 单个 namespace
 
 | 方法 | 用途 |
 |---|---|
-| `expire_in(seconds)` | 设置新 TTL（必须已处于 `ttl` 模式）。 |
+| `expire_in(seconds)` | 设置新 TTL（必须已处于 `ttl` 模式；`seconds > 0`）。 |
 | `expire_at(when)` | 设置绝对过期（必须已处于 `ttl` 模式）。 |
+| `expire_now()` | 立即删除本对象（任何 cache_mode；完整拆卸含匿名子树）。 |
 | `persist()` | 切换为 `permanent`。 |
 | `update_cache_mode_and_ttl(mode, ttl)` | 替换整个策略。 |
 | `refresh_ttl()` | 强制对该对象及其所属子树做一次滑动窗口刷新。 |

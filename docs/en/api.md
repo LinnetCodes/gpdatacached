@@ -441,8 +441,9 @@ Abstract base class for every GPDC data object. Subclasses are split into [`GPDC
 
 | Method | Description |
 |---|---|
-| `expire_in(seconds)` | Set a new TTL. Object must be in `cache_mode="ttl"`. Requires ownership. |
+| `expire_in(seconds)` | Set a new TTL. Object must be in `cache_mode="ttl"`. `seconds` must be `> 0` — to delete now, use `expire_now()`. Requires ownership. |
 | `expire_at(when)` | Set absolute expiry time. Object must be in `cache_mode="ttl"`. Requires ownership. Deletes the object immediately if `when` is in the past (equivalent to `del ns[name]`: cleans `obj:`/`raw:`/`ref:` and cascade-deletes anonymous subtrees; raises `CanonicalObjectReferencedError` if the owner is still referenced — check `has_referrers()` first). |
+| `expire_now()` | Delete this object immediately. Equivalent to `del ns[canonical_name]`: full teardown (obj:/raw:/ref: + cascade-delete of anonymous subtrees). Works in any `cache_mode` (unlike `expire_in`/`expire_at`, which require `cache_mode="ttl"`). Requires ownership; raises `CanonicalObjectReferencedError` if the owner is still referenced by aliases — check `has_referrers()` first. |
 | `persist()` | Switch to `cache_mode="permanent"` with `ttl=0`. Requires ownership. |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | Replace the full cache policy. Requires ownership. |
 | `refresh_ttl()` | Re-apply this object's own TTL to its keys and cascade-refresh its owned subtree (used by the sliding-window path). No-op for permanent objects. |

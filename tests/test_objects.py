@@ -289,6 +289,29 @@ class TestObjectGoneErrorScalar:
         with pytest.raises(ObjectGoneError, match="no longer exists"):
             obj.expire_in(60)
 
+    def test_expire_in_rejects_zero_ttl(self, ns):
+        # expire_in() sets a TTL; ttl mode requires ttl > 0. expire_in(0) must
+        # NOT silently persist the object — use expire_now() to delete.
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        obj.update_cache_mode_and_ttl("ttl", 60)
+        with pytest.raises(ValueError, match="ttl"):
+            obj.expire_in(0)
+
+    def test_expire_in_rejects_negative_ttl(self, ns):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        obj.update_cache_mode_and_ttl("ttl", 60)
+        with pytest.raises(ValueError, match="ttl"):
+            obj.expire_in(-10)
+
+    def test_expire_now_raises_when_gone(self, ns, raw_redis):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.expire_now()
+
     def test_expire_at_raises(self, ns, raw_redis):
         ns["x"] = 42
         obj = ns.get_object("x")
