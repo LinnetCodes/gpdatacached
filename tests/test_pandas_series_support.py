@@ -255,6 +255,63 @@ class TestRangeIndex:
         assert list(result.index) == [5, 10, 15]
 
 
+class TestRangeIndexNonUnitStepLogic03:
+    """CQR-2026-07-24 logic.03: non-unit (and negative) RangeIndex step must be
+    honoured by __len__, extend, and .iloc — not just round-trip."""
+
+    def test_len_non_unit_step(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("s")
+        assert len(obj) == 3  # not 15 (= stop - start)
+
+    def test_len_negative_step(self, ns):
+        ns["s"] = pd.Series([30, 20, 10], index=pd.RangeIndex(20, 5, -5))
+        obj = ns.get_object("s")
+        assert len(obj) == 3  # range(20, 5, -5) -> [20, 15, 10]
+
+    def test_extend_non_unit_step_advances_stop_by_len_times_step(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5), name="x")
+        obj = ns.get_object("s")
+        obj.extend(pd.Series([40, 50], index=pd.RangeIndex(20, 30, 5), name="x"))
+        val = obj.value
+        assert len(val) == 5
+        assert list(val.index) == [5, 10, 15, 20, 25]
+
+    def test_extend_negative_step_advances_stop_by_len_times_step(self, ns):
+        # range(20, 5, -5) = [20,15,10]; extend 2 -> [20,15,10,5,0], stop -> -5... wait
+        # range(20, 5, -5) has stop 5; appending 2 with step -5 -> new_stop = 5 + 2*(-5) = -5
+        # giving range(20, -5, -5) = [20,15,10,5,0]. 5 values.
+        ns["s"] = pd.Series([30, 20, 10], index=pd.RangeIndex(20, 5, -5), name="x")
+        obj = ns.get_object("s")
+        obj.extend(pd.Series([5, 0], index=pd.RangeIndex(5, -5, -5), name="x"))
+        val = obj.value
+        assert len(val) == 5
+        assert list(val.index) == [20, 15, 10, 5, 0]
+
+    def test_extend_repeated_non_unit_step(self, ns):
+        # Two successive extends on a non-unit range stay consistent.
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5), name="x")
+        obj = ns.get_object("s")
+        obj.extend(pd.Series([40], index=pd.RangeIndex(20, 25, 5), name="x"))
+        obj.extend(pd.Series([50, 60], index=pd.RangeIndex(25, 35, 5), name="x"))
+        val = obj.value
+        assert list(val.index) == [5, 10, 15, 20, 25, 30]
+
+    def test_iloc_slice_non_unit_step(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("s")
+        sub = obj.iloc[0:2]
+        assert list(sub.index) == [5, 10]
+        assert list(sub.values) == [10, 20]
+
+    def test_non_unit_step_value_round_trip(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5), name="x")
+        obj = ns.get_object("s")
+        assert list(obj.value.index) == [5, 10, 15]
+        assert obj.series_name == "x"
+
+
+
 class TestIndexVariety:
     def test_duplicate_labels_round_trip(self, ns):
         from gpdatacached.extensions.pandas_support import SeriesCodec

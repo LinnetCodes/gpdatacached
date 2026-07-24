@@ -909,8 +909,12 @@ class DataFrameObject(GPDCContainerObject):
         # RangeIndex: continue the range, or promote to L=1 levels.
         if index_kind == "range":
             range_step = _decode_scalar(fields["~range_step"])
-            if range_step == 1 and appended_is_range:
-                # range-compatible: just bump range_stop + append columns.
+            if appended_is_range:
+                # range-compatible: just bump range_stop + append columns. Works for
+                # any step (including non-unit and negative): the appended rows
+                # extend the stored range by n positions, so new_stop advances by
+                # n*step (CQR-2026-07-24 logic.03). Promote-to-levels only when the
+                # appended input is NOT a positional range (labelled/custom index).
                 pipe = r.pipeline(transaction=True)
                 with encode_session(self._namespace):
                     encoded_per_col = {
@@ -921,7 +925,7 @@ class DataFrameObject(GPDCContainerObject):
                     enc = encoded_per_col[col]
                     if enc:
                         pipe.rpush(self._get_column_list(col).raw_key, *enc)
-                new_stop = _decode_scalar(fields["~range_stop"]) + n
+                new_stop = _decode_scalar(fields["~range_stop"]) + n * range_step
                 pipe.hset(self.raw_key, "~range_stop", _encode_extra_value(new_stop))
                 pipe.execute()
                 self._invalidate_caches()
@@ -995,7 +999,13 @@ class DataFrameObject(GPDCContainerObject):
     def __len__(self) -> int:
         if self._index_kind() == "range":
             fields = self._raw_fields()
-            return _decode_scalar(fields["~range_stop"]) - _decode_scalar(fields["~range_start"])
+            # Cardinality of range(start, stop, step) — NOT (stop - start), which
+            # is only correct when step == 1 (CQR-2026-07-24 logic.03). Using
+            # Python's range() handles non-unit, negative, and empty cases uniformly.
+            start = _decode_scalar(fields["~range_start"])
+            stop = _decode_scalar(fields["~range_stop"])
+            step = _decode_scalar(fields["~range_step"])
+            return len(range(start, stop, step))
         idx = self._get_level_list(0)
         return len(idx) if idx is not None else 0
 
@@ -1578,7 +1588,10 @@ class SeriesObject(GPDCContainerObject):
                 names = _decode_scalar(fields["index_names"])
             else:
                 data_list = self._get_data_list()
-                new_stop = _decode_scalar(fields["range_stop"]) + len(new_data)
+                # Advance range_stop by len*step, not len — works for any step
+                # including non-unit and negative (CQR-2026-07-24 logic.03).
+                range_step = _decode_scalar(fields["range_step"])
+                new_stop = _decode_scalar(fields["range_stop"]) + len(new_data) * range_step
                 pipe = r.pipeline(transaction=True)
                 with encode_session(self._namespace):
                     encoded_data = [encode_element(v, self._namespace, owner_name, policy) for v in new_data]

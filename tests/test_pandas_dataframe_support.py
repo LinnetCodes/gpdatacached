@@ -158,6 +158,70 @@ class TestCreateRawHashLayout:
             DataFrameCodec.create_raw(ns, raw_key, df, "owner", "permanent", 0)
 
 
+class TestDataFrameRangeIndexNonUnitStepLogic03:
+    """CQR-2026-07-24 logic.03: non-unit RangeIndex step honoured by __len__,
+    extend, and column assignment (previously __len__ used stop-start and extend
+    added n instead of n*step)."""
+
+    def test_len_non_unit_step(self, ns):
+        ns["df"] = pd.DataFrame({"v": [10, 20, 30]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        assert len(obj) == 3  # not 15
+
+    def test_len_negative_step(self, ns):
+        ns["df"] = pd.DataFrame({"v": [30, 20, 10]}, index=pd.RangeIndex(20, 5, -5))
+        obj = ns.get_object("df")
+        assert len(obj) == 3
+
+    def test_column_assignment_correct_length_accepted(self, ns):
+        # Before the fix, __len__ returned 15 so a 3-value column was rejected.
+        ns["df"] = pd.DataFrame({"v": [10, 20, 30]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        obj["w"] = [100, 200, 300]
+        assert list(obj["w"]) == [100, 200, 300]
+
+    def test_extend_non_unit_step_stays_compact_and_correct(self, ns):
+        # Direction A: a non-unit RangeIndex stays compact (does NOT promote to levels)
+        # and advances range_stop by n*step.
+        ns["df"] = pd.DataFrame({"v": [1, 2, 3]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"v": [4, 5]}, index=pd.RangeIndex(20, 30, 5)))
+        # Still compact range storage (logic.03 direction A):
+        from gpdatacached.extensions.pandas_support import _decode_scalar
+
+        assert _decode_scalar(obj._raw_fields()["~index_kind"]) == "range"
+        val = obj.value
+        assert len(val) == 5
+        assert list(val.index) == [5, 10, 15, 20, 25]
+        assert list(val["v"]) == [1, 2, 3, 4, 5]
+
+    def test_extend_negative_step_stays_compact_and_correct(self, ns):
+        ns["df"] = pd.DataFrame({"v": [3, 2, 1]}, index=pd.RangeIndex(20, 5, -5))
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"v": [5, 0]}, index=pd.RangeIndex(5, -5, -5)))
+        from gpdatacached.extensions.pandas_support import _decode_scalar
+
+        assert _decode_scalar(obj._raw_fields()["~index_kind"]) == "range"
+        val = obj.value
+        assert len(val) == 5
+        assert list(val.index) == [20, 15, 10, 5, 0]
+
+    def test_extend_repeated_non_unit_step(self, ns):
+        ns["df"] = pd.DataFrame({"v": [1, 2, 3]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"v": [4]}, index=pd.RangeIndex(20, 25, 5)))
+        obj.extend(pd.DataFrame({"v": [5, 6]}, index=pd.RangeIndex(25, 35, 5)))
+        val = obj.value
+        assert list(val.index) == [5, 10, 15, 20, 25, 30]
+        assert list(val["v"]) == [1, 2, 3, 4, 5, 6]
+
+    def test_iloc_slice_non_unit_step(self, ns):
+        ns["df"] = pd.DataFrame({"v": [10, 20, 30]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        sub = obj.iloc[0:2]
+        assert list(sub.index) == [5, 10]
+
+
 class TestDataFrameRoundTrip:
     @pytest.mark.parametrize(
         "df",
