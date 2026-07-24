@@ -177,9 +177,9 @@ class GPDCDataObject(ABC):
 
     def take_ownership(self) -> None:
         if not self._is_reference:
-            raise TypeError("take_ownership() can only be called on named reference objects")
+            raise TypeError("take_ownership() must be called via a named reference handle")
         if self._name.startswith("~"):
-            raise TypeError("take_ownership() can only be called on named reference objects")
+            raise TypeError("take_ownership() must be called via a named reference handle")
 
         key = self._canonical_redis_key()
         r = self._redis()

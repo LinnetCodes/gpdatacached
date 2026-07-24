@@ -208,15 +208,24 @@ The four lifecycle mutators (`expire_in`, `expire_at`, `persist`, `update_cache_
 
 ### `take_ownership()`
 
-A **named reference** (alias) can promote itself to own its data:
+`take_ownership()` operates on **the referenced data object**, not on the reference (alias) binding. It makes **the referenced object** its own owner, so it can manage its own lifecycle independently.
+
+The primary use case is a **named reference pointing at an anonymous nested object**. An anonymous object is created with `owner = parent` (its lifetime is attached to the parent container). When you hold a named reference to it, `take_ownership()` promotes the anonymous object to self-owned — its `owner` changes from the parent's name to its own `~anon:…` canonical name:
 
 ```python
-ns["alias"] = ns["original"]   # alias is a reference
-obj = ns.get_object("alias")
-obj.take_ownership()           # now alias owns the data; owner = "alias"
+ns["parent"] = {"inner": [1, 2, 3]}          # inner becomes ~anon:… owned by "parent"
+inner = ns.get_object("parent")["inner"]      # the anonymous list object
+ns["named"] = inner                           # a named reference to the anonymous object
+obj = ns.get_object("named")
+obj.take_ownership()                          # now the ~anon:… object owns itself;
+                                             # owner = "~anon:…", independent of "parent"
+# After this, obj.update_cache_mode_and_ttl("ttl", 60) sets a TTL on the ~anon:…
+# object WITHOUT affecting "parent" — the anon now has its own lifecycle.
 ```
 
-After `take_ownership()`, the alias becomes self-owned and can have its lifecycle changed independently. Only named references can do this — anonymous objects (`~anon:…`) cannot, because they have no user-visible name.
+**On a reference to a named (already self-owned) object, `take_ownership()` is a correct no-op.** A named object is its own owner from creation, so the call changes nothing — which is the intended behaviour. In a multi-process shared environment a caller is not necessarily the data's creator and cannot (and need not) know whether a referenced object was created anonymous or named; the caller's intent — "this referenced object should manage its own lifecycle" — is *enacted* for an anonymous object and *already satisfied* for a named one. Either way the call is legitimate.
+
+The call itself must be made **via a named reference handle**: `obj._is_reference` must be `True` and `obj.name` must not start with `~`. Calling it on a plain (non-reference) object raises `TypeError`.
 
 ---
 
@@ -301,7 +310,7 @@ This protection is intentional: silently deleting data that other names still po
 
 ### Lifecycle of a reference binding itself
 
-A reference's `obj:alias` key has **no TTL applied**; it persists until explicitly deleted. Lifecycle mutators called on a reference operate on the **canonical owner**, not on the alias binding — use `take_ownership()` (see [§7](#7-the-ownership-model)) to promote a reference to a self-owned object with its own policy.
+A reference's `obj:alias` key has **no TTL applied**; it persists until explicitly deleted. Lifecycle mutators called on a reference operate on the **canonical owner**, not on the alias binding — use `take_ownership()` (see [§7](#7-the-ownership-model)) to promote **the referenced object** to self-owned so it can carry its own policy.
 
 ---
 
@@ -348,7 +357,7 @@ For reference, here is the complete set of user-facing lifecycle methods on `GPD
 | `persist()` | Switch to `permanent`. |
 | `update_cache_mode_and_ttl(mode, ttl)` | Replace the full policy. |
 | `refresh_ttl()` | Force a sliding-window refresh of this object and its owned subtree. |
-| `take_ownership()` | Promote a named reference to own its data. |
+| `take_ownership()` | Promote **the referenced object** to own itself (primary use case: a named reference to an anonymous nested object; a correct no-op on a reference to an already self-owned named object). |
 | `ttl` (property) | The declared TTL in seconds. |
 | `cache_mode` (property) | The current cache mode. |
 | `remaining_ttl()` | The actual remaining TTL reported by Redis (can be 0 or -1). |

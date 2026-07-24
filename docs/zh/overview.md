@@ -244,6 +244,18 @@ graph LR
 - 当最后一个引用者消失时（例如父对象被删除，或某个元素被覆盖/移除），会被**级联删除**。
 - 对 `iter(ns)`、`len(ns)`、`in` 检查不可见。
 
+### 提升匿名对象：`take_ownership()`
+
+由于匿名对象的生命周期依附于其父容器（`owner = parent`），它没有独立的生命周期 —— 其 TTL 由 owner 链驱动（见[§5](./lifecycle.md#5-滑动窗口刷新)）。当你持有一个指向匿名对象的**命名引用**时，可以用 `take_ownership()` 把**被引用对象**提升为自持：
+
+```python
+ns["parent"] = {"inner": [1, 2, 3]}        # inner 是 ~anon:… ，owner 为 "parent"
+ns["named"] = ns.get_object("parent")["inner"]
+ns.get_object("named").take_ownership()    # 该 ~anon:… 现在拥有自己；"parent" 不受影响
+```
+
+此后匿名对象携带自己的策略（例如可以给它设独立于父对象的 TTL）。对**命名**（已自持）对象的引用，`take_ownership()` 是一个正确的 no-op。完整语义见[生命周期管理 §7](./lifecycle.md#7-ownership所有者模型)。
+
 ### 为什么禁止跨 namespace 引用？
 
 原则 #4：一个 namespace 是自洽的引用图。这让 `ns.clear()` 与 `domain.delete_namespace()` 可以批量（`SCAN + DELETE`）删除 namespace 下的所有 key，而无需逐对象走引用者清理逻辑。如果引用可以跨越 namespace 边界，批量删除就有孤立或破坏其他 namespace 数据的风险。

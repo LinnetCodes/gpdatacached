@@ -406,7 +406,7 @@ class GPDCDataObject(name, namespace, *, canonical_name=None)   # ABC
 | `persist()` | 切换为 `cache_mode="permanent"` 且 `ttl=0`。需要 ownership。 |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | 替换整个缓存策略。需要 ownership。 |
 | `refresh_ttl()` | 将对象自身的 TTL 重新应用到其 key，并级联刷新其拥有的子树（用于滑动窗口刷新路径）。永久对象为空操作。 |
-| `take_ownership()` | 将一个引用对象提升为其数据的 canonical owner。仅对具名引用有效。 |
+| `take_ownership()` | 把**被引用对象**提升为自持（主要用例：指向匿名嵌套对象的命名引用）。对命名（已自持）对象的引用是正确的 no-op。调用本身必须经由命名引用句柄发起。见[生命周期 §7](./lifecycle.md#7-ownership)。 |
 
 **加锁方法**（可选使用，变更操作永远不会自动调用）
 

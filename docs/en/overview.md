@@ -244,6 +244,18 @@ When you store a **nested container** — `ns["matrix"] = [[1, 2], [3, 4]]` — 
 - Are **cascade-deleted** when their last referrer goes away (e.g. when the parent is deleted, or when an element is overwritten/removed).
 - Are hidden from `iter(ns)`, `len(ns)`, and `in` checks.
 
+### Promoting an anonymous object: `take_ownership()`
+
+Because an anonymous object's lifetime is attached to its parent container (`owner = parent`), it has no independent lifecycle — its TTL is driven by the owner chain (see [§5](./lifecycle.md#5-sliding-window-refresh)). When you hold a **named reference** to an anonymous object, you can promote the **referenced object** to self-owned with `take_ownership()`:
+
+```python
+ns["parent"] = {"inner": [1, 2, 3]}        # inner is ~anon:… owned by "parent"
+ns["named"] = ns.get_object("parent")["inner"]
+ns.get_object("named").take_ownership()    # the ~anon:… now owns itself; "parent" is unaffected
+```
+
+After this the anonymous object carries its own policy (e.g. you can give it a TTL independent of the parent). On a reference to a **named** (already self-owned) object, `take_ownership()` is a correct no-op. See [Lifecycle Management §7](./lifecycle.md#7-the-ownership-model) for the full semantics.
+
 ### Why no cross-namespace references?
 
 Principle #4: a namespace is a self-contained reference graph. This lets `ns.clear()` and `domain.delete_namespace()` delete every key in bulk (`SCAN + DELETE`) without walking per-object referrer cleanup. If references could cross namespace boundaries, bulk deletion would risk orphaning or corrupting another namespace's data.

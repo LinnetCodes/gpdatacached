@@ -446,7 +446,7 @@ Abstract base class for every GPDC data object. Subclasses are split into [`GPDC
 | `persist()` | Switch to `cache_mode="permanent"` with `ttl=0`. Requires ownership. |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | Replace the full cache policy. Requires ownership. |
 | `refresh_ttl()` | Re-apply this object's own TTL to its keys and cascade-refresh its owned subtree (used by the sliding-window path). No-op for permanent objects. |
-| `take_ownership()` | Promote a reference object to be the canonical owner of its own data. Only valid for named references. |
+| `take_ownership()` | Promote **the referenced object** to own itself (primary use case: a named reference to an anonymous nested object). On a reference to a named (already self-owned) object it is a correct no-op. The call itself must be made via a named reference handle. See [Lifecycle §7](./lifecycle.md#7-the-ownership-model). |
 
 **Locking methods** (opt-in, never called automatically by mutations)
 

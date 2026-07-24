@@ -208,15 +208,24 @@ graph TD
 
 ### `take_ownership()`
 
-**具名引用**（别名）可以把自己提升为数据的所有者：
+`take_ownership()` 的作用对象是**被引用的数据对象**，而不是引用（别名）绑定本身。它让**被引用对象**成为自己的 owner，从而可以独立管理自己的生命周期。
+
+主要用例是**命名引用指向匿名嵌套对象**。匿名对象创建时 `owner = parent`（其生命周期依附于父容器）。当你持有一个指向它的命名引用时，`take_ownership()` 会把该匿名对象提升为自持 —— 它的 `owner` 从父对象名变为自己的 `~anon:…` canonical name：
 
 ```python
-ns["alias"] = ns["original"]   # alias 是一个引用
-obj = ns.get_object("alias")
-obj.take_ownership()           # 现在 alias 拥有数据；owner = "alias"
+ns["parent"] = {"inner": [1, 2, 3]}          # inner 变为 ~anon:… ，owner 是 "parent"
+inner = ns.get_object("parent")["inner"]      # 这个匿名 list 对象
+ns["named"] = inner                           # 指向该匿名对象的命名引用
+obj = ns.get_object("named")
+obj.take_ownership()                          # 现在 ~anon:… 对象拥有自己；
+                                             # owner = "~anon:…"，独立于 "parent"
+# 此后 obj.update_cache_mode_and_ttl("ttl", 60) 给该 ~anon:… 对象设 TTL，
+# 不会影响 "parent" —— 匿名对象现在有自己的生命周期。
 ```
 
-`take_ownership()` 之后，别名变为自持，可以独立变更其生命周期。只有具名引用可以这么做 —— 匿名对象（`~anon:…`）不能，因为它们对用户不可见。
+**对命名（已自持）对象的引用调用 `take_ownership()` 是一个正确的 no-op。** 命名对象创建时就是自己的 owner，所以调用不改变任何东西 —— 这正是预期行为。在多进程共享环境里，调用者不一定是数据的创建者，也无法（也无需）知道被引用对象当初是匿名的还是命名的；调用者的意图 —— "让被引用对象自管生命周期" —— 对匿名对象是*被落实*，对命名对象则*已经满足*。两种情况下调用都合法。
+
+调用本身必须**经由命名引用句柄**发起：`obj._is_reference` 必须为 `True`，且 `obj.name` 不能以 `~` 开头。在普通（非引用）对象上调用会抛 `TypeError`。
 
 ---
 
@@ -301,7 +310,7 @@ ns["alias"] = ns["original"]   # 两个名字现在都解析到同一份 canonic
 
 ### 引用绑定自身的生命周期
 
-引用的 `obj:alias` key **没有应用 TTL**；它会一直存在，直到被显式删除。在引用上调用的生命周期变更方法作用于 **canonical owner**，而非别名绑定 —— 使用 `take_ownership()`（见 [§7](#7-ownership)）可以把引用提升为自持、拥有自身策略的对象。
+引用的 `obj:alias` key **没有应用 TTL**；它会一直存在，直到被显式删除。在引用上调用的生命周期变更方法作用于 **canonical owner**，而非别名绑定 —— 使用 `take_ownership()`（见 [§7](#7-ownership)）可以把**被引用对象**提升为自持，从而携带自己的策略。
 
 ---
 
@@ -348,7 +357,7 @@ domain.run_gc("analytics")      # 单个 namespace
 | `persist()` | 切换为 `permanent`。 |
 | `update_cache_mode_and_ttl(mode, ttl)` | 替换整个策略。 |
 | `refresh_ttl()` | 强制对该对象及其所属子树做一次滑动窗口刷新。 |
-| `take_ownership()` | 把一个具名引用提升为数据的所有者。 |
+| `take_ownership()` | 把**被引用对象**提升为自持（主要用例：指向匿名嵌套对象的命名引用；对已自持的命名对象的引用是正确的 no-op）。 |
 | `ttl`（属性） | 声明的 TTL（秒）。 |
 | `cache_mode`（属性） | 当前缓存模式。 |
 | `remaining_ttl()` | Redis 报告的实际剩余 TTL（可为 0 或 -1）。 |
