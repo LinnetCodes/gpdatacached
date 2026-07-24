@@ -131,6 +131,8 @@ class SeriesObject(GPDCContainerObject)
 
 GPDC type `collection:pandas_series`. Backed by a Redis hash storing the data list (anonymous `ListObject` child), optional per-level index lists, and scalar metadata (`dtype`, `name`, `index_kind`, `index_names`, `index_dtypes`, `range_*`, category metadata).
 
+> **Identity vs pandas label.** `SeriesObject` inherits `name` from `GPDCDataObject` — it returns the **namespace binding name** (the GPDC identity, consistent with `.uri`/`.canonical_name` and with `DataFrameObject`). The stored pandas `Series.name` is exposed as `series_name` (also reachable via `.value.name`).
+
 **Properties**
 
 | Property | Type | Description |
@@ -138,7 +140,8 @@ GPDC type `collection:pandas_series`. Backed by a Redis hash storing the data li
 | `value` | `pd.Series` | Full materialization as a plain `pd.Series`. The setter always raises — use mutation methods instead. |
 | `type` | `str` | `"collection:pandas_series"`. |
 | `dtype` | `str` | Stored value dtype string (e.g. `"int64"`, `"category"`). |
-| `name` | `Any` | Stored series name. |
+| `name` | `str` | Namespace binding name (inherited from `GPDCDataObject`; the identity contract shared with `.uri`/`.canonical_name`). |
+| `series_name` | `Any` | Stored pandas `Series.name` (the payload label). |
 | `index_names` | `tuple` | Index level names (always a tuple; one element for a flat index). |
 | `iloc` | `_ILocIndexer` | Positional row accessor (read-only). Supports `int` and `slice`; rejects list. |
 | `loc` | `_LocIndexer` | Label-based row accessor (read-only). Supports scalar / depth-k tuple prefix on a labelled/MultiIndex. Rejects `slice`, `list`, and any use on a `RangeIndex` with a `TypeError` pointing at `.value`. |

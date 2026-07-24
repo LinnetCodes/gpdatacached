@@ -374,12 +374,27 @@ class TestSeriesObjectCore:
         assert list(obj.value.index) == ["a", "b", "c"]
 
     def test_len_dtype_name_index_names(self, ns):
+        # Binding name "s" deliberately differs from pandas name "vals".
+        # .name is the GPDC binding (base-class identity contract, same as
+        # DataFrameObject); .series_name is the pandas payload label.
         ns["s"] = pd.Series([1, 2, 3], index=["a", "b", "c"], name="vals")
         obj = ns.get_object("s")
         assert len(obj) == 3
         assert obj.dtype == "int64"
-        assert obj.name == "vals"
+        assert obj.name == "s"  # binding name, not the pandas label
+        assert obj.series_name == "vals"  # the pandas Series.name
         assert obj.index_names == (None,)
+
+    def test_name_is_binding_identity(self, ns):
+        # Regression guard for CQR-2026-07-24 inconsistency.02: SeriesObject.name
+        # must agree with .uri and .canonical_name (the base-class identity
+        # contract), matching every other object type incl. DataFrameObject.
+        ns["binding"] = pd.Series([1, 2, 3], name="payload_name")
+        obj = ns.get_object("binding")
+        assert obj.name == "binding"
+        assert obj.canonical_name == "binding"
+        assert obj.uri.endswith("/binding")
+        assert obj.series_name == "payload_name"
 
     def test_index_names_is_tuple(self, ns):
         ns["s"] = pd.Series([1, 2], index=["a", "b"], name="s")

@@ -131,6 +131,8 @@ class SeriesObject(GPDCContainerObject)
 
 GPDC 类型 `collection:pandas_series`。底层是一个 Redis hash，存储数据列表（匿名 `ListObject` 子对象）、可选的每个 level 的索引列表，以及标量元信息（`dtype`、`name`、`index_kind`、`index_names`、`index_dtypes`、`range_*`、category 元信息）。
 
+> **身份 vs pandas 标签。** `SeriesObject` 继承自 `GPDCDataObject` 的 `name` 返回**命名空间绑定名**（GPDC 身份，与 `.uri`/`.canonical_name` 及 `DataFrameObject` 一致）。存储的 pandas `Series.name` 通过 `series_name` 暴露（也可经 `.value.name` 访问）。
+
 **属性**
 
 | 属性 | 类型 | 说明 |
@@ -138,7 +140,8 @@ GPDC 类型 `collection:pandas_series`。底层是一个 Redis hash，存储数�
 | `value` | `pd.Series` | 物化为普通 `pd.Series`。setter 永远抛错 —— 请使用变更方法。 |
 | `type` | `str` | `"collection:pandas_series"`。 |
 | `dtype` | `str` | 存储的值 dtype 字符串（如 `"int64"`、`"category"`）。 |
-| `name` | `Any` | 存储的 series 名称。 |
+| `name` | `str` | 命名空间绑定名（继承自 `GPDCDataObject`；与 `.uri`/`.canonical_name` 共享的身份契约）。 |
+| `series_name` | `Any` | 存储的 pandas `Series.name`（payload 标签）。 |
 | `index_names` | `tuple` | 索引 level 名（始终是元组；扁平索引为单元素）。 |
 | `iloc` | `_ILocIndexer` | 位置行访问器（只读）。支持 `int` 和 `slice`；拒绝 list。 |
 | `loc` | `_LocIndexer` | 基于标签的行访问器（只读）。在带标签/MultiIndex 上支持标量 / 深度 k 的元组前缀。拒绝 `slice`、`list`，以及对 `RangeIndex` 的任何使用，并以指向 `.value` 的 `TypeError` 提示。 |

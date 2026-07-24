@@ -1456,7 +1456,14 @@ class SeriesObject(GPDCContainerObject):
         return _decode_scalar(self._redis().hget(self.raw_key, "dtype"))
 
     @property
-    def name(self):
+    def series_name(self):
+        """The stored pandas ``Series.name`` (the payload label, NOT the GPDC binding).
+
+        ``SeriesObject.name`` is inherited from ``GPDCDataObject`` and returns the
+        namespace binding name — the base-class identity contract, consistent with
+        ``.uri``/``.canonical_name`` and with ``DataFrameObject``. The pandas label
+        is exposed here as ``.series_name`` (and is also reachable via ``.value.name``).
+        """
         return _decode_scalar(self._redis().hget(self.raw_key, "name"))
 
     @property
