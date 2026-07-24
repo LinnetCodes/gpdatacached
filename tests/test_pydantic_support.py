@@ -696,3 +696,19 @@ class TestPydanticContainerTTL:
         obj["total"] = 199.5
         remaining = obj.remaining_ttl()
         assert remaining > 0
+
+
+class TestStaleHandleLogic02Pydantic:
+    """CQR-2026-07-24 logic.02: a stale pydantic-container handle must raise before any Redis write."""
+
+    def test_setitem_raises_and_leaves_raw_untouched(self, ns, register_container_types, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns.get_object("order1")
+        before = raw_redis.hgetall(obj.raw_key)
+        raw_redis.delete(obj._canonical_redis_key())  # make the handle stale
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj["total"] = 199.5
+        assert raw_redis.hgetall(obj.raw_key) == before
+

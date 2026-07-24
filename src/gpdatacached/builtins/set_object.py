@@ -63,17 +63,20 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
             yield decode_key(m)
 
     def add(self, value: object) -> None:
+        self._check_alive()
         encoded = encode_key(value)
         self._redis().sadd(self.raw_key, encoded)
         self._touch()
 
     def discard(self, value: object) -> None:
+        self._check_alive()
         encoded = encode_key(value)
         removed = self._redis().srem(self.raw_key, encoded)
         if removed:
             self._touch()
 
     def remove(self, value: object) -> None:
+        self._check_alive()
         encoded = encode_key(value)
         removed = self._redis().srem(self.raw_key, encoded)
         if not removed:
@@ -81,6 +84,7 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         self._touch()
 
     def pop(self):
+        self._check_alive()
         encoded = self._redis().spop(self.raw_key)
         if encoded is None:
             raise KeyError("pop from an empty set")
@@ -88,6 +92,7 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         return decode_key(encoded)
 
     def clear(self) -> None:
+        self._check_alive()
         self._redis().delete(self.raw_key)
         self._touch()
 
@@ -123,6 +128,7 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         return self._binop(other, set.__xor__)
 
     def __ior__(self, other):
+        self._check_alive()
         other_encoded = self._to_encoded_set(other)
         if other_encoded:
             self._redis().sadd(self.raw_key, *other_encoded)
@@ -130,6 +136,7 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         return self
 
     def __iand__(self, other):
+        self._check_alive()
         other_encoded = self._to_encoded_set(other)
         current = self._redis().smembers(self.raw_key)
         to_remove = current - other_encoded
@@ -139,6 +146,7 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         return self
 
     def __isub__(self, other):
+        self._check_alive()
         other_encoded = self._to_encoded_set(other)
         if other_encoded:
             self._redis().srem(self.raw_key, *other_encoded)
@@ -146,6 +154,7 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         return self
 
     def __ixor__(self, other):
+        self._check_alive()
         other_encoded = self._to_encoded_set(other)
         current = self._redis().smembers(self.raw_key)
         to_add = other_encoded - current

@@ -1404,3 +1404,44 @@ class TestDataFrameMultiIndexIntegration:
         assert isinstance(sub.columns, pd.MultiIndex)
         assert sub.columns.names == ("CL0", "CL1")
         assert list(sub.index) == [("r", 1), ("r", 2)]
+
+
+class TestStaleHandleLogic02DataFrame:
+    """CQR-2026-07-24 logic.02: a stale DataFrame handle must raise before any Redis write."""
+
+    def _delete_meta(self, obj, raw_redis):
+        raw_redis.delete(obj._canonical_redis_key())
+
+    def test_extend_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["df"] = pd.DataFrame({"v": [1, 2]}, index=pd.RangeIndex(2))
+        obj = ns.get_object("df")
+        before = raw_redis.hgetall(obj.raw_key)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.extend(pd.DataFrame({"v": [3, 4]}, index=pd.RangeIndex(2, 4)))
+        assert raw_redis.hgetall(obj.raw_key) == before
+
+    def test_setitem_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["df"] = pd.DataFrame({"v": [1, 2]}, index=pd.RangeIndex(2))
+        obj = ns.get_object("df")
+        before = raw_redis.hgetall(obj.raw_key)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj["w"] = [10, 20]
+        assert raw_redis.hgetall(obj.raw_key) == before
+
+    def test_delitem_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["df"] = pd.DataFrame({"v": [1, 2], "w": [3, 4]}, index=pd.RangeIndex(2))
+        obj = ns.get_object("df")
+        before = raw_redis.hgetall(obj.raw_key)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            del obj["w"]
+        assert raw_redis.hgetall(obj.raw_key) == before
+

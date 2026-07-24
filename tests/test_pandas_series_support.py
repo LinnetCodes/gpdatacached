@@ -973,3 +973,23 @@ class TestPydanticElementBoundary:
                 "permanent",
                 0,
             )
+
+
+class TestStaleHandleLogic02Series:
+    """CQR-2026-07-24 logic.02: a stale Series handle must raise before any Redis write."""
+
+    def _delete_meta(self, obj, raw_redis):
+        raw_redis.delete(obj._canonical_redis_key())
+
+    def test_extend_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["s"] = pd.Series([1, 2, 3], name="vals")
+        obj = ns.get_object("s")
+        before = raw_redis.hgetall(obj.raw_key)  # snapshot raw: before stale write
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.extend(pd.Series([4, 5]))
+        # raw: contents must be unchanged (the stale write must not have appended).
+        assert raw_redis.hgetall(obj.raw_key) == before
+
