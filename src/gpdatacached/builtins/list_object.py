@@ -88,6 +88,9 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         self._touch(meta)
 
     def _delete_index(self, index: int) -> str:
+        # Liveness check BEFORE the first Redis write (logic.02). This single
+        # guard covers every caller of _delete_index: __delitem__, pop, remove.
+        self._check_alive()
         r = self._redis()
         index = self._normalize_index(index, "list assignment index out of range")
         old_encoded = r.lindex(self.raw_key, index)
@@ -101,7 +104,6 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         return old_encoded
 
     def __delitem__(self, index: int) -> None:
-        self._check_alive()
         self._delete_index(index)
 
     def insert(self, index: int, value: object) -> None:

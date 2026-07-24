@@ -446,6 +446,37 @@ class TestObjectGoneErrorContainer:
             obj |= {3, 4}
         assert self._raw_snapshot(obj, raw_redis) == before
 
+    def test_list_pop_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        # Regression for the logic.02 audit miss: pop() delegates to
+        # _delete_index, which must also be guarded.
+        ns["lst"] = [1, 2, 3]
+        obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.pop()
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_list_pop_with_index_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        ns["lst"] = [1, 2, 3]
+        obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.pop(0)
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_list_remove_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        # Regression for the logic.02 audit miss: remove() delegates to
+        # _delete_index, which must also be guarded.
+        ns["lst"] = [1, 2, 3]
+        obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.remove(2)
+        assert self._raw_snapshot(obj, raw_redis) == before
+
 
 class TestObjectGoneErrorRead:
     def _delete_meta(self, obj, raw_redis):
