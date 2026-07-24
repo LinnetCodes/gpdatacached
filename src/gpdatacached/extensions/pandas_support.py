@@ -1143,13 +1143,17 @@ class DataFrameObject(GPDCContainerObject):
         col_key = encode_key(col)
         replacing = col in columns
         old_family = None
+        # Capture old column refs to release AFTER the encode succeeds — releasing
+        # before the encode could cascade-delete the old column's anon on a failing
+        # encode, losing data (CQR-2026-07-24 logic.01 side-effect (c)).
+        old_col_ref = None
+        old_cat_ref = None
         if replacing:
-            old_ref = r.hget(self.raw_key, col_key)
-            self._release_element_ref(old_ref)
+            old_col_ref = r.hget(self.raw_key, col_key)
             old_dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
             old_family = _value_dtype_family(pd.api.types.pandas_dtype(old_dtype_str))
             if old_family == "category":
-                self._release_element_ref(r.hget(self.raw_key, f"~cat:{col_key}"))
+                old_cat_ref = r.hget(self.raw_key, f"~cat:{col_key}")
 
         with encode_session(self._namespace):
             mapping = {
@@ -1162,6 +1166,11 @@ class DataFrameObject(GPDCContainerObject):
                 )
                 mapping[f"~ord:{col_key}"] = _encode_extra_value(bool(inferred.cat.ordered))
 
+        # Encode succeeded -> release the old column refs now (post-encode).
+        if old_col_ref is not None:
+            self._release_element_ref(old_col_ref)
+        if old_cat_ref is not None:
+            self._release_element_ref(old_cat_ref)
         if replacing and old_family == "category" and family != "category":
             r.hdel(self.raw_key, f"~cat:{col_key}", f"~ord:{col_key}")
         r.hset(self.raw_key, mapping=mapping)

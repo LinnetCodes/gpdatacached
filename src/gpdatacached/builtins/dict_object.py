@@ -170,19 +170,22 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         owner_name = self._data_owner_name()
         meta = self._check_alive(r)
         policy = policy_from_meta(meta)
-        dirty = False
-        try:
-            with encode_session(self._namespace):
-                for k, v in pairs:
-                    encoded_key = encode_key(k)
-                    old_encoded = r.hget(self.raw_key, encoded_key)
-                    encoded_val = encode_element(v, self._namespace, owner_name, policy)
-                    r.hset(self.raw_key, encoded_key, encoded_val)
-                    self._release_element_ref(old_encoded)
-                    dirty = True
-        finally:
-            if dirty:
-                self._touch(meta)
+        # Stage all encoded values + the old values they replace IN MEMORY, and
+        # only commit (hset + release old refs) after the whole encode succeeds.
+        # A failing pair thus leaves the parent hash and old refs untouched
+        # (CQR-2026-07-24 logic.01: no partial parent write, no early release).
+        staged: list[tuple[str, str, str | None]] = []
+        with encode_session(self._namespace):
+            for k, v in pairs:
+                encoded_key = encode_key(k)
+                old_encoded = r.hget(self.raw_key, encoded_key)
+                encoded_val = encode_element(v, self._namespace, owner_name, policy)
+                staged.append((encoded_key, encoded_val, old_encoded))
+        # Encode succeeded for every pair -> commit atomically.
+        for encoded_key, encoded_val, old_encoded in staged:
+            r.hset(self.raw_key, encoded_key, encoded_val)
+            self._release_element_ref(old_encoded)
+        self._touch(meta)
 
     def clear(self):
         self._check_alive()

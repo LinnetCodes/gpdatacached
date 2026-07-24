@@ -1509,3 +1509,23 @@ class TestStaleHandleLogic02DataFrame:
             del obj["w"]
         assert raw_redis.hgetall(obj.raw_key) == before
 
+
+class TestFailedEncodeLogic01DataFrame:
+    """CQR-2026-07-24 logic.01: a failing DataFrame __setitem__ (column replace
+    whose value fails to encode) must not release the old column ref early."""
+
+    def test_setitem_replacing_column_with_cyclic_value_leaves_old_intact(self, ns, raw_redis):
+        # Build a DataFrame with a container column whose replacement would fail.
+        # Simplest failing-encode: a self-referential list (cycle) as the new value.
+        ns["df"] = pd.DataFrame({"v": [1, 2]}, index=pd.RangeIndex(2))
+        obj = ns.get_object("df")
+        before = raw_redis.hgetall(obj.raw_key)
+
+        cyclic = []
+        cyclic.append(cyclic)  # self-reference -> CyclicReferenceError on encode
+        with pytest.raises(Exception):
+            obj["v"] = cyclic
+        # Parent hash unchanged; the old column 'v' was NOT released/deleted.
+        assert raw_redis.hgetall(obj.raw_key) == before
+
+

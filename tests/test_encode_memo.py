@@ -191,3 +191,71 @@ class TestSiblingAliasing:
         ns["x"] = {"a": [1, 2], "b": [1, 2]}
         d = ns["x"]
         assert d["a"].name != d["b"].name
+
+
+class TestFailedEncodeLeavesRedisUntouchedLogic01:
+    """CQR-2026-07-24 logic.01: a failed multi-element encode must leave Redis in
+    the same state as before the call (no partial parent write, no phantom
+    referrer, no early release of old refs)."""
+
+    def test_dict_update_partial_write_reverted(self, ns, raw_redis):
+        # [A] update() writes pairs one at a time; a later failing pair must not
+        # leave the already-encoded 'ok' slot in the parent hash.
+        ns["d"] = {"placeholder": 0}
+        d = ns["d"]
+        before = raw_redis.hgetall(d.raw_key)
+        with pytest.raises(TypeError):
+            d.update({"ok": [1, 2], "bad": object()})
+        assert raw_redis.hgetall(d.raw_key) == before
+        # And no orphaned anon created for 'ok':
+        assert not raw_redis.keys("gpdc:testdomain:testns:obj:~anon:*")
+
+    def test_dict_update_old_ref_not_released_early(self, ns, raw_redis):
+        # [C] update() overwriting a slot holding an anon, then failing on a
+        # later pair, must NOT release/delete the old anon.
+        ns["d"] = {"k": [1, 2, 3], "keep": 1}
+        d = ns["d"]
+        raw = raw_redis.hgetall(d.raw_key)
+        old_k = raw["str:k"]
+        old_anon_name = old_k.split(":obj:")[1]
+        before = raw_redis.hgetall(d.raw_key)
+        with pytest.raises(TypeError):
+            d.update({"k": 999, "bad": object()})
+        # Parent hash unchanged, old anon still present and still referenced.
+        assert raw_redis.hgetall(d.raw_key) == before
+        assert raw_redis.exists(make_object_key("testdomain", "testns", old_anon_name))
+
+    def test_list_extend_phantom_referrer_reverted(self, ns, raw_redis):
+        # [B] extend() referencing a pre-existing child, then failing, must not
+        # leave the parent as a phantom referrer of the child.
+        ns["child"] = [10, 20]
+        ns["parent"] = []
+        parent = ns["parent"]
+        child = ns["child"]
+        child_ref_key = make_ref_key("testdomain", "testns", child.canonical_name)
+        assert raw_redis.hgetall(child_ref_key) == {}  # no referrers before
+        with pytest.raises(TypeError):
+            parent.extend([child, object()])
+        # No phantom referrer left; child's ref: empty again.
+        assert raw_redis.hgetall(child_ref_key) == {}
+        assert raw_redis.lrange(parent.raw_key, 0, -1) == []
+
+    def test_namespace_setitem_failed_encode_no_orphan_meta(self, ns, raw_redis):
+        # First-store path: ns["x"] = {..., "bad": object()} fails; the obj:x
+        # meta written before the encode session must be cleaned up.
+        obj_key = make_object_key("testdomain", "testns", "x")
+        with pytest.raises(TypeError):
+            ns["x"] = {"ok": [1, 2], "bad": object()}
+        assert not raw_redis.exists(obj_key)
+        assert not raw_redis.exists(make_raw_key("testdomain", "testns", "x"))
+        assert "x" not in ns
+
+    def test_dict_update_succeeds_normally(self, ns):
+        # Sanity: a normal (non-failing) update still works after the staging refactor.
+        ns["d"] = {"a": 1}
+        ns["d"].update({"a": 2, "b": 3, "c": [1, 2]})
+        d = ns["d"]
+        assert d["a"] == 2
+        assert d["b"] == 3
+        assert list(d["c"]) == [1, 2]
+
