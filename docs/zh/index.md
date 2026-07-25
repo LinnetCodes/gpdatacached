@@ -6,7 +6,7 @@
 
 ## 从这里开始
 
-- **[总体概览](./overview.md)** —— *设计目的、设计理念与端到端整体架构。* 请先阅读本文，理解 Domain → Namespace → Object 模型、Redis key 布局、owner/reference/匿名对象模型，以及后续每份文档在整体中的位置。
+- **[总体概览](./overview.md)** —— *设计目的、设计理念与端到端整体架构。* 请先阅读本文，理解 Domain → Namespace → Object 模型、Redis key 布局、owner/reference/匿名对象模型、用于管理多 domain 与解析 URI 的 `GPDataCache` 门面，以及后续每份文档在整体中的位置。
 
 ## 参考资料
 
@@ -35,6 +35,7 @@
 |---|---|
 | 初次使用本库 | 总体概览 → API 参考 → API 参考中的“快速开始” |
 | 正在构建真实工作负载 | 再加 生命周期管理 → 性能指南 |
+| 由配置驱动多个 domain / 通过 URI 寻址对象 | 再加 API 参考中的 `GPDataCache` 一节 |
 | 走向多进程 | 再加 多进程加锁 |
 | 需要自定义类型 | 可扩展性 → （若类型复杂，再加 生命周期、加锁、性能指南） |
 | 缓存结构化记录 | Pydantic 支持 |

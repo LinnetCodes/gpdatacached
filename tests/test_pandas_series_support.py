@@ -255,6 +255,63 @@ class TestRangeIndex:
         assert list(result.index) == [5, 10, 15]
 
 
+class TestRangeIndexNonUnitStepLogic03:
+    """CQR-2026-07-24 logic.03: non-unit (and negative) RangeIndex step must be
+    honoured by __len__, extend, and .iloc — not just round-trip."""
+
+    def test_len_non_unit_step(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("s")
+        assert len(obj) == 3  # not 15 (= stop - start)
+
+    def test_len_negative_step(self, ns):
+        ns["s"] = pd.Series([30, 20, 10], index=pd.RangeIndex(20, 5, -5))
+        obj = ns.get_object("s")
+        assert len(obj) == 3  # range(20, 5, -5) -> [20, 15, 10]
+
+    def test_extend_non_unit_step_advances_stop_by_len_times_step(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5), name="x")
+        obj = ns.get_object("s")
+        obj.extend(pd.Series([40, 50], index=pd.RangeIndex(20, 30, 5), name="x"))
+        val = obj.value
+        assert len(val) == 5
+        assert list(val.index) == [5, 10, 15, 20, 25]
+
+    def test_extend_negative_step_advances_stop_by_len_times_step(self, ns):
+        # range(20, 5, -5) = [20,15,10]; extend 2 -> [20,15,10,5,0], stop -> -5... wait
+        # range(20, 5, -5) has stop 5; appending 2 with step -5 -> new_stop = 5 + 2*(-5) = -5
+        # giving range(20, -5, -5) = [20,15,10,5,0]. 5 values.
+        ns["s"] = pd.Series([30, 20, 10], index=pd.RangeIndex(20, 5, -5), name="x")
+        obj = ns.get_object("s")
+        obj.extend(pd.Series([5, 0], index=pd.RangeIndex(5, -5, -5), name="x"))
+        val = obj.value
+        assert len(val) == 5
+        assert list(val.index) == [20, 15, 10, 5, 0]
+
+    def test_extend_repeated_non_unit_step(self, ns):
+        # Two successive extends on a non-unit range stay consistent.
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5), name="x")
+        obj = ns.get_object("s")
+        obj.extend(pd.Series([40], index=pd.RangeIndex(20, 25, 5), name="x"))
+        obj.extend(pd.Series([50, 60], index=pd.RangeIndex(25, 35, 5), name="x"))
+        val = obj.value
+        assert list(val.index) == [5, 10, 15, 20, 25, 30]
+
+    def test_iloc_slice_non_unit_step(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("s")
+        sub = obj.iloc[0:2]
+        assert list(sub.index) == [5, 10]
+        assert list(sub.values) == [10, 20]
+
+    def test_non_unit_step_value_round_trip(self, ns):
+        ns["s"] = pd.Series([10, 20, 30], index=pd.RangeIndex(5, 20, 5), name="x")
+        obj = ns.get_object("s")
+        assert list(obj.value.index) == [5, 10, 15]
+        assert obj.series_name == "x"
+
+
+
 class TestIndexVariety:
     def test_duplicate_labels_round_trip(self, ns):
         from gpdatacached.extensions.pandas_support import SeriesCodec
@@ -374,12 +431,27 @@ class TestSeriesObjectCore:
         assert list(obj.value.index) == ["a", "b", "c"]
 
     def test_len_dtype_name_index_names(self, ns):
+        # Binding name "s" deliberately differs from pandas name "vals".
+        # .name is the GPDC binding (base-class identity contract, same as
+        # DataFrameObject); .series_name is the pandas payload label.
         ns["s"] = pd.Series([1, 2, 3], index=["a", "b", "c"], name="vals")
         obj = ns.get_object("s")
         assert len(obj) == 3
         assert obj.dtype == "int64"
-        assert obj.name == "vals"
+        assert obj.name == "s"  # binding name, not the pandas label
+        assert obj.series_name == "vals"  # the pandas Series.name
         assert obj.index_names == (None,)
+
+    def test_name_is_binding_identity(self, ns):
+        # Regression guard for CQR-2026-07-24 inconsistency.02: SeriesObject.name
+        # must agree with .uri and .canonical_name (the base-class identity
+        # contract), matching every other object type incl. DataFrameObject.
+        ns["binding"] = pd.Series([1, 2, 3], name="payload_name")
+        obj = ns.get_object("binding")
+        assert obj.name == "binding"
+        assert obj.canonical_name == "binding"
+        assert obj.uri.endswith("/binding")
+        assert obj.series_name == "payload_name"
 
     def test_index_names_is_tuple(self, ns):
         ns["s"] = pd.Series([1, 2], index=["a", "b"], name="s")
@@ -958,3 +1030,23 @@ class TestPydanticElementBoundary:
                 "permanent",
                 0,
             )
+
+
+class TestStaleHandleLogic02Series:
+    """CQR-2026-07-24 logic.02: a stale Series handle must raise before any Redis write."""
+
+    def _delete_meta(self, obj, raw_redis):
+        raw_redis.delete(obj._canonical_redis_key())
+
+    def test_extend_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["s"] = pd.Series([1, 2, 3], name="vals")
+        obj = ns.get_object("s")
+        before = raw_redis.hgetall(obj.raw_key)  # snapshot raw: before stale write
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.extend(pd.Series([4, 5]))
+        # raw: contents must be unchanged (the stale write must not have appended).
+        assert raw_redis.hgetall(obj.raw_key) == before
+

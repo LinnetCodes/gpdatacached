@@ -29,6 +29,16 @@ edit_uri: edit/main/docs/
 
 docs_dir: docs
 
+# Promote broken in-page/cross-file anchors from the default INFO (silently
+# ignored) to WARNING so `mkdocs build --strict` fails the build. This is the
+# durability gate for the explicit-`{ #id }` anchor scheme used across the docs:
+# any edit that orphans a link target is caught here before deploy.
+validation:
+  omitted_files: warn
+  not_found: warn
+  absolute_links: warn
+  anchors: warn
+
 theme:
   name: material
   language: en

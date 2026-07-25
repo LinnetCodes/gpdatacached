@@ -7,6 +7,15 @@ from pydantic import Field, field_validator, model_validator
 
 from .lifecycle import VALID_CACHE_MODES, validate_cache_mode_and_ttl
 
+# Minimum allowed value for GPDCDomainConfig.gc_interval_seconds. A smaller
+# interval would busy-loop the background GC thread (Event.wait(0/negative)
+# returns False immediately) and flood Redis with repeated SCAN/lock activity
+# (CQR-2026-07-24 perf.01). 30s is a deliberately conservative floor: GC is a
+# safety net for orphaned anonymous objects and expired TTL keys, not a
+# latency-sensitive path, so a half-minute minimum keeps Redis pressure low
+# while still allowing reasonably frequent collection.
+MIN_GC_INTERVAL_SECONDS = 30
+
 
 class GPDCNamespaceConfig(GPConfig):
     """Configuration for a GPDC namespace."""
@@ -93,6 +102,22 @@ class GPDCDomainConfig(GPConfig):
     def _validate_lock_wait_fields(cls, v: int) -> int:
         if v < 0:
             raise ValueError(f"Lock wait/timeout must be >= 0 (0 = non-blocking), got {v!r}")
+        return v
+
+    @field_validator("gc_interval_seconds")
+    @classmethod
+    def _validate_gc_interval(cls, v: int) -> int:
+        # CQR-2026-07-24 perf.01: an interval <= 0 makes the background GC thread
+        # busy-loop (threading.Event.wait with a 0/negative timeout returns False
+        # immediately), saturating a CPU core and flooding Redis with SCAN/lock
+        # activity. Floor it at MIN_GC_INTERVAL_SECONDS. (Note: a negative timeout
+        # does NOT raise on CPython — it behaves like 0 — so this guard also closes
+        # the negative case the report claimed would "terminate the daemon path".)
+        if v < MIN_GC_INTERVAL_SECONDS:
+            raise ValueError(
+                f"gc_interval_seconds must be >= {MIN_GC_INTERVAL_SECONDS} "
+                f"(got {v!r}); smaller values busy-loop the GC thread and flood Redis."
+            )
         return v
 
     @model_validator(mode="after")

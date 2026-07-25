@@ -177,9 +177,9 @@ class GPDCDataObject(ABC):
 
     def take_ownership(self) -> None:
         if not self._is_reference:
-            raise TypeError("take_ownership() can only be called on named reference objects")
+            raise TypeError("take_ownership() must be called via a named reference handle")
         if self._name.startswith("~"):
-            raise TypeError("take_ownership() can only be called on named reference objects")
+            raise TypeError("take_ownership() must be called via a named reference handle")
 
         key = self._canonical_redis_key()
         r = self._redis()
@@ -214,12 +214,18 @@ class GPDCDataObject(ABC):
         return meta.updated_at
 
     def expire_in(self, seconds: int) -> None:
-        from .lifecycle import TTLPolicy
+        from .lifecycle import TTLPolicy, validate_cache_mode_and_ttl
 
         ctx = self._load_lifecycle_context()
         if ctx.meta.cache_mode != "ttl":
             raise TypeError("expire_in() only applies to objects with cache_mode='ttl'")
         self._check_owner_permission(ctx.meta)
+        # Strict validation: ttl mode requires ttl > 0. expire_in() sets a TTL,
+        # it does not delete — to delete now, use expire_now() (or expire_at()
+        # with a past timestamp, or `del ns[name]`). Without this guard,
+        # expire_in(0) would silently build an invalid (ttl, 0) policy that
+        # PERSISTs the keys (the exact opposite of the caller's intent).
+        validate_cache_mode_and_ttl("ttl", seconds)
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds)
         self.set_lifecycle(policy)
 
@@ -233,16 +239,37 @@ class GPDCDataObject(ABC):
         seconds = max(0, int((when - datetime.datetime.now(datetime.UTC)).total_seconds()))
         if seconds == 0:
             # Past timestamp → "delete immediately" (per docs/api.md & lifecycle.md).
-            # Delegate to namespace __delitem__ so the teardown is complete: it cleans
-            # obj:/raw:/ref: and cascade-deletes anonymous subtrees, matching the
-            # documented "immediate deletion" rather than leaking raw:/ref:/anons.
-            # A canonical owner still referenced by aliases raises
-            # CanonicalObjectReferencedError — callers must resolve references first
-            # (see GPDCContainerObject.has_referrers()).
-            del self._namespace[self._canonical_name]
+            self._expire_now()
             return
         policy = TTLPolicy(cache_mode="ttl", declared_ttl=seconds)
         self.set_lifecycle(policy)
+
+    def expire_now(self) -> None:
+        """Delete this object immediately.
+
+        Equivalent to ``del ns[self.canonical_name]``: removes the canonical
+        owner's ``obj:``/``raw:``/``ref:`` keys and cascade-deletes its
+        anonymous subtrees. Raises ``CanonicalObjectReferencedError`` if the
+        canonical owner is still referenced by aliases — check
+        ``has_referrers()`` first.
+
+        Unlike ``expire_in``/``expire_at`` (which require ``cache_mode='ttl'``
+        and a positive TTL), ``expire_now()`` works regardless of the object's
+        current cache mode and is the explicit, unambiguous way to remove an
+        object right now.
+        """
+        ctx = self._load_lifecycle_context()
+        self._check_owner_permission(ctx.meta)
+        self._expire_now()
+
+    def _expire_now(self) -> None:
+        """Internal immediate-delete helper (full teardown via __delitem__)."""
+        # Delegate to namespace __delitem__ so the teardown is complete: it
+        # cleans obj:/raw:/ref: and cascade-deletes anonymous subtrees, rather
+        # than leaking raw:/ref:/anons. A canonical owner still referenced by
+        # aliases raises CanonicalObjectReferencedError — callers must resolve
+        # references first (see GPDCContainerObject.has_referrers()).
+        del self._namespace[self._canonical_name]
 
     def persist(self) -> None:
         from .lifecycle import TTLPolicy

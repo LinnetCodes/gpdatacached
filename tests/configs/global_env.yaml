@@ -1,0 +1,9 @@
+# Global environment for the gpdatacached integration-test config folder.
+#
+# gpconfig requires every config folder to contain a global_env.yaml at its
+# root (GPConfigManager._validate_cfg_folder); this file is that entry point.
+# Values here are NOT consumed by the GPDC domain/namespace configs (each
+# domain file carries its own redis_* connection block), but they document the
+# shared test environment so tests that read global_env get sensible values.
+project: gpdatacached
+environment: test

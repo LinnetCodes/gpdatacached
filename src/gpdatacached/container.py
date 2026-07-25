@@ -43,11 +43,37 @@ class GPDCContainerObject(GPDCDataObject, ABC):
 
     # ── Lifecycle: timestamps & sliding TTL ──────────────────────────
 
-    def _touch(self) -> None:
+    def _check_alive(self, r=None):
+        """Raise ``ObjectGoneError`` if this object's canonical meta is gone; return the meta.
+
+        Called at the TOP of every mutating method, BEFORE any Redis write, so a
+        stale handle (an object whose binding was deleted while the Python handle
+        was retained) raises before it can mutate ``raw:``/``ref:`` keys and leave
+        an orphan unreachable by namespace APIs (CQR-2026-07-24 logic.02).
+
+        The returned ``ObjectMeta`` is intended to be reused for the encode-policy
+        lookup and passed to ``_touch(meta=...)`` to avoid a duplicate
+        ``ObjectMeta.load`` round-trip on every mutation.
+        """
+        from .meta import ObjectMeta
+        from .exceptions import ObjectGoneError
+
+        rr = r if r is not None else self._redis()
+        meta = ObjectMeta.load(rr, self._canonical_redis_key())
+        if meta is None:
+            raise ObjectGoneError(self.canonical_uri)
+        return meta
+
+    def _touch(self, meta=None) -> None:
         """Update metadata timestamps and apply sliding TTL if configured.
 
         When owned by a parent, the sliding refresh propagates upward
         through the owner chain.
+
+        If ``meta`` is supplied (e.g. from ``_check_alive``), it is reused and no
+        extra ``ObjectMeta.load`` is performed; otherwise the canonical meta is
+        loaded here. Either way a missing meta raises ``ObjectGoneError`` (a
+        defensive re-check; mutating methods already check via ``_check_alive``).
         """
         from .lifecycle import policy_from_meta
         from .meta import ObjectMeta
@@ -57,7 +83,8 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         now = datetime.datetime.now(datetime.UTC)
         r = self._redis()
         item_count = self._current_item_count()
-        meta = ObjectMeta.load(r, key)
+        if meta is None:
+            meta = ObjectMeta.load(r, key)
         if meta is None:
             raise ObjectGoneError(self.canonical_uri)
         meta.touch(now, item_count=item_count).save(r, key)

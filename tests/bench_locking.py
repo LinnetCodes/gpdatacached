@@ -25,7 +25,7 @@ class TestLockBenchmark:
     def test_uncontended_lock_overhead(self, clean_redis):
         """Single-process, no contention: with obj.lock(): pass should be < 1ms."""
         cfg = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_db=1, redis_password="123456")
-        d = GPDCDomain("bench_test", cfg)
+        d = GPDCDomain(cfg, name="bench_test")
         try:
             ns = d.ensure_namespace("benchns")
             ns["x"] = 42

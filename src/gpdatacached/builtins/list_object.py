@@ -5,7 +5,6 @@ import uuid
 
 from ..codec import GPDCContainerCodec
 from ..container import GPDCContainerObject
-from ..meta import ObjectMeta
 from ..lifecycle import policy_from_meta
 from ..types import decode_element, encode_element
 
@@ -81,14 +80,17 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         r = self._redis()
         index = self._normalize_index(index, "list assignment index out of range")
         old_encoded = r.lindex(self.raw_key, index)
-        meta = ObjectMeta.load(r, self._canonical_redis_key())
-        policy = policy_from_meta(meta) if meta else None
+        meta = self._check_alive(r)
+        policy = policy_from_meta(meta)
         encoded = encode_element(value, self._namespace, self._data_owner_name(), policy)
         r.lset(self.raw_key, index, encoded)
         self._release_element_ref(old_encoded)
-        self._touch()
+        self._touch(meta)
 
     def _delete_index(self, index: int) -> str:
+        # Liveness check BEFORE the first Redis write (logic.02). This single
+        # guard covers every caller of _delete_index: __delitem__, pop, remove.
+        self._check_alive()
         r = self._redis()
         index = self._normalize_index(index, "list assignment index out of range")
         old_encoded = r.lindex(self.raw_key, index)
@@ -107,8 +109,8 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
     def insert(self, index: int, value: object) -> None:
         r = self._redis()
         items = r.lrange(self.raw_key, 0, -1)
-        meta = ObjectMeta.load(r, self._canonical_redis_key())
-        policy = policy_from_meta(meta) if meta else None
+        meta = self._check_alive(r)
+        policy = policy_from_meta(meta)
         encoded = encode_element(value, self._namespace, self._data_owner_name(), policy)
         items.insert(index, encoded)
         pipe = r.pipeline()
@@ -116,28 +118,29 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         if items:
             pipe.rpush(self.raw_key, *items)
         pipe.execute()
-        self._touch()
+        self._touch(meta)
 
     def append(self, value: object) -> None:
-        meta = self.meta
-        policy = policy_from_meta(meta) if meta else None
+        meta = self._check_alive()
+        policy = policy_from_meta(meta)
         encoded = encode_element(value, self._namespace, self._data_owner_name(), policy)
         self._redis().rpush(self.raw_key, encoded)
-        self._touch()
+        self._touch(meta)
 
     def extend(self, values) -> None:
         from ..types import encode_session
 
         owner_name = self._data_owner_name()
-        meta = self.meta
-        policy = policy_from_meta(meta) if meta else None
+        meta = self._check_alive()
+        policy = policy_from_meta(meta)
         with encode_session(self._namespace):
             encoded = [encode_element(v, self._namespace, owner_name, policy) for v in values]
         if encoded:
             self._redis().rpush(self.raw_key, *encoded)
-        self._touch()
+        self._touch(meta)
 
     def clear(self) -> None:
+        self._check_alive()
         items = self._redis().lrange(self.raw_key, 0, -1)
         self._redis().delete(self.raw_key)
         for item in items:
@@ -179,6 +182,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         raise ValueError(f"{value!r} is not in list")
 
     def reverse(self) -> None:
+        self._check_alive()
         r = self._redis()
         items = r.lrange(self.raw_key, 0, -1)
         items.reverse()
@@ -190,6 +194,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         self._touch()
 
     def sort(self, *, key=None, reverse=False) -> None:
+        self._check_alive()
         r = self._redis()
         raw_items = r.lrange(self.raw_key, 0, -1)
         pairs = [(decode_element(enc, self._namespace), enc) for enc in raw_items]

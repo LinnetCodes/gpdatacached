@@ -32,10 +32,46 @@ GPDC_PROTOCOL_VERSION = "1.0"
 class GPDCDomain(GPConfigurable):
     """GPDC domain: a Redis connection pool and the configuration root."""
 
-    def __init__(self, name: str, config: GPDCDomainConfig) -> None:
+    def __init__(self, config: GPDCDomainConfig, name: str | None = None) -> None:
+        # Signature changed in 0.2.0: previously GPDCDomain(name, config).
+        # The first argument is now the config; ``name`` is optional because a
+        # config loaded from file already carries its name (GPConfig.name == the
+        # YAML filename stem). An old-style call passes a str as the first arg,
+        # which we detect up front so the failure is an explicit, actionable
+        # error rather than a confusing AttributeError deep in _connect().
+        if isinstance(config, str):
+            raise TypeError(
+                f"GPDCDomain() signature changed in 0.2.0: the first argument must be a "
+                f"GPDCDomainConfig, got a str ({config!r}). Use GPDCDomain(config, name=...) "
+                f"instead of the old GPDCDomain(name, config)."
+            )
+
         super().__init__(config)
-        validate_domain_name(name)
-        self._name = name
+
+        # Resolve the domain name. config.name is populated when the config was
+        # loaded from a file (== filename stem); it is "" for a programmatically
+        # constructed config. Prefer config.name, fall back to the explicit name
+        # argument, and reject a conflict between the two.
+        config_name = config.name
+        if name is not None and config_name:
+            if name != config_name:
+                raise ValueError(
+                    f"Domain name mismatch: explicit name={name!r} conflicts with "
+                    f"config.name={config_name!r}. Provide only one, or make them agree."
+                )
+            resolved = name
+        elif config_name:
+            resolved = config_name
+        elif name is not None:
+            resolved = name
+        else:
+            raise ValueError(
+                "GPDCDomain requires a name: pass name=..., or load config from a file "
+                "(config.name is then derived from the filename)."
+            )
+
+        validate_domain_name(resolved)
+        self._name = resolved
         self._namespaces: dict[str, GPDCNamespace] = {}
         self._gc_thread: threading.Thread | None = None
         self._gc_stop_event = threading.Event()
@@ -331,7 +367,7 @@ def reset_domain_config(name: str, config: "GPDCDomainConfig") -> None:
     wants to change lock config on an existing domain:
 
         reset_domain_config("mydomain", old_config)
-        domain = GPDCDomain("mydomain", new_config)
+        domain = GPDCDomain(new_config, name="mydomain")
 
     No-op if the meta hash has no lock fields (HDEL on missing fields).
 

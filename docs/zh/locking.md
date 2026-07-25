@@ -17,7 +17,7 @@
 
 ---
 
-## 性能影响
+## 性能影响 { #locking-perf }
 
 每一次加锁操作相对于不加锁都会付出实实在在的代价。在广泛采用加锁之前，请先理解这一点。
 
@@ -67,7 +67,7 @@
 from gpdatacached import GPDCDomain, GPDCDomainConfig
 
 config = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_password="...")
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 ns = domain.ensure_namespace("myns")
 
 ns["counter"] = 0
@@ -83,14 +83,14 @@ with counter.lock():
 
 ---
 
-## 推荐用法
+## 推荐用法 { #locking-recommended }
 
 1. **默认不要加锁。** 单写入者与低竞争工作负载不需要加锁。应当**针对测量到的竞争**被动加锁，而非投机性地预先加锁。
 2. **尽量晚地获取锁，尽量早地释放锁。** 在读-改-写之前立即获取，完成后立即释放。持锁期间不要做任何 I/O 或重计算。
 3. **关键区保持最小。** 读 → 计算 → 写放在锁内；其他一切（记日志、校验入参、用无关数据构造新值）放在锁外。
 4. **不要在热循环中加锁。** 要么把锁提到循环外整体包住，要么通过 `.value` 把数据拉到本地一次处理完，再一次性写回。
-5. **多对象操作时，始终按 canonical name 升序获取锁**（见[获取多把锁](#_11)）。GPDC 自己的 GC 也遵循此规则。
-6. **若 `gc_enabled=True`，每个并发写入者都必须加锁** —— 没有例外。见[与 GC 的交互](#gc)。
+5. **多对象操作时，始终按 canonical name 升序获取锁**（见[获取多把锁](#locking-multiple)）。GPDC 自己的 GC 也遵循此规则。
+6. **若 `gc_enabled=True`，每个并发写入者都必须加锁** —— 没有例外。见[与 GC 的交互](#locking-gc)。
 7. **`ttl` 要匹配你最坏情况的关键区时长。** 如果操作可能合法地超过默认 `ttl`，请显式传入：`obj.lock(ttl=120)`。超过 `ttl` 的操作会在执行途中静默失去锁。
 8. **投机路径优先用 `try_lock()`。** 当你可以推迟或跳过这次工作时，`try_lock()` 能避免阻塞，让调用方自行决定。
 9. **一次逻辑操作 = 一次加锁。** 同一进程重复获取同一把锁会死锁（不可重入）。
@@ -103,11 +103,11 @@ with counter.lock():
 
 按约定，持有此锁的写入者对该对象自身的 Redis key（元信息、原始数据、引用者集合）拥有独占访问权。锁是**建议性的** —— 它只协调那些主动调用 `obj.lock()` 的进程；它并不会在物理上阻止绕过加锁的进程访问 Redis。
 
-锁**不会**自动保护父对象方法对匿名子对象所做的引用者修改 —— 见[已知限制](#_16)。
+锁**不会**自动保护父对象方法对匿名子对象所做的引用者修改 —— 见[已知限制](#locking-limits)。
 
 ---
 
-## 获取多把锁
+## 获取多把锁 { #locking-multiple }
 
 要在两个对象之间原子地移动元素，你需要同时持有两把锁。**始终按 canonical name 升序获取**，以避免死锁：
 
@@ -137,9 +137,9 @@ else:
 
 ---
 
-## 与 GC 的交互
+## 与 GC 的交互 { #locking-gc }
 
-当 `gc_enabled=True` 时，后台 GC 会对它处理的每个对象尝试加锁。如果在 `gc_lock_wait_seconds`（默认 5 秒）内无法获取，GC 会在本周期跳过该对象。（GC 清理什么、何时运行，详见[生命周期管理](./lifecycle.md#10)。）
+当 `gc_enabled=True` 时，后台 GC 会对它处理的每个对象尝试加锁。如果在 `gc_lock_wait_seconds`（默认 5 秒）内无法获取，GC 会在本周期跳过该对象。（GC 清理什么、何时运行，详见[生命周期管理](./lifecycle.md#lifecycle-gc)。）
 
 **契约：** 若 `gc_enabled=True`，所有并发写入者都必须使用 `obj.lock()`。绕过加锁的写入者可能与 GC 竞态并破坏状态。
 
@@ -174,7 +174,7 @@ new_config = GPDCDomainConfig(
     redis_host="127.0.0.1", redis_port=6379, redis_password="...",
     default_lock_ttl_seconds=60,
 )
-domain = GPDCDomain("mydomain", new_config)
+domain = GPDCDomain(new_config, name="mydomain")
 ```
 
 ---
@@ -190,7 +190,7 @@ domain = GPDCDomain("mydomain", new_config)
 
 ---
 
-## 已知限制
+## 已知限制 { #locking-limits }
 
 - **仅具建议性。** 锁只串行化那些调用 `obj.lock()` 的进程。直接（通过 `obj.value = ...` 或任何不加锁的变更方法）读写同一批 key 的进程不会被阻塞。要让保证成立，所有写入者都必须主动加入。
 - **匿名子对象。** 父对象的变更方法（例如 `dict.__setitem__`）对匿名子对象引用者集合的修改，不会被父对象那把锁自动保护。实践中这很少出问题，因为用户都是通过具名绑定访问数据，而非直接访问匿名对象。如果你在启用 GC 的高并发下观察到 `decode_element` 抛出 `KeyError`，多半就是这个原因。

@@ -22,6 +22,7 @@
 - **逐对象生命周期** —— `permanent` / `ttl` / `sliding`（滑动窗口）缓存模式，支持级联传播。
 - **后台 GC** —— 回收过期和成为孤儿的对象。
 - **可选的分布式锁** —— 当确实存在竞争时，对多进程写入进行串行化。
+- **基于 URI 的访问** —— 通过 [`GPDataCache`](./api.md#gpdatacache) 将 `gpdc://{domain}/{namespace}/{name}[/path]` 解析为数据对象，包括对匿名嵌套容器的遍历。
 
 Redis 是唯一的数据真相来源。没有客户端缓存层，因此也不存在失效问题：每次读取都直达 Redis，看到的是最近一次已提交的写入。
 
@@ -84,6 +85,7 @@ graph TD
         LIFE["lifecycle · meta"]
         GC["gc · refset"]
         LOCK["locking"]
+        DC["data_cache<br/>GPDataCache 门面 + URI 访问"]
     end
  subgraph L1["第 1 层 —— 基础"]
         KEYS["keys<br/>URI + Redis key 构造器"]
@@ -104,7 +106,7 @@ graph TD
 | 层 | 职责 | 关键模块 |
 |---|---|---|
 | **基础层** | Redis key 构造器、URI 方案、异常。无状态。 | `keys`、`exceptions` |
-| **核心服务层** | Domain/Namespace 门面、元信息模型、生命周期策略、GC、加锁、引用计数。 | `domain`、`namespace`、`config`、`meta`、`lifecycle`、`gc`、`locking`、`refset` |
+| **核心服务层** | Domain/Namespace 门面、元信息模型、生命周期策略、GC、加锁、引用计数、多 domain 缓存 + URI 访问。 | `domain`、`namespace`、`config`、`meta`、`lifecycle`、`gc`、`locking`、`refset`、`data_cache` |
 | **类型系统层** | 类型注册表、codec 抽象基类、对象抽象基类、元素编解码协议。 | `types`、`codec`、`object`、`scalar`、`container` |
 | **内建类型层** | 具体的标量/容器类及其 codec，导入时自动注册。 | `builtins/*` |
 | **扩展层** | 面向第三方库的可选类型族。 | `extensions/pydantic_support`、`extensions/pandas_support` |
@@ -115,7 +117,7 @@ graph TD
 
 ## 4. Domain → Namespace → Object 模型
 
-GPDC 把数据组织为三层嵌套。每一层都是一个逻辑作用域；三者共同构成 GPDC **URI** `gpdc://{domain}/{namespace}/{name}`。
+GPDC 把数据组织为三层嵌套。每一层都是一个逻辑作用域；三者共同构成 GPDC **URI** `gpdc://{domain}/{namespace}/{name}`。URI 不仅仅是一个标识符 —— 它是一条可解析的访问路径。[`GPDataCache`](./api.md#gpdatacache) 会把 URI 解析为它所指向的数据对象，而可选的额外路径分段则用于深入嵌套容器内部（例如 `gpdc://prod/analytics/report/title` 等价于 `ns["report"]["title"]`）。
 
 ```mermaid
 graph TD
@@ -145,6 +147,10 @@ graph TD
 - **Domain** 是部署单元：一个 Redis 数据库、一组锁/GC 参数。多个进程打开同一个 domain 来共享数据。
 - **Namespace** 是隔离单元：一个扁平的命名空间，可独立地清空、列举、删除。它也是**引用共享的边界** —— 见原则 #4。
 - **Object** 是值单元：一段具有自身生命周期（以及可选的锁）的逻辑数据。
+
+### 打开 domain：直接方式与托管方式
+
+单个 domain 可通过 [`GPDCDomain`](./api.md#gpdcdomain) 直接打开（见[快速开始](./api.md#api-quick-start)）。当你的应用使用由 [gpconfig](https://github.com/linnetcodes/gpconfig) 配置文件驱动的多个 domain 时，[`GPDataCache`](./api.md#gpdatacache) 就是托管入口：它接收一个 `GPConfigFolder`，为每个配置惰性构造并缓存对应的 `GPDCDomain`，并将 GPDC URI 解析为数据对象。没有配置文件的 domain 无法通过 `GPDataCache` 创建 —— 这类情况请直接使用 `GPDCDomain`。
 
 ### 身份：canonical name 与 binding name
 
@@ -238,6 +244,18 @@ graph LR
 - 当最后一个引用者消失时（例如父对象被删除，或某个元素被覆盖/移除），会被**级联删除**。
 - 对 `iter(ns)`、`len(ns)`、`in` 检查不可见。
 
+### 提升匿名对象：`take_ownership()`
+
+由于匿名对象的生命周期依附于其父容器（`owner = parent`），它没有独立的生命周期 —— 其 TTL 由 owner 链驱动（见[§5](./lifecycle.md#lifecycle-sliding)）。当你持有一个指向匿名对象的**命名引用**时，可以用 `take_ownership()` 把**被引用对象**提升为自持：
+
+```python
+ns["parent"] = {"inner": [1, 2, 3]}        # inner 是 ~anon:… ，owner 为 "parent"
+ns["named"] = ns.get_object("parent")["inner"]
+ns.get_object("named").take_ownership()    # 该 ~anon:… 现在拥有自己；"parent" 不受影响
+```
+
+此后匿名对象携带自己的策略（例如可以给它设独立于父对象的 TTL）。对**命名**（已自持）对象的引用，`take_ownership()` 是一个正确的 no-op。完整语义见[生命周期管理 §7](./lifecycle.md#7-the-ownership-model)。
+
 ### 为什么禁止跨 namespace 引用？
 
 原则 #4：一个 namespace 是自洽的引用图。这让 `ns.clear()` 与 `domain.delete_namespace()` 可以批量（`SCAN + DELETE`）删除 namespace 下的所有 key，而无需逐对象走引用者清理逻辑。如果引用可以跨越 namespace 边界，批量删除就有孤立或破坏其他 namespace 数据的风险。
@@ -291,7 +309,7 @@ graph LR
 
 1. 维护一份 `id(value) → state` 的备忘录，用于检测**循环**（抛出 `CyclicReferenceError`）。
 2. 把对**同一个**容器的重复引用别名为同一对象，而非重复存储。
-3. 出现异常时，**回滚**本次会话期间创建的所有匿名对象，让 Redis 保持原样。
+3. 出现异常时，**回滚**本次会话期间创建的所有匿名对象，并逆转其对既有容器所做的引用计数增量，使失败的编码不留下编码路径的写入残留。（对于首次存储，`namespace.__setitem__` 还会删除刚写入的绑定的 `obj:`/`raw:`/`ref:` key，因此一次失败的 `ns[name] = value` 不会留下任何孤儿元信息。）
 
 ---
 

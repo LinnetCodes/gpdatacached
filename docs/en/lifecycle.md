@@ -23,7 +23,7 @@ graph LR
     E --> D
 ```
 
-GPDC automates **①②③** for you. You only touch lifecycle directly when you want to **change** an object's policy (make a permanent object expire, make a ttl object persist, etc.) or when you need to **delete** something explicitly. The part that most often confuses users is **how anonymous and reference objects enter and leave these phases** — sections [§8](#8-anonymous-object-lifecycle) and [§9](#9-reference-alias-lifecycle) cover that in detail.
+GPDC automates **①②③** for you. You only touch lifecycle directly when you want to **change** an object's policy (make a permanent object expire, make a ttl object persist, etc.) or when you need to **delete** something explicitly. The part that most often confuses users is **how anonymous and reference objects enter and leave these phases** — sections [§8](#lifecycle-anon) and [§9](#lifecycle-reference) cover that in detail.
 
 ---
 
@@ -112,7 +112,7 @@ This is why a container's metadata, raw data, and referrer set always vanish tog
 
 ---
 
-## 5. Sliding-Window Refresh
+## 5. Sliding-Window Refresh { #lifecycle-sliding }
 
 The `sliding` mode is what makes GPDC useful for caches that should "stay alive while in use." Every mutation re-applies the TTL.
 
@@ -153,20 +153,21 @@ After refreshing the ancestor, GPDC also re-applies each owned child's **own** p
 
 ---
 
-## 6. Manual Policy Changes & Cascade Propagation
+## 6. Manual Policy Changes & Cascade Propagation { #lifecycle-manual }
 
 You rarely need to change policy mid-life, but when you do, GPDC propagates the change across the owned subtree.
 
-### The four user-facing mutators
+### The user-facing mutators
 
 | Method | Effect | Permission |
 |---|---|---|
-| `expire_in(seconds)` | Set new TTL. Requires existing `cache_mode == "ttl"`. | Owner only. |
+| `expire_in(seconds)` | Set new TTL. Requires existing `cache_mode == "ttl"` and `seconds > 0`. To delete now, use `expire_now()`. | Owner only. |
 | `expire_at(when)` | Set absolute expiry time. Requires `cache_mode == "ttl"`. Deletes immediately if `when` is in the past (equivalent to `del ns[name]`: full teardown incl. anonymous subtrees; raises `CanonicalObjectReferencedError` if still referenced — check `has_referrers()` first). | Owner only. |
+| `expire_now()` | Delete this object immediately (equivalent to `del ns[canonical_name]`: full teardown incl. anonymous subtrees; raises `CanonicalObjectReferencedError` if still referenced). Works in any `cache_mode` — use this instead of `expire_in(0)`/`expire_at(past)` when you want an explicit, mode-independent "delete now". | Owner only. |
 | `persist()` | Switch to `permanent` with `ttl=0`. | Owner only. |
 | `update_cache_mode_and_ttl(mode, ttl)` | Replace the full policy with `(mode, ttl)`. | Owner only. |
 
-All four delegate to `set_lifecycle(policy)` after a permission check (see [§7](#7-the-ownership-model)).
+The four policy mutators (`expire_in`, `expire_at`, `persist`, `update_cache_mode_and_ttl`) delegate to `set_lifecycle(policy)` after a permission check (see [§7](#7-the-ownership-model)). `expire_now()` is the explicit delete-now entry point — it delegates to `del ns[canonical_name]` (full teardown), not to `set_lifecycle`.
 
 ### Cascade propagation
 
@@ -208,19 +209,28 @@ The four lifecycle mutators (`expire_in`, `expire_at`, `persist`, `update_cache_
 
 ### `take_ownership()`
 
-A **named reference** (alias) can promote itself to own its data:
+`take_ownership()` operates on **the referenced data object**, not on the reference (alias) binding. It makes **the referenced object** its own owner, so it can manage its own lifecycle independently.
+
+The primary use case is a **named reference pointing at an anonymous nested object**. An anonymous object is created with `owner = parent` (its lifetime is attached to the parent container). When you hold a named reference to it, `take_ownership()` promotes the anonymous object to self-owned — its `owner` changes from the parent's name to its own `~anon:…` canonical name:
 
 ```python
-ns["alias"] = ns["original"]   # alias is a reference
-obj = ns.get_object("alias")
-obj.take_ownership()           # now alias owns the data; owner = "alias"
+ns["parent"] = {"inner": [1, 2, 3]}          # inner becomes ~anon:… owned by "parent"
+inner = ns.get_object("parent")["inner"]      # the anonymous list object
+ns["named"] = inner                           # a named reference to the anonymous object
+obj = ns.get_object("named")
+obj.take_ownership()                          # now the ~anon:… object owns itself;
+                                             # owner = "~anon:…", independent of "parent"
+# After this, obj.update_cache_mode_and_ttl("ttl", 60) sets a TTL on the ~anon:…
+# object WITHOUT affecting "parent" — the anon now has its own lifecycle.
 ```
 
-After `take_ownership()`, the alias becomes self-owned and can have its lifecycle changed independently. Only named references can do this — anonymous objects (`~anon:…`) cannot, because they have no user-visible name.
+**On a reference to a named (already self-owned) object, `take_ownership()` is a correct no-op.** A named object is its own owner from creation, so the call changes nothing — which is the intended behaviour. In a multi-process shared environment a caller is not necessarily the data's creator and cannot (and need not) know whether a referenced object was created anonymous or named; the caller's intent — "this referenced object should manage its own lifecycle" — is *enacted* for an anonymous object and *already satisfied* for a named one. Either way the call is legitimate.
+
+The call itself must be made **via a named reference handle**: `obj._is_reference` must be `True` and `obj.name` must not start with `~`. Calling it on a plain (non-reference) object raises `TypeError`.
 
 ---
 
-## 8. Anonymous Object Lifecycle
+## 8. Anonymous Object Lifecycle { #lifecycle-anon }
 
 Anonymous objects are the **most automatic** part of GPDC. You never create or delete them directly. Understanding their lifecycle prevents most "where did my data go?" confusion.
 
@@ -241,8 +251,8 @@ Each anonymous object gets a generated name (`~anon:{uuid}`), its own `obj:`/`ra
 
 Anonymous objects inherit the policy that was active during encoding — i.e. the parent container's effective policy at create time (`policy_from_defaults` computed from the parent's context). After creation, their lifecycle is **driven by the owner chain**, not by their own policy alone:
 
-- A `sliding` mutation on any descendant refreshes the self-owned ancestor's TTL (see [§5](#5-sliding-window-refresh)).
-- A policy change on the self-owned ancestor propagates down to owned children (see [§6](#6-manual-policy-changes-cascade-propagation)).
+- A `sliding` mutation on any descendant refreshes the self-owned ancestor's TTL (see [§5](#lifecycle-sliding)).
+- A policy change on the self-owned ancestor propagates down to owned children (see [§6](#lifecycle-manual)).
 
 ### Reference counting
 
@@ -266,15 +276,15 @@ graph TD
 
 1. **Last referrer release** — when the last slot referencing the anon is removed (an element is overwritten or popped, or the parent itself is deleted and walks its children). GPDC checks `has_referrers`; if empty and the target is anonymous, it cascades.
 2. **Self-owned parent deletion** — `del ns["matrix"]` deletes the parent's binding, then `_cascade_delete_anonymous` walks the parent's stored raw data, releases nested refs, and recursively deletes any orphaned anons.
-3. **Encode-session rollback** — if an exception propagates out of an `encode_session` (e.g. a `CyclicReferenceError`), every anonymous object created during that session is deleted, leaving no orphan anons behind. (The parent container's own metadata key, written before the encode session opened, is not rolled back by this path.)
+3. **Encode-session rollback** — if an exception propagates out of an `encode_session` (e.g. a `CyclicReferenceError`), every anonymous object created during that session is deleted and any ref-count increments the session made on pre-existing containers are reversed, leaving no orphan anons or phantom referrers behind. How far the cleanup reaches depends on the call site: a failed **first-time store** (`ns[name] = value`) is wrapped by `namespace.__setitem__`, which additionally deletes the just-written binding `obj:`/`raw:`/`ref:` keys, so no orphan meta survives at all; a failed **re-encode inside an existing container** (a mutator like `dict.update`/`list.extend`) only rolls back what the encode session created/referenced — the container's own long-standing `obj:`/`raw:` meta stays put (which is correct: it holds valid pre-existing data).
 
 ### Important consequence
 
-**Anonymous objects are never "leaked" by GPDC.** Between the three cascade triggers and the GC (see [§10](#10-garbage-collection)), an anon that loses all referrers will be reclaimed. The worst case is a brief window between an ungraceful crash and the next GC cycle.
+**Anonymous objects are never "leaked" by GPDC.** Between the three cascade triggers and the GC (see [§10](#lifecycle-gc)), an anon that loses all referrers will be reclaimed. The worst case is a brief window between an ungraceful crash and the next GC cycle.
 
 ---
 
-## 9. Reference (Alias) Lifecycle
+## 9. Reference (Alias) Lifecycle { #lifecycle-reference }
 
 A **reference** is a named binding (`obj:alias` STRING holding `ref:{canonical_obj_key}`) that points at a canonical owner. References let multiple names share one piece of data without copying.
 
@@ -301,13 +311,13 @@ This protection is intentional: silently deleting data that other names still po
 
 ### Lifecycle of a reference binding itself
 
-A reference's `obj:alias` key has **no TTL applied**; it persists until explicitly deleted. Lifecycle mutators called on a reference operate on the **canonical owner**, not on the alias binding — use `take_ownership()` (see [§7](#7-the-ownership-model)) to promote a reference to a self-owned object with its own policy.
+A reference's `obj:alias` key has **no TTL applied**; it persists until explicitly deleted. Lifecycle mutators called on a reference operate on the **canonical owner**, not on the alias binding — use `take_ownership()` (see [§7](#7-the-ownership-model)) to promote **the referenced object** to self-owned so it can carry its own policy.
 
 ---
 
-## 10. Garbage Collection
+## 10. Garbage Collection { #lifecycle-gc }
 
-GPDC's background GC cleans up **orphans** — keys left behind when objects expire or referrers churn. It does **not** replace the cascade-delete logic in [§8](#8-anonymous-object-lifecycle); it is a safety net for cases the synchronous path cannot handle atomically:
+GPDC's background GC cleans up **orphans** — keys left behind when objects expire or referrers churn. It does **not** replace the cascade-delete logic in [§8](#lifecycle-anon); it is a safety net for cases the synchronous path cannot handle atomically:
 
 - **TTL expiry**: when a `ttl`/`sliding` object's Redis TTL fires, it vanishes, but referrers and referrer-set entries can linger.
 - **Reference churn**: overwriting/removing container elements leaves stale `ref:` entries.
@@ -343,12 +353,13 @@ For reference, here is the complete set of user-facing lifecycle methods on `GPD
 
 | Method | Purpose |
 |---|---|
-| `expire_in(seconds)` | Set a new TTL (must already be in `ttl` mode). |
+| `expire_in(seconds)` | Set a new TTL (must already be in `ttl` mode; `seconds > 0`). |
 | `expire_at(when)` | Set absolute expiry (must already be in `ttl` mode). |
+| `expire_now()` | Delete this object now (any cache mode; full teardown incl. anonymous subtrees). |
 | `persist()` | Switch to `permanent`. |
 | `update_cache_mode_and_ttl(mode, ttl)` | Replace the full policy. |
 | `refresh_ttl()` | Force a sliding-window refresh of this object and its owned subtree. |
-| `take_ownership()` | Promote a named reference to own its data. |
+| `take_ownership()` | Promote **the referenced object** to own itself (primary use case: a named reference to an anonymous nested object; a correct no-op on a reference to an already self-owned named object). |
 | `ttl` (property) | The declared TTL in seconds. |
 | `cache_mode` (property) | The current cache mode. |
 | `remaining_ttl()` | The actual remaining TTL reported by Redis (can be 0 or -1). |
@@ -374,7 +385,7 @@ A short list of "I expected X, but got Y" scenarios, resolved.
 | "`ttl` mode with `ttl=0` was accepted" | Never. It raises `ValueError`. | Strict validation: `ttl`/`sliding` require `ttl > 0`. |
 | "My `permanent` object disappeared" | Something deleted it (`del`, namespace `clear()`, `destroy()`, or GC of an orphaned anon). | `permanent` only means no TTL; it is not immortality. |
 | "I changed the ancestor to `permanent` but a child still has a TTL" | Propagation only reaches **owned** children. | Children referenced but not **owned** by the ancestor keep their own policy. |
-| "My data vanished after a crash mid-write" | The encode session rolled back all anonymous objects created during the failed write. | This is intentional: a failed write leaves no orphan anons behind (the parent container's own metadata key, written before the encode session, is not rolled back). |
+| "My data vanished after a crash mid-write" | The encode session rolled back all anonymous objects created during the failed write (and, for a first-time store, the binding's `obj:`/`raw:`/`ref:` keys too). | This is intentional: a failed write leaves no orphan anons behind. For a first-time store the whole binding is cleaned up; for a re-encode inside an existing container, the container's own pre-existing meta is intentionally left in place (it holds valid data). |
 
 ---
 

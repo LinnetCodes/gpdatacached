@@ -110,3 +110,21 @@ class GPDCLockConfigInconsistentError(GPDCError):
             "before constructing GPDCDomain."
         )
         super().__init__("\n".join(lines))
+
+
+class ObjectNotFoundByURIError(GPDCError):
+    """Raised when a GPDC URI cannot be resolved to a GPDCDataObject.
+
+    Covers all failure modes of GPDataCache.get_object_by_uri / has_uri:
+    missing domain config, missing namespace, missing root object, broken
+    path traversal, scalar terminal (path traversal hit an inline scalar
+    value), and malformed URI syntax.
+    """
+
+    def __init__(self, uri: str, reason: str = "") -> None:
+        self.uri = uri
+        self.reason = reason
+        msg = f"Cannot resolve GPDC URI {uri!r}"
+        if reason:
+            msg += f": {reason}"
+        super().__init__(msg)

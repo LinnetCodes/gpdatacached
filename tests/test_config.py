@@ -179,3 +179,43 @@ class TestGPDCDomainConfigLockFields:
 
         cfg = GPDCDomainConfig(gc_lock_wait_seconds=0)
         assert cfg.gc_lock_wait_seconds == 0
+
+    def test_gc_interval_default_is_300(self):
+        from gpdatacached.config import GPDCDomainConfig
+
+        cfg = GPDCDomainConfig()
+        assert cfg.gc_interval_seconds == 300
+
+    def test_gc_interval_rejects_zero(self):
+        """gc_interval_seconds=0 busy-loops the GC thread (CQR-2026-07-24 perf.01)."""
+        import pytest
+        from gpdatacached.config import GPDCDomainConfig
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(gc_interval_seconds=0)
+
+    def test_gc_interval_rejects_negative(self):
+        """Negative gc_interval_seconds also busy-loops on CPython
+        (Event.wait(negative) returns False, does NOT raise), so it must be
+        rejected here, not rely on Event.wait to crash the thread."""
+        import pytest
+        from gpdatacached.config import GPDCDomainConfig
+
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(gc_interval_seconds=-5)
+
+    def test_gc_interval_rejects_below_minimum(self):
+        import pytest
+        from gpdatacached.config import GPDCDomainConfig, MIN_GC_INTERVAL_SECONDS
+
+        assert MIN_GC_INTERVAL_SECONDS == 30
+        with pytest.raises(ValueError):
+            GPDCDomainConfig(gc_interval_seconds=MIN_GC_INTERVAL_SECONDS - 1)
+
+    def test_gc_interval_accepts_minimum_and_above(self):
+        from gpdatacached.config import GPDCDomainConfig, MIN_GC_INTERVAL_SECONDS
+
+        for v in (MIN_GC_INTERVAL_SECONDS, MIN_GC_INTERVAL_SECONDS + 1, 300, 3600):
+            cfg = GPDCDomainConfig(gc_interval_seconds=v)
+            assert cfg.gc_interval_seconds == v
+

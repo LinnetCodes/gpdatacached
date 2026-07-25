@@ -71,8 +71,7 @@ import pandas as pd
 
 from ..container import GPDCContainerObject
 from ..codec import GPDCContainerCodec
-from ..lifecycle import policy_from_meta
-from ..meta import ObjectMeta, _encode_extra_value
+from ..meta import _encode_extra_value
 from ..types import (
     GPDCTypeRegistry,
     _decode_scalar,
@@ -847,7 +846,7 @@ class DataFrameObject(GPDCContainerObject):
         MultiIndex is accepted (dict/list inputs synthesise positional labels a
         MultiIndex cannot supply -> TypeError; use ``.value``).
         """
-        from ..lifecycle import policy_from_meta, policy_from_defaults
+        from ..lifecycle import policy_from_meta
 
         r = self._redis()
         fields = self._raw_fields()
@@ -869,8 +868,11 @@ class DataFrameObject(GPDCContainerObject):
         else:
             appended_is_range = True
 
-        meta = ObjectMeta.load(r, self._canonical_redis_key())
-        policy = policy_from_meta(meta) if meta else policy_from_defaults("permanent", 0)
+        # Liveness check BEFORE any Redis write (promote / column pipelines),
+        # so a stale handle raises before mutating raw:/children (logic.02).
+        # The returned meta is reused for the encode policy and passed to _touch.
+        meta = self._check_alive(r)
+        policy = policy_from_meta(meta)
         owner_name = self._data_owner_name()
 
         # Per-column validate/cast BEFORE any Redis write (promote/encode) so a
@@ -907,8 +909,12 @@ class DataFrameObject(GPDCContainerObject):
         # RangeIndex: continue the range, or promote to L=1 levels.
         if index_kind == "range":
             range_step = _decode_scalar(fields["~range_step"])
-            if range_step == 1 and appended_is_range:
-                # range-compatible: just bump range_stop + append columns.
+            if appended_is_range:
+                # range-compatible: just bump range_stop + append columns. Works for
+                # any step (including non-unit and negative): the appended rows
+                # extend the stored range by n positions, so new_stop advances by
+                # n*step (CQR-2026-07-24 logic.03). Promote-to-levels only when the
+                # appended input is NOT a positional range (labelled/custom index).
                 pipe = r.pipeline(transaction=True)
                 with encode_session(self._namespace):
                     encoded_per_col = {
@@ -919,11 +925,11 @@ class DataFrameObject(GPDCContainerObject):
                     enc = encoded_per_col[col]
                     if enc:
                         pipe.rpush(self._get_column_list(col).raw_key, *enc)
-                new_stop = _decode_scalar(fields["~range_stop"]) + n
+                new_stop = _decode_scalar(fields["~range_stop"]) + n * range_step
                 pipe.hset(self.raw_key, "~range_stop", _encode_extra_value(new_stop))
                 pipe.execute()
                 self._invalidate_caches()
-                self._touch()
+                self._touch(meta)
                 return
             # Promote to L=1 levels. Validate BEFORE the promote (a Redis write)
             # so a rejected input leaves the object untouched (spec §5).
@@ -980,7 +986,7 @@ class DataFrameObject(GPDCContainerObject):
         pipe.execute()
 
         self._invalidate_caches()
-        self._touch()
+        self._touch(meta)
 
     def deepcopy(self) -> pd.DataFrame:
         return self.value.copy(deep=True)
@@ -993,7 +999,13 @@ class DataFrameObject(GPDCContainerObject):
     def __len__(self) -> int:
         if self._index_kind() == "range":
             fields = self._raw_fields()
-            return _decode_scalar(fields["~range_stop"]) - _decode_scalar(fields["~range_start"])
+            # Cardinality of range(start, stop, step) — NOT (stop - start), which
+            # is only correct when step == 1 (CQR-2026-07-24 logic.03). Using
+            # Python's range() handles non-unit, negative, and empty cases uniformly.
+            start = _decode_scalar(fields["~range_start"])
+            stop = _decode_scalar(fields["~range_stop"])
+            step = _decode_scalar(fields["~range_step"])
+            return len(range(start, stop, step))
         idx = self._get_level_list(0)
         return len(idx) if idx is not None else 0
 
@@ -1076,7 +1088,7 @@ class DataFrameObject(GPDCContainerObject):
 
     def __setitem__(self, col, values) -> None:
         """Add or replace a column. ``len(values)`` must equal the current row count."""
-        from ..lifecycle import policy_from_meta, policy_from_defaults
+        from ..lifecycle import policy_from_meta
 
         r = self._redis()
         fields = self._raw_fields()
@@ -1097,8 +1109,9 @@ class DataFrameObject(GPDCContainerObject):
             )
         columns = list(_decode_scalar(fields["~columns"]))
         owner_name = self._data_owner_name()
-        meta = ObjectMeta.load(r, self._canonical_redis_key())
-        policy = policy_from_meta(meta) if meta else policy_from_defaults("permanent", 0)
+        # Liveness check before any Redis write (logic.02); meta reused for policy + _touch.
+        meta = self._check_alive(r)
+        policy = policy_from_meta(meta)
 
         expected = self.__len__()
         if expected == 0 and len(values) > 0:
@@ -1130,13 +1143,17 @@ class DataFrameObject(GPDCContainerObject):
         col_key = encode_key(col)
         replacing = col in columns
         old_family = None
+        # Capture old column refs to release AFTER the encode succeeds — releasing
+        # before the encode could cascade-delete the old column's anon on a failing
+        # encode, losing data (CQR-2026-07-24 logic.01 side-effect (c)).
+        old_col_ref = None
+        old_cat_ref = None
         if replacing:
-            old_ref = r.hget(self.raw_key, col_key)
-            self._release_element_ref(old_ref)
+            old_col_ref = r.hget(self.raw_key, col_key)
             old_dtype_str = _decode_scalar(fields[f"~dt:{col_key}"])
             old_family = _value_dtype_family(pd.api.types.pandas_dtype(old_dtype_str))
             if old_family == "category":
-                self._release_element_ref(r.hget(self.raw_key, f"~cat:{col_key}"))
+                old_cat_ref = r.hget(self.raw_key, f"~cat:{col_key}")
 
         with encode_session(self._namespace):
             mapping = {
@@ -1149,6 +1166,11 @@ class DataFrameObject(GPDCContainerObject):
                 )
                 mapping[f"~ord:{col_key}"] = _encode_extra_value(bool(inferred.cat.ordered))
 
+        # Encode succeeded -> release the old column refs now (post-encode).
+        if old_col_ref is not None:
+            self._release_element_ref(old_col_ref)
+        if old_cat_ref is not None:
+            self._release_element_ref(old_cat_ref)
         if replacing and old_family == "category" and family != "category":
             r.hdel(self.raw_key, f"~cat:{col_key}", f"~ord:{col_key}")
         r.hset(self.raw_key, mapping=mapping)
@@ -1158,11 +1180,12 @@ class DataFrameObject(GPDCContainerObject):
             r.hset(self.raw_key, "~columns", _encode_extra_value(tuple(columns)))
 
         self._invalidate_caches()
-        self._touch()
+        self._touch(meta)
 
     def __delitem__(self, col) -> None:
         """Drop a column. The shared index is retained (even for the last column)."""
         r = self._redis()
+        self._check_alive(r)
         fields = self._raw_fields()
         is_multi = "~columns_names" in fields
         if is_multi:
@@ -1456,7 +1479,14 @@ class SeriesObject(GPDCContainerObject):
         return _decode_scalar(self._redis().hget(self.raw_key, "dtype"))
 
     @property
-    def name(self):
+    def series_name(self):
+        """The stored pandas ``Series.name`` (the payload label, NOT the GPDC binding).
+
+        ``SeriesObject.name`` is inherited from ``GPDCDataObject`` and returns the
+        namespace binding name — the base-class identity contract, consistent with
+        ``.uri``/``.canonical_name`` and with ``DataFrameObject``. The pandas label
+        is exposed here as ``.series_name`` (and is also reachable via ``.value.name``).
+        """
         return _decode_scalar(self._redis().hget(self.raw_key, "name"))
 
     @property
@@ -1512,7 +1542,7 @@ class SeriesObject(GPDCContainerObject):
         Mutates the cached object in Redis and returns None. (Differs from
         pandas pd.concat, which is non-mutating and returns a new Series.)
         """
-        from ..lifecycle import policy_from_defaults
+        from ..lifecycle import policy_from_meta
 
         fields = self._raw_fields()
         dtype_str = _decode_scalar(fields["dtype"])
@@ -1539,8 +1569,10 @@ class SeriesObject(GPDCContainerObject):
             _assert_scalar_encodable(new_data, "Series element")
 
         r = self._redis()
-        meta = ObjectMeta.load(r, self._canonical_redis_key())
-        policy = policy_from_meta(meta) if meta else policy_from_defaults("permanent", 0)
+        # Liveness check BEFORE any Redis write (promote / data+index pipelines),
+        # so a stale handle raises before mutating raw:/children (logic.02).
+        meta = self._check_alive(r)
+        policy = policy_from_meta(meta)
         owner_name = self._data_owner_name()
 
         if index_kind == "range":
@@ -1565,7 +1597,10 @@ class SeriesObject(GPDCContainerObject):
                 names = _decode_scalar(fields["index_names"])
             else:
                 data_list = self._get_data_list()
-                new_stop = _decode_scalar(fields["range_stop"]) + len(new_data)
+                # Advance range_stop by len*step, not len — works for any step
+                # including non-unit and negative (CQR-2026-07-24 logic.03).
+                range_step = _decode_scalar(fields["range_step"])
+                new_stop = _decode_scalar(fields["range_stop"]) + len(new_data) * range_step
                 pipe = r.pipeline(transaction=True)
                 with encode_session(self._namespace):
                     encoded_data = [encode_element(v, self._namespace, owner_name, policy) for v in new_data]
@@ -1575,7 +1610,7 @@ class SeriesObject(GPDCContainerObject):
                 pipe.execute()
                 self._data_list_cache = _UNLOADED
                 self._level_lists_cache = {}
-                self._touch()
+                self._touch(meta)
                 return
 
         # levels path (L >= 1)
@@ -1613,7 +1648,7 @@ class SeriesObject(GPDCContainerObject):
         pipe.execute()
         self._data_list_cache = _UNLOADED
         self._level_lists_cache = {}
-        self._touch()
+        self._touch(meta)
 
     def _promote_range_to_labels(self, fields: dict, owner_name, policy, level_dtype="int64") -> None:
         start = _decode_scalar(fields["range_start"])

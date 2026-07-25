@@ -17,7 +17,7 @@ Locks are **opt-in and advisory**. GPDC never acquires a lock on your behalf —
 
 ---
 
-## Performance Impact
+## Performance Impact { #locking-perf }
 
 Every locked operation pays a concrete cost over its unlocked equivalent. Understand this before adopting locks broadly.
 
@@ -67,7 +67,7 @@ A waiter blocks in `BLPOP` (whose timeout is capped at the lock's `ttl`) until e
 from gpdatacached import GPDCDomain, GPDCDomainConfig
 
 config = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_password="...")
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 ns = domain.ensure_namespace("myns")
 
 ns["counter"] = 0
@@ -83,14 +83,14 @@ The lock is released automatically when the `with` block exits, including on exc
 
 ---
 
-## Recommended Usage
+## Recommended Usage { #locking-recommended }
 
 1. **Don't lock by default.** Single-writer and low-contention workloads need no locking. Add locks reactively, in response to measured contention — not speculatively.
 2. **Lock as late as possible, release as early as possible.** Acquire immediately before the read-modify-write and release the instant it is done. Do no I/O and no heavy computation while holding the lock.
 3. **Keep critical sections minimal.** Read → compute → write inside the lock; everything else (logging, validation of inputs, building the new value from unrelated data) outside.
 4. **Don't lock inside hot loops.** Either hoist the lock to wrap the whole loop, or pull the data local once via `.value`, work on it, and write the result back in one pass.
-5. **For multi-object operations, always acquire locks in ascending canonical-name order** (see [Acquiring multiple locks](#acquiring-multiple-locks)). GPDC's own GC follows this rule.
-6. **If `gc_enabled=True`, every concurrent writer MUST lock** — there is no opt-out. See [GC interaction](#gc-interaction).
+5. **For multi-object operations, always acquire locks in ascending canonical-name order** (see [Acquiring multiple locks](#locking-multiple)). GPDC's own GC follows this rule.
+6. **If `gc_enabled=True`, every concurrent writer MUST lock** — there is no opt-out. See [GC interaction](#locking-gc).
 7. **Size `ttl` to your worst-case critical section.** If the operation may legitimately run longer than the default `ttl`, pass it explicitly: `obj.lock(ttl=120)`. An operation that exceeds `ttl` silently loses the lock mid-flight.
 8. **Prefer `try_lock()` for opportunistic paths.** When you can defer or skip the work, `try_lock()` avoids blocking and lets the caller decide.
 9. **One logical operation = one lock acquisition.** Re-acquiring the same lock from the same process deadlocks (no reentrancy).
@@ -103,11 +103,11 @@ The lock is released automatically when the `with` block exits, including on exc
 
 By convention, a writer holding this lock has exclusive access to the object's own Redis keys (metadata, raw data, referrer set). The lock is **advisory** — it only coordinates processes that voluntarily call `obj.lock()`; it does not physically block Redis access from a process that bypasses it.
 
-The lock does **not** automatically protect referrer modifications that parent methods make on anonymous children — see [Known limitations](#known-limitations).
+The lock does **not** automatically protect referrer modifications that parent methods make on anonymous children — see [Known limitations](#locking-limits).
 
 ---
 
-## Acquiring multiple locks
+## Acquiring multiple locks { #locking-multiple }
 
 To atomically move an element between two objects, you need both locks. **Always acquire in ascending canonical-name order** to avoid deadlock:
 
@@ -137,9 +137,9 @@ else:
 
 ---
 
-## GC interaction
+## GC interaction { #locking-gc }
 
-When `gc_enabled=True`, the background GC tries to lock each object it processes. If the lock cannot be acquired within `gc_lock_wait_seconds` (default 5s), GC skips that object in the current cycle. (For what GC cleans and when it runs, see [Lifecycle Management](./lifecycle.md#10-garbage-collection).)
+When `gc_enabled=True`, the background GC tries to lock each object it processes. If the lock cannot be acquired within `gc_lock_wait_seconds` (default 5s), GC skips that object in the current cycle. (For what GC cleans and when it runs, see [Lifecycle Management](./lifecycle.md#lifecycle-gc).)
 
 **Contract:** if `gc_enabled=True`, all concurrent writers MUST use `obj.lock()`. Writers that bypass locking can race with GC and corrupt state.
 
@@ -174,7 +174,7 @@ new_config = GPDCDomainConfig(
     redis_host="127.0.0.1", redis_port=6379, redis_password="...",
     default_lock_ttl_seconds=60,
 )
-domain = GPDCDomain("mydomain", new_config)
+domain = GPDCDomain(new_config, name="mydomain")
 ```
 
 ---
@@ -190,7 +190,7 @@ domain = GPDCDomain("mydomain", new_config)
 
 ---
 
-## Known limitations
+## Known limitations { #locking-limits }
 
 - **Advisory only.** The lock serialises only processes that call `obj.lock()`. A process that reads/writes the same keys directly (via `obj.value = ...` or any mutating method without locking) is not blocked. All writers must opt in for the guarantee to hold.
 - **Anonymous children.** A parent mutation method (e.g. `dict.__setitem__`) that modifies an anonymous child's referrer set is not automatically protected by the parent's lock. In practice this is rarely a problem because users access data through named bindings, not directly through anons. If you observe `KeyError` from `decode_element` under high concurrency with GC enabled, this is the likely cause.

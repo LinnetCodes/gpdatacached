@@ -93,7 +93,7 @@ class TestSlidingRefresh:
             redis_password="123456",
             gc_enabled=False,
         )
-        d = GPDCDomain("slide_scalar", cfg)
+        d = GPDCDomain(cfg, name="slide_scalar")
         try:
             ns = d.ensure_namespace("ns")
             ns["s"] = 42
@@ -122,7 +122,7 @@ class TestSlidingRefresh:
             default_cache_mode="sliding",
             default_ttl_seconds=10,
         )
-        d = GPDCDomain("slide_cascade", cfg)
+        d = GPDCDomain(cfg, name="slide_cascade")
         try:
             ns = d.ensure_namespace("ns")
             ns["d"] = {"items": [1, 2, 3]}
@@ -151,7 +151,7 @@ class TestSlidingRefresh:
             default_cache_mode="sliding",
             default_ttl_seconds=10,
         )
-        d = GPDCDomain("slide_upward", cfg)
+        d = GPDCDomain(cfg, name="slide_upward")
         try:
             r = d.redis
             ns = d.ensure_namespace("ns")
@@ -190,7 +190,7 @@ class TestSlidingRefresh:
             default_cache_mode="sliding",
             default_ttl_seconds=10,
         )
-        d = GPDCDomain("slide_deep", cfg)
+        d = GPDCDomain(cfg, name="slide_deep")
         try:
             r = d.redis
             ns = d.ensure_namespace("ns")
@@ -351,7 +351,7 @@ def ttl_domain(clean_redis):
         redis_password="123456",
         gc_enabled=False,
     )
-    d = GPDCDomain("testdomain_ttl", cfg)
+    d = GPDCDomain(cfg, name="testdomain_ttl")
     yield d
     d.close()
 
@@ -365,7 +365,7 @@ def gc_disabled_domain(clean_redis):
         redis_password="123456",
         gc_enabled=False,
     )
-    d = GPDCDomain("testdomain", cfg)
+    d = GPDCDomain(cfg, name="testdomain")
     yield d
     d.close()
 
@@ -383,7 +383,7 @@ def _make_namespace(r, domain_name, cache_mode="permanent", ttl=0):
         default_cache_mode=cache_mode,
         default_ttl_seconds=ttl,
     )
-    domain = GPDCDomain(domain_name, config)
+    domain = GPDCDomain(config, name=domain_name)
     return domain.ensure_namespace(_INHERIT_NS)
 
 

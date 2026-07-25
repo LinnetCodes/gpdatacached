@@ -4,7 +4,7 @@ import time
 
 import pytest
 from gpdatacached import DictObject, ListObject, SetObject
-from gpdatacached.exceptions import CanonicalObjectReferencedError
+from gpdatacached.exceptions import CanonicalObjectReferencedError, LifecyclePermissionError
 from gpdatacached.keys import (
     make_domain_namespaces_key,
     make_namespace_meta_key,
@@ -358,6 +358,57 @@ class TestCacheModeAndTTL:
             ns.get_object("base").expire_at(past)
         # Nothing was deleted because the expiry was blocked.
         assert clean_redis.exists(make_object_key("testdomain", "testns", "base"))
+
+    def test_expire_now_deletes_container_fully(self, ns, clean_redis):
+        # expire_now() must do the same full teardown as expire_at(past) /
+        # del ns[name]: obj:/raw:/ref: all gone, no leaked keys.
+        ns["c"] = [1, 2, 3]
+        obj_key = make_object_key("testdomain", "testns", "c")
+        raw_key = make_raw_key("testdomain", "testns", "c")
+        ref_key = make_ref_key("testdomain", "testns", "c")
+        assert clean_redis.exists(obj_key, raw_key)
+
+        ns.get_object("c").expire_now()
+
+        assert not clean_redis.exists(obj_key)
+        assert not clean_redis.exists(raw_key)
+        assert not clean_redis.exists(ref_key)
+        with pytest.raises(KeyError):
+            _ = ns["c"]
+
+    def test_expire_now_works_in_any_cache_mode(self, ns, clean_redis):
+        # Unlike expire_in/expire_at (which require cache_mode='ttl'),
+        # expire_now() deletes regardless of the object's current policy.
+        ns["permanent_obj"] = 42  # default cache_mode is 'permanent'
+        ns.get_object("permanent_obj").expire_now()
+        with pytest.raises(KeyError):
+            _ = ns["permanent_obj"]
+
+    def test_expire_now_cascades_anonymous_subtree(self, ns, clean_redis):
+        ns["nested"] = {"a": [1, 2], "b": [3, 4]}
+        anon_before = [k for k in clean_redis.scan_iter("gpdc:testdomain:testns:obj:~anon:*")]
+        assert len(anon_before) >= 2
+
+        ns.get_object("nested").expire_now()
+
+        anon_after = [k for k in clean_redis.scan_iter("gpdc:testdomain:testns:obj:~anon:*")]
+        assert anon_after == []
+
+    def test_expire_now_referenced_owner_raises(self, ns, clean_redis):
+        # Same protection as expire_at(past): a canonical owner referenced by
+        # an alias raises CanonicalObjectReferencedError.
+        ns["base"] = [1, 2, 3]
+        ns["alias"] = ns["base"]
+        with pytest.raises(CanonicalObjectReferencedError):
+            ns.get_object("base").expire_now()
+        assert clean_redis.exists(make_object_key("testdomain", "testns", "base"))
+
+    def test_expire_now_checks_owner_permission(self, ns, clean_redis):
+        # expire_now() requires ownership, like the other lifecycle mutators.
+        ns["parent"] = {"inner": [1, 2, 3]}
+        child = ns.get_object("parent")["inner"]  # anonymous, owned by parent
+        with pytest.raises(LifecyclePermissionError):
+            child.expire_now()
 
     def test_container_has_referrers_helper(self, ns, clean_redis):
         # has_referrers() lets users check whether references would block a
@@ -1742,7 +1793,7 @@ class TestNamespaceErrorPaths:
         r = redis_lib.Redis(host="127.0.0.1", port=6379, db=1, password="123456", decode_responses=True)
         r.flushdb()
         cfg = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_db=1, redis_password="123456")
-        domain = GPDCDomain("testdomain", cfg)
+        domain = GPDCDomain(cfg, name="testdomain")
         ns1 = domain.ensure_namespace("ns1")
         ns2 = domain.ensure_namespace("ns2")
         ns1["lst"] = [1, 2, 3]

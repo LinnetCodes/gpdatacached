@@ -289,6 +289,29 @@ class TestObjectGoneErrorScalar:
         with pytest.raises(ObjectGoneError, match="no longer exists"):
             obj.expire_in(60)
 
+    def test_expire_in_rejects_zero_ttl(self, ns):
+        # expire_in() sets a TTL; ttl mode requires ttl > 0. expire_in(0) must
+        # NOT silently persist the object — use expire_now() to delete.
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        obj.update_cache_mode_and_ttl("ttl", 60)
+        with pytest.raises(ValueError, match="ttl"):
+            obj.expire_in(0)
+
+    def test_expire_in_rejects_negative_ttl(self, ns):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        obj.update_cache_mode_and_ttl("ttl", 60)
+        with pytest.raises(ValueError, match="ttl"):
+            obj.expire_in(-10)
+
+    def test_expire_now_raises_when_gone(self, ns, raw_redis):
+        ns["x"] = 42
+        obj = ns.get_object("x")
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.expire_now()
+
     def test_expire_at_raises(self, ns, raw_redis):
         ns["x"] = 42
         obj = ns.get_object("x")
@@ -316,26 +339,143 @@ class TestObjectGoneErrorContainer:
     def _delete_meta(self, obj, raw_redis):
         raw_redis.delete(obj._canonical_redis_key())
 
-    def test_list_append_raises(self, ns, raw_redis):
+    def _raw_snapshot(self, obj, raw_redis):
+        """Capture raw: contents (list/set/dict) for later equality comparison."""
+        rk = obj.raw_key
+        if not raw_redis.exists(rk):
+            return None
+        # _delete_meta removes the obj: meta, so read the Redis type of raw: directly.
+        t = raw_redis.type(rk)
+        if t == "list":
+            return raw_redis.lrange(rk, 0, -1)
+        if t == "set":
+            return sorted(raw_redis.smembers(rk))
+        if t == "hash":
+            return raw_redis.hgetall(rk)
+        return None
+
+    def test_list_append_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        # CQR-2026-07-24 logic.02: a stale handle must raise BEFORE writing raw:,
+        # so raw: contents are unchanged (the old bug appended before raising).
         ns["lst"] = [1, 2]
         obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
         self._delete_meta(obj, raw_redis)
         with pytest.raises(ObjectGoneError, match="no longer exists"):
             obj.append(3)
+        assert self._raw_snapshot(obj, raw_redis) == before
 
-    def test_set_add_raises(self, ns, raw_redis):
+    def test_set_add_raises_and_leaves_raw_untouched(self, ns, raw_redis):
         ns["s"] = {1, 2}
         obj = ns.get_object("s")
+        before = self._raw_snapshot(obj, raw_redis)
         self._delete_meta(obj, raw_redis)
         with pytest.raises(ObjectGoneError, match="no longer exists"):
             obj.add(3)
+        assert self._raw_snapshot(obj, raw_redis) == before
 
-    def test_dict_setitem_raises(self, ns, raw_redis):
+    def test_dict_setitem_raises_and_leaves_raw_untouched(self, ns, raw_redis):
         ns["d"] = {"a": 1}
         obj = ns.get_object("d")
+        before = self._raw_snapshot(obj, raw_redis)
         self._delete_meta(obj, raw_redis)
         with pytest.raises(ObjectGoneError, match="no longer exists"):
             obj["b"] = 2
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_list_extend_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        ns["lst"] = [1, 2]
+        obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.extend([3, 4])
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_list_setitem_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        ns["lst"] = [1, 2]
+        obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj[0] = 99
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_list_delitem_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        ns["lst"] = [1, 2]
+        obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            del obj[0]
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_dict_update_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        ns["d"] = {"a": 1}
+        obj = ns.get_object("d")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.update({"b": 2, "c": 3})
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_dict_delitem_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        ns["d"] = {"a": 1}
+        obj = ns.get_object("d")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            del obj["a"]
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_set_discard_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        ns["s"] = {1, 2}
+        obj = ns.get_object("s")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.discard(1)
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_set_ior_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        ns["s"] = {1, 2}
+        obj = ns.get_object("s")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj |= {3, 4}
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_list_pop_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        # Regression for the logic.02 audit miss: pop() delegates to
+        # _delete_index, which must also be guarded.
+        ns["lst"] = [1, 2, 3]
+        obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.pop()
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_list_pop_with_index_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        ns["lst"] = [1, 2, 3]
+        obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.pop(0)
+        assert self._raw_snapshot(obj, raw_redis) == before
+
+    def test_list_remove_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        # Regression for the logic.02 audit miss: remove() delegates to
+        # _delete_index, which must also be guarded.
+        ns["lst"] = [1, 2, 3]
+        obj = ns.get_object("lst")
+        before = self._raw_snapshot(obj, raw_redis)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.remove(2)
+        assert self._raw_snapshot(obj, raw_redis) == before
 
 
 class TestObjectGoneErrorRead:

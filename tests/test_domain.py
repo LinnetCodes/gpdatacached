@@ -52,15 +52,79 @@ class TestGPDCDomainInit:
     def test_incompatible_version_raises(self, clean_redis, domain_config):
         clean_redis.hset(GLOBAL_META_KEY, "version", "99.99.99")
         with pytest.raises(RuntimeError, match="Incompatible GPDC version"):
-            GPDCDomain("testdomain", domain_config)
+            GPDCDomain(domain_config, name="testdomain")
 
     def test_reconnect_compatible_version_ok(self, domain, domain_config):
-        domain2 = GPDCDomain("anotherdomain", domain_config)
+        domain2 = GPDCDomain(domain_config, name="anotherdomain")
         assert domain2.name == "anotherdomain"
 
     def test_invalid_domain_name_raises(self, domain_config):
         with pytest.raises(ValueError):
-            GPDCDomain("my:invalid:domain", domain_config)
+            GPDCDomain(domain_config, name="my:invalid:domain")
+
+
+class TestGPDCDomainInitSignature:
+    """Signature changed in 0.2.0: GPDCDomain(config, name=None).
+
+    The first positional argument is the config; ``name`` is optional because a
+    config loaded from a file already carries its name (GPConfig.name == the
+    YAML filename stem). These tests pin the new name-resolution rules and the
+    hard failure on the old (name, config) call order.
+    """
+
+    def test_old_signature_raises_typeerror(self):
+        # Old-style GPDCDomain(name, config): the str lands in the config slot.
+        # Must fail loudly BEFORE any Redis connection is attempted.
+        cfg = _make_config()
+        with pytest.raises(TypeError, match="signature changed in 0.2.0"):
+            GPDCDomain("somename", cfg)
+
+    def test_old_signature_does_not_touch_redis(self):
+        # The TypeError guard runs first; even an unreachable Redis must not be
+        # contacted, proving the failure is purely a signature check.
+        cfg = GPDCDomainConfig(
+            redis_host="127.0.0.1",
+            redis_port=6399,  # nothing listening here
+            redis_db=REDIS_DB,
+            redis_password=REDIS_PASSWORD,
+        )
+        with pytest.raises(TypeError):
+            GPDCDomain("somename", cfg)
+
+    def test_explicit_name_only(self, domain_config):
+        # Programmatically-constructed config has name == "" → explicit name wins.
+        d = GPDCDomain(domain_config, name="explicit_name")
+        assert d.name == "explicit_name"
+        d.close()
+
+    def test_config_name_only(self, clean_redis):
+        # Simulate a config loaded from file: config.name is set. Single-arg
+        # construction derives the domain name from config.name.
+        cfg = _make_config()
+        cfg.name = "fromfile"
+        d = GPDCDomain(cfg)
+        assert d.name == "fromfile"
+        d.close()
+
+    def test_config_name_and_matching_explicit_name(self, clean_redis):
+        # Both provided and equal → resolves to that name (no conflict).
+        cfg = _make_config()
+        cfg.name = "agreed"
+        d = GPDCDomain(cfg, name="agreed")
+        assert d.name == "agreed"
+        d.close()
+
+    def test_config_name_conflicts_with_explicit_name(self):
+        cfg = _make_config()
+        cfg.name = "fromfile"
+        with pytest.raises(ValueError, match="Domain name mismatch"):
+            GPDCDomain(cfg, name="different")
+
+    def test_neither_name_raises(self):
+        cfg = _make_config()
+        assert cfg.name == ""  # programmatically constructed
+        with pytest.raises(ValueError, match="requires a name"):
+            GPDCDomain(cfg)
 
 
 class TestGPDCDomainEnsureNamespace:
@@ -130,7 +194,7 @@ class TestGPDCDomainContainerProtocol:
 
 class TestGPDCDomainRedisSource:
     def _make_domain(self, domain_config):
-        return GPDCDomain("testdomain", domain_config)
+        return GPDCDomain(domain_config, name="testdomain")
 
     def test_contains_sees_namespace_registered_by_previous_session(self, clean_redis, domain_config):
         d1 = self._make_domain(domain_config)
@@ -215,20 +279,20 @@ class TestGPDCDomainPredefinedNamespaces:
         from gpdatacached.domain import GPDCDomain
         from gpdatacached.keys import make_namespace_meta_key
 
-        GPDCDomain("testdomain", domain_config_with_namespaces)
+        GPDCDomain(domain_config_with_namespaces, name="testdomain")
 
         meta_key = make_namespace_meta_key("testdomain", "ns_1")
         clean_redis.hset(meta_key, "default_ttl_seconds", "9999")
 
-        GPDCDomain("testdomain", domain_config_with_namespaces)
+        GPDCDomain(domain_config_with_namespaces, name="testdomain")
         meta = clean_redis.hgetall(meta_key)
         assert meta["default_ttl_seconds"] == "9999"
 
 
 class TestMultiDomainIsolation:
     def test_same_key_different_values(self, clean_redis, domain_config):
-        d1 = GPDCDomain("domain_a", domain_config)
-        d2 = GPDCDomain("domain_b", domain_config)
+        d1 = GPDCDomain(domain_config, name="domain_a")
+        d2 = GPDCDomain(domain_config, name="domain_b")
         ns1 = d1.ensure_namespace("shared_ns")
         ns2 = d2.ensure_namespace("shared_ns")
 
@@ -242,8 +306,8 @@ class TestMultiDomainIsolation:
         d2.close()
 
     def test_delete_in_one_domain_does_not_affect_other(self, clean_redis, domain_config):
-        d1 = GPDCDomain("domain_a", domain_config)
-        d2 = GPDCDomain("domain_b", domain_config)
+        d1 = GPDCDomain(domain_config, name="domain_a")
+        d2 = GPDCDomain(domain_config, name="domain_b")
         ns1 = d1.ensure_namespace("shared_ns")
         ns2 = d2.ensure_namespace("shared_ns")
 
@@ -259,8 +323,8 @@ class TestMultiDomainIsolation:
         d2.close()
 
     def test_iter_len_independent(self, clean_redis, domain_config):
-        d1 = GPDCDomain("domain_a", domain_config)
-        d2 = GPDCDomain("domain_b", domain_config)
+        d1 = GPDCDomain(domain_config, name="domain_a")
+        d2 = GPDCDomain(domain_config, name="domain_b")
         ns1 = d1.ensure_namespace("ns")
         ns2 = d2.ensure_namespace("ns")
 
@@ -277,8 +341,8 @@ class TestMultiDomainIsolation:
         d2.close()
 
     def test_namespace_isolation_in_domain_iter(self, clean_redis, domain_config):
-        d1 = GPDCDomain("domain_a", domain_config)
-        d2 = GPDCDomain("domain_b", domain_config)
+        d1 = GPDCDomain(domain_config, name="domain_a")
+        d2 = GPDCDomain(domain_config, name="domain_b")
 
         d1.ensure_namespace("only_in_a")
         d2.ensure_namespace("only_in_b")
@@ -357,13 +421,13 @@ class TestDeleteNamespace:
 
     def test_visible_across_sessions(self, clean_redis):
         cfg = _make_config()
-        d1 = GPDCDomain("testdomain", cfg)
+        d1 = GPDCDomain(cfg, name="testdomain")
         d1.ensure_namespace("ns1")
         d1.ensure_namespace("ns2")
         d1.delete_namespace("ns1")
         d1.close()
 
-        d2 = GPDCDomain("testdomain", cfg)
+        d2 = GPDCDomain(cfg, name="testdomain")
         assert "ns1" not in d2
         assert "ns2" in d2
         d2.close()
@@ -392,14 +456,14 @@ class TestNamespaceDestroy:
 class TestDomainDestroy:
     def test_removes_domain_from_global_set(self, clean_redis):
         cfg = _make_config()
-        d = GPDCDomain("testdomain", cfg)
+        d = GPDCDomain(cfg, name="testdomain")
         d.destroy()
 
         assert clean_redis.sismember(GLOBAL_DOMAINS_KEY, "testdomain") == 0
 
     def test_deletes_domain_meta(self, clean_redis):
         cfg = _make_config()
-        d = GPDCDomain("testdomain", cfg)
+        d = GPDCDomain(cfg, name="testdomain")
         meta_key = make_domain_meta_key("testdomain")
 
         d.destroy()
@@ -408,7 +472,7 @@ class TestDomainDestroy:
 
     def test_deletes_domain_namespaces_set(self, clean_redis):
         cfg = _make_config()
-        d = GPDCDomain("testdomain", cfg)
+        d = GPDCDomain(cfg, name="testdomain")
         d.ensure_namespace("ns1")
         ns_key = make_domain_namespaces_key("testdomain")
 
@@ -418,7 +482,7 @@ class TestDomainDestroy:
 
     def test_deletes_all_namespace_data(self, clean_redis):
         cfg = _make_config()
-        d = GPDCDomain("testdomain", cfg)
+        d = GPDCDomain(cfg, name="testdomain")
         ns = d.ensure_namespace("ns1")
         ns["x"] = 42
         ns["y"] = {"a": 1}
@@ -431,7 +495,7 @@ class TestDomainDestroy:
 
     def test_closes_domain(self, clean_redis):
         cfg = _make_config()
-        d = GPDCDomain("testdomain", cfg)
+        d = GPDCDomain(cfg, name="testdomain")
         assert not d._closed
 
         d.destroy()
@@ -442,7 +506,7 @@ class TestDomainDestroy:
 
     def test_multiple_namespaces_all_cleaned(self, clean_redis):
         cfg = _make_config()
-        d = GPDCDomain("testdomain", cfg)
+        d = GPDCDomain(cfg, name="testdomain")
         d.ensure_namespace("ns1")
         d.ensure_namespace("ns2")
         d.ensure_namespace("ns3")
@@ -495,13 +559,13 @@ class TestDomainClose:
             domain.run_gc()
 
     def test_context_manager_closes_domain(self, clean_redis, domain_config):
-        with GPDCDomain("testdomain", domain_config) as d:
+        with GPDCDomain(domain_config, name="testdomain") as d:
             _ = d.redis
         with pytest.raises(RuntimeError, match="closed"):
             _ = d.redis
 
     def test_del_auto_closes_with_warning(self, clean_redis, domain_config, caplog):
-        d = GPDCDomain("testdomain", domain_config)
+        d = GPDCDomain(domain_config, name="testdomain")
         assert not d._closed
         with caplog.at_level(logging.WARNING, logger="gpdatacached.domain"):
             del d
@@ -513,7 +577,7 @@ class TestDomainContextManager:
         from gpdatacached.domain import GPDCDomain
 
         domain_config.gc_enabled = True
-        with GPDCDomain("testdomain", domain_config) as domain:
+        with GPDCDomain(domain_config, name="testdomain") as domain:
             assert domain.name == "testdomain"
             ns = domain.ensure_namespace("testns")
             ns["x"] = 42
@@ -526,7 +590,7 @@ class TestDomainContextManager:
         domain_config.gc_enabled = True
         domain = None
         try:
-            with GPDCDomain("testdomain", domain_config) as d:
+            with GPDCDomain(domain_config, name="testdomain") as d:
                 domain = d
                 raise ValueError("test error")
         except ValueError:
@@ -557,12 +621,12 @@ class TestGPDCDomainGetNamespaceReadOnly:
 
 class TestDomainMetaRedisSource:
     def test_get_default_cache_mode_reads_from_redis(self, clean_redis, domain_config):
-        d = GPDCDomain("testdomain", domain_config)
+        d = GPDCDomain(domain_config, name="testdomain")
         assert d.get_default_cache_mode() == "permanent"
         d.close()
 
     def test_get_default_ttl_seconds_reads_from_redis(self, clean_redis, domain_config):
-        d = GPDCDomain("testdomain", domain_config)
+        d = GPDCDomain(domain_config, name="testdomain")
         assert d.get_default_ttl_seconds() == 0
         d.close()
 
@@ -575,7 +639,7 @@ class TestDomainMetaRedisSource:
             default_cache_mode="ttl",
             default_ttl_seconds=300,
         )
-        d1 = GPDCDomain("testdomain", cfg_ttl)
+        d1 = GPDCDomain(cfg_ttl, name="testdomain")
         assert d1.get_default_cache_mode() == "ttl"
         assert d1.get_default_ttl_seconds() == 300
         d1.close()
@@ -588,7 +652,7 @@ class TestDomainMetaRedisSource:
             default_cache_mode="permanent",
             default_ttl_seconds=0,
         )
-        d2 = GPDCDomain("testdomain", cfg_permanent)
+        d2 = GPDCDomain(cfg_permanent, name="testdomain")
         assert d2.get_default_cache_mode() == "ttl"
         assert d2.get_default_ttl_seconds() == 300
         d2.close()
@@ -602,7 +666,7 @@ class TestDomainMetaRedisSource:
             default_cache_mode="ttl",
             default_ttl_seconds=300,
         )
-        d1 = GPDCDomain("testdomain", cfg_ttl)
+        d1 = GPDCDomain(cfg_ttl, name="testdomain")
         ns1 = d1.ensure_namespace("myns")
         assert ns1._get_default_cache_mode() == "ttl"
         assert ns1._get_default_ttl_seconds() == 300
@@ -616,7 +680,7 @@ class TestDomainMetaRedisSource:
             default_cache_mode="permanent",
             default_ttl_seconds=0,
         )
-        d2 = GPDCDomain("testdomain", cfg_permanent)
+        d2 = GPDCDomain(cfg_permanent, name="testdomain")
         ns2 = d2.ensure_namespace("myns")
         assert ns2._get_default_cache_mode() == "ttl"
         assert ns2._get_default_ttl_seconds() == 300
@@ -628,7 +692,7 @@ class TestLockConfigConsistency:
         from gpdatacached.domain import GPDCDomain
         from gpdatacached.keys import make_domain_meta_key
 
-        d = GPDCDomain("consistency_test", domain_config)
+        d = GPDCDomain(domain_config, name="consistency_test")
         try:
             meta = clean_redis.hgetall(make_domain_meta_key("consistency_test"))
             assert meta["default_lock_ttl_seconds"] == "30"
@@ -641,10 +705,10 @@ class TestLockConfigConsistency:
     def test_same_config_succeeds(self, clean_redis, domain_config):
         from gpdatacached.domain import GPDCDomain
 
-        d1 = GPDCDomain("consistency_test", domain_config)
+        d1 = GPDCDomain(domain_config, name="consistency_test")
         d1.close()
         # Second open with same config must succeed.
-        d2 = GPDCDomain("consistency_test", domain_config)
+        d2 = GPDCDomain(domain_config, name="consistency_test")
         d2.close()
 
     def test_different_lock_config_raises(self, clean_redis, domain_config):
@@ -652,7 +716,7 @@ class TestLockConfigConsistency:
         from gpdatacached.config import GPDCDomainConfig
         from gpdatacached.exceptions import GPDCLockConfigInconsistentError
 
-        d1 = GPDCDomain("consistency_test", domain_config)
+        d1 = GPDCDomain(domain_config, name="consistency_test")
         d1.close()
 
         different = GPDCDomainConfig(
@@ -663,7 +727,7 @@ class TestLockConfigConsistency:
             default_lock_ttl_seconds=60,  # differs from default 30
         )
         with pytest.raises(GPDCLockConfigInconsistentError) as exc_info:
-            GPDCDomain("consistency_test", different)
+            GPDCDomain(different, name="consistency_test")
         msg = str(exc_info.value)
         assert "default_lock_ttl_seconds" in msg
         assert "redis='30'" in msg
@@ -684,7 +748,7 @@ class TestLockConfigConsistency:
             default_cache_mode="permanent",
             default_ttl_seconds=0,
         )
-        d1 = GPDCDomain("legacy_test", cfg1)
+        d1 = GPDCDomain(cfg1, name="legacy_test")
         d1.close()
 
         cfg2 = GPDCDomainConfig(
@@ -696,7 +760,7 @@ class TestLockConfigConsistency:
             default_ttl_seconds=3600,
         )
         # Must NOT raise — legacy fields are silent on mismatch.
-        d2 = GPDCDomain("legacy_test", cfg2)
+        d2 = GPDCDomain(cfg2, name="legacy_test")
         try:
             meta = raw_redis.hgetall(make_domain_meta_key("legacy_test"))
             # Legacy fields NOT overwritten (write-once semantics).
@@ -727,7 +791,7 @@ class TestGetLockConfigHelpers:
             gc_lock_ttl_seconds=77,
             gc_lock_wait_seconds=3,
         )
-        d = GPDCDomain("custom_lock_cfg", cfg)
+        d = GPDCDomain(cfg, name="custom_lock_cfg")
         try:
             assert d.get_default_lock_ttl_seconds() == 99
             assert d.get_default_lock_acquire_timeout_seconds() == 11
@@ -743,7 +807,7 @@ class TestResetDomainConfig:
         from gpdatacached.keys import make_domain_meta_key
 
         # First, populate meta with default config.
-        d = GPDCDomain("reset_test", domain_config)
+        d = GPDCDomain(domain_config, name="reset_test")
         d.close()
 
         # Verify lock fields exist.
@@ -766,7 +830,7 @@ class TestResetDomainConfig:
         from gpdatacached.config import GPDCDomainConfig
         from gpdatacached.domain import GPDCDomain, reset_domain_config
 
-        d = GPDCDomain("reset_test", domain_config)
+        d = GPDCDomain(domain_config, name="reset_test")
         d.close()
 
         reset_domain_config("reset_test", domain_config)
@@ -779,7 +843,7 @@ class TestResetDomainConfig:
             default_lock_ttl_seconds=120,
         )
         # Should succeed because reset cleared the old value.
-        d2 = GPDCDomain("reset_test", new_cfg)
+        d2 = GPDCDomain(new_cfg, name="reset_test")
         assert d2.get_default_lock_ttl_seconds() == 120
         d2.close()
 

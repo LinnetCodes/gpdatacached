@@ -1,0 +1,32 @@
+# Integration-test domain config: "edge_domain".
+#
+# Same shared default test Redis instance as core_domain and conftest.py.
+# Kept intentionally distinct from core_domain so integration tests can cover
+# multi-domain scenarios (two domains coexisting on the same Redis DB) and a
+# different mix of lifecycle / lock parameters:
+#   - edge_session : sliding cache mode (short 10m window, stresses refresh)
+#   - edge_blob    : permanent cache mode (default), large-object semantics
+#
+# Lock parameters are deliberately tuned smaller than core_domain's defaults so
+# tests that exercise contention/GC-recovery run on a faster cadence.
+cfg_class_name: GPDCDomainConfig
+configured_class_name: GPDCDomain
+redis_host: 127.0.0.1
+redis_port: 6379
+redis_db: 1
+redis_password: "123456"
+default_cache_mode: permanent
+default_ttl_seconds: 0
+gc_enabled: true
+gc_interval_seconds: 60
+default_lock_ttl_seconds: 10
+default_lock_acquire_timeout_seconds: 5
+gc_lock_ttl_seconds: 10
+gc_lock_wait_seconds: 2
+namespaces:
+  edge_session:
+    default_cache_mode: sliding
+    default_ttl_seconds: 600
+  edge_blob:
+    default_cache_mode: permanent
+    default_ttl_seconds: 0

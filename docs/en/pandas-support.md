@@ -21,6 +21,15 @@ Two corollaries:
 
 **Mutation is append-focused only.** Both `SeriesObject` and `DataFrameObject` support `extend(...)` for row appends. `DataFrameObject` additionally supports structural column add/replace/drop via `__setitem__` / `__delitem__`. There is **no cell-level** or in-place row mutation — for that, call `.value` and work on the local pandas object.
 
+!!! warning "Pandas objects are not navigable by GPDC URI path segments"
+
+    [`GPDataCache.get_object_by_uri`](./api.md#get_object_by_uri) resolves a bare `gpdc://d/ns/df_obj` (no path) to the `DataFrameObject` / `SeriesObject` itself, just like any other object. But it **cannot descend into** a pandas object via extra path segments:
+
+    - `DataFrameObject.__getitem__(col)` selects a column and returns a **plain `pd.Series`** (a native value, not a `GPDCDataObject`), so a URI terminating there raises `ObjectNotFoundByURIError` (`get_object_by_uri` returns objects, never values).
+    - `SeriesObject` has no `__getitem__` at all, so any segment beyond the root raises `ObjectNotFoundByURIError`.
+
+    To read subsets of a cached DataFrame/Series, use the online accessors (`.iloc`, `.loc`, `df[col]`) or `.value` on the object you fetched — not URI path segments.
+
 ---
 
 ## Scope at a Glance
@@ -60,7 +69,7 @@ from gpdatacached.extensions.pandas_support import register
 register()
 
 config = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_password="secret")
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 ns = domain.ensure_namespace("analytics")
 
 # ── Series ───────────────────────────────────────────────────────
@@ -94,7 +103,7 @@ domain.close()
 
 ---
 
-## Accessor Cost Guide
+## Accessor Cost Guide { #pandas-cost-guide }
 
 The online accessors exist only when they are meaningfully cheaper than `.value`. Use this table to decide. (For the broader performance picture across all of GPDC — sliding TTL, nesting, GC, locking — see the [Performance Guide](./performance-guide.md).)
 
@@ -105,7 +114,7 @@ The online accessors exist only when they are meaningfully cheaper than `.value`
 | `.loc[key]` | O(N), selective | depth-k prefix label scan; decodes only matched rows but reads every index level — **do not put in a hot loop** |
 | `df[col]` / `df[tuple]` | O(N), one column | (DataFrame) a single column as `pd.Series` |
 | `df[level0]` / `df[list]` | O(N_cols) + O(matches·N) | column-axis selection (cheap; few cols) |
-| `.value` | full restore | O(N) — the escape hatch |
+| `.value` | **full restore** (reads every column + every index level, rebuilds the whole frame — far heavier than selective `.loc` despite the same `O(N)` family) | the whole `pd.Series` / `pd.DataFrame`; the escape hatch |
 
 **Decision rule:**
 
@@ -122,6 +131,8 @@ class SeriesObject(GPDCContainerObject)
 
 GPDC type `collection:pandas_series`. Backed by a Redis hash storing the data list (anonymous `ListObject` child), optional per-level index lists, and scalar metadata (`dtype`, `name`, `index_kind`, `index_names`, `index_dtypes`, `range_*`, category metadata).
 
+> **Identity vs pandas label.** `SeriesObject` inherits `name` from `GPDCDataObject` — it returns the **namespace binding name** (the GPDC identity, consistent with `.uri`/`.canonical_name` and with `DataFrameObject`). The stored pandas `Series.name` is exposed as `series_name` (also reachable via `.value.name`).
+
 **Properties**
 
 | Property | Type | Description |
@@ -129,7 +140,8 @@ GPDC type `collection:pandas_series`. Backed by a Redis hash storing the data li
 | `value` | `pd.Series` | Full materialization as a plain `pd.Series`. The setter always raises — use mutation methods instead. |
 | `type` | `str` | `"collection:pandas_series"`. |
 | `dtype` | `str` | Stored value dtype string (e.g. `"int64"`, `"category"`). |
-| `name` | `Any` | Stored series name. |
+| `name` | `str` | Namespace binding name (inherited from `GPDCDataObject`; the identity contract shared with `.uri`/`.canonical_name`). |
+| `series_name` | `Any` | Stored pandas `Series.name` (the payload label). |
 | `index_names` | `tuple` | Index level names (always a tuple; one element for a flat index). |
 | `iloc` | `_ILocIndexer` | Positional row accessor (read-only). Supports `int` and `slice`; rejects list. |
 | `loc` | `_LocIndexer` | Label-based row accessor (read-only). Supports scalar / depth-k tuple prefix on a labelled/MultiIndex. Rejects `slice`, `list`, and any use on a `RangeIndex` with a `TypeError` pointing at `.value`. |

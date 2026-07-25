@@ -21,6 +21,15 @@ pip install "gpdatacached[pandas]"
 
 **变更仅以追加为主。** `SeriesObject` 与 `DataFrameObject` 均支持 `extend(...)` 进行行追加。`DataFrameObject` 另外支持通过 `__setitem__` / `__delitem__` 做结构性的列新增/替换/删除。**没有单元格级**或原地行变更能力 —— 如需此类操作，请调用 `.value` 在本地 pandas 对象上操作。
 
+!!! warning "pandas 对象无法通过 GPDC URI 路径分段导航"
+
+    [`GPDataCache.get_object_by_uri`](./api.md#get_object_by_uri) 可以把裸 `gpdc://d/ns/df_obj`（无路径）解析到 `DataFrameObject` / `SeriesObject` 自身，这与其他对象并无二致。但它**无法**通过额外的路径分段深入 pandas 对象：
+
+    - `DataFrameObject.__getitem__(col)` 会选取一列并返回一个**普通 `pd.Series`**（原生值，而非 `GPDCDataObject`），因此终止于此处的 URI 会抛出 `ObjectNotFoundByURIError`（`get_object_by_uri` 只返回对象，绝不返回值）。
+    - `SeriesObject` 根本没有 `__getitem__`，因此根对象之外的任何分段都会抛出 `ObjectNotFoundByURIError`。
+
+    若需读取已缓存 DataFrame/Series 的子集，请对你获取到的对象使用在线访问器（`.iloc`、`.loc`、`df[col]`）或 `.value` —— 而非 URI 路径分段。
+
 ---
 
 ## 支持范围概览
@@ -60,7 +69,7 @@ from gpdatacached.extensions.pandas_support import register
 register()
 
 config = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_password="secret")
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 ns = domain.ensure_namespace("analytics")
 
 # ── Series ───────────────────────────────────────────────────────
@@ -94,7 +103,7 @@ domain.close()
 
 ---
 
-## 访问器成本指南
+## 访问器成本指南 { #pandas-cost-guide }
 
 在线访问器存在的唯一理由是明显比 `.value` 更廉价。请依据下表选择。（GPDC 全库的性能图景 —— sliding TTL、嵌套、GC、加锁 —— 见[性能指南](./performance-guide.md)。）
 
@@ -105,7 +114,7 @@ domain.close()
 | `.loc[key]` | O(N)，选择性 | 深度 k 的前缀标签扫描；仅解码匹配的行，但会读取所有索引 level —— **不要放进热循环** |
 | `df[col]` / `df[tuple]` | O(N)，单列 | （DataFrame）单列，返回 `pd.Series` |
 | `df[level0]` / `df[list]` | O(N_cols) + O(匹配数·N) | 列轴选择（成本低；列数少） |
-| `.value` | 完整还原 | O(N) —— 最终退路 |
+| `.value` | **完整还原**（读取所有列 + 所有索引 level，重建整个 frame —— 尽管同属 `O(N)` 量级，但远比选择性 `.loc` 重的多） | 整个 `pd.Series` / `pd.DataFrame`；最终退路 |
 
 **决策规则：**
 
@@ -122,6 +131,8 @@ class SeriesObject(GPDCContainerObject)
 
 GPDC 类型 `collection:pandas_series`。底层是一个 Redis hash，存储数据列表（匿名 `ListObject` 子对象）、可选的每个 level 的索引列表，以及标量元信息（`dtype`、`name`、`index_kind`、`index_names`、`index_dtypes`、`range_*`、category 元信息）。
 
+> **身份 vs pandas 标签。** `SeriesObject` 继承自 `GPDCDataObject` 的 `name` 返回**命名空间绑定名**（GPDC 身份，与 `.uri`/`.canonical_name` 及 `DataFrameObject` 一致）。存储的 pandas `Series.name` 通过 `series_name` 暴露（也可经 `.value.name` 访问）。
+
 **属性**
 
 | 属性 | 类型 | 说明 |
@@ -129,7 +140,8 @@ GPDC 类型 `collection:pandas_series`。底层是一个 Redis hash，存储数�
 | `value` | `pd.Series` | 物化为普通 `pd.Series`。setter 永远抛错 —— 请使用变更方法。 |
 | `type` | `str` | `"collection:pandas_series"`。 |
 | `dtype` | `str` | 存储的值 dtype 字符串（如 `"int64"`、`"category"`）。 |
-| `name` | `Any` | 存储的 series 名称。 |
+| `name` | `str` | 命名空间绑定名（继承自 `GPDCDataObject`；与 `.uri`/`.canonical_name` 共享的身份契约）。 |
+| `series_name` | `Any` | 存储的 pandas `Series.name`（payload 标签）。 |
 | `index_names` | `tuple` | 索引 level 名（始终是元组；扁平索引为单元素）。 |
 | `iloc` | `_ILocIndexer` | 位置行访问器（只读）。支持 `int` 和 `slice`；拒绝 list。 |
 | `loc` | `_LocIndexer` | 基于标签的行访问器（只读）。在带标签/MultiIndex 上支持标量 / 深度 k 的元组前缀。拒绝 `slice`、`list`，以及对 `RangeIndex` 的任何使用，并以指向 `.value` 的 `TypeError` 提示。 |
