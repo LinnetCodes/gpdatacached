@@ -114,7 +114,7 @@ domain.close()
 | `.loc[key]` | O(N)，选择性 | 深度 k 的前缀标签扫描；仅解码匹配的行，但会读取所有索引 level —— **不要放进热循环** |
 | `df[col]` / `df[tuple]` | O(N)，单列 | （DataFrame）单列，返回 `pd.Series` |
 | `df[level0]` / `df[list]` | O(N_cols) + O(匹配数·N) | 列轴选择（成本低；列数少） |
-| `.value` | 完整还原 | O(N) —— 最终退路 |
+| `.value` | **完整还原**（读取所有列 + 所有索引 level，重建整个 frame —— 尽管同属 `O(N)` 量级，但远比选择性 `.loc` 重的多） | 整个 `pd.Series` / `pd.DataFrame`；最终退路 |
 
 **决策规则：**
 

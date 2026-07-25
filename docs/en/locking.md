@@ -90,7 +90,7 @@ The lock is released automatically when the `with` block exits, including on exc
 3. **Keep critical sections minimal.** Read → compute → write inside the lock; everything else (logging, validation of inputs, building the new value from unrelated data) outside.
 4. **Don't lock inside hot loops.** Either hoist the lock to wrap the whole loop, or pull the data local once via `.value`, work on it, and write the result back in one pass.
 5. **For multi-object operations, always acquire locks in ascending canonical-name order** (see [Acquiring multiple locks](#locking-multiple)). GPDC's own GC follows this rule.
-6. **If `gc_enabled=True`, every concurrent writer MUST lock** — there is no opt-out. See [GC interaction](#gc-interaction).
+6. **If `gc_enabled=True`, every concurrent writer MUST lock** — there is no opt-out. See [GC interaction](#locking-gc).
 7. **Size `ttl` to your worst-case critical section.** If the operation may legitimately run longer than the default `ttl`, pass it explicitly: `obj.lock(ttl=120)`. An operation that exceeds `ttl` silently loses the lock mid-flight.
 8. **Prefer `try_lock()` for opportunistic paths.** When you can defer or skip the work, `try_lock()` avoids blocking and lets the caller decide.
 9. **One logical operation = one lock acquisition.** Re-acquiring the same lock from the same process deadlocks (no reentrancy).
@@ -137,7 +137,7 @@ else:
 
 ---
 
-## GC interaction
+## GC interaction { #locking-gc }
 
 When `gc_enabled=True`, the background GC tries to lock each object it processes. If the lock cannot be acquired within `gc_lock_wait_seconds` (default 5s), GC skips that object in the current cycle. (For what GC cleans and when it runs, see [Lifecycle Management](./lifecycle.md#lifecycle-gc).)
 

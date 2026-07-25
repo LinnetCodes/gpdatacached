@@ -753,7 +753,23 @@ Validate that `name` contains only letters, digits, `.` or `_` and is not a rese
 
 ## Exceptions
 
-All public exceptions descend from a private `GPDCError(Exception)` base. Catch them individually for precise error handling.
+All public exceptions descend from the public `GPDCError(Exception)` root. Use `except GPDCError` to catch every gpdatacached error, or catch them individually for precise handling. The lock-acquisition errors additionally share a public `GPDCLockError` base — `except GPDCLockError` catches every lock-acquisition/ownership failure (currently `LockAcquisitionTimeout`).
+
+### `GPDCError`
+
+```python
+class GPDCError(Exception)
+```
+
+The root of the gpdatacached exception hierarchy. Every exception raised by this library is a subclass of `GPDCError`, so `except GPDCError` is the broad catch-all. Prefer catching the specific subclass when you need to distinguish failure modes.
+
+### `GPDCLockError`
+
+```python
+class GPDCLockError(GPDCError)
+```
+
+Base class for lock-acquisition/ownership errors. `except GPDCLockError` catches every lock-related failure (currently `LockAcquisitionTimeout`; `LockOwnershipError` also descends from it but is swallowed internally by `HeldLock.release()`).
 
 ### `ObjectGoneError`
 
@@ -785,7 +801,7 @@ Raised during encoding when a container references itself (directly or transitiv
 class LockAcquisitionTimeout(GPDCLockError)
 ```
 
-Raised when `obj.lock()` cannot acquire the lock within the configured `timeout`. Carries `.lock_key` and `.timeout`. See [Multi-Process Locking](./locking.md).
+Raised when `obj.lock()` cannot acquire the lock within the configured `timeout`. Carries `.lock_key` and `.timeout`. It extends the public `GPDCLockError` base, so `except GPDCLockError` catches it. See [Multi-Process Locking](./locking.md).
 
 ### `GPDCLockConfigInconsistentError`
 

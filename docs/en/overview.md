@@ -355,7 +355,7 @@ You can also run GC manually with `domain.run_gc(namespace=None)`.
 
 ### Opt-in by default
 
-GPdC is designed for **single-writer or low-contention** access. Per-command Redis operations are atomic, so most workloads need no locking. When you genuinely have multiple writers racing on the same object, you opt in with `obj.lock()`:
+GPDC is designed for **single-writer or low-contention** access. Per-command Redis operations are atomic, so most workloads need no locking. When you genuinely have multiple writers racing on the same object, you opt in with `obj.lock()`:
 
 ```python
 with ns.get_object("counter").lock():

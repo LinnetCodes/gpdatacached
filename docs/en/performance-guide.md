@@ -64,7 +64,7 @@ When a self-owned container in sliding mode is mutated, GPDC calls `refresh_ttl(
 2. Recursively descends every **owned child**: per child it does a `HGETALL` (to read that child's own policy) and re-applies its TTL to its keys.
 3. Returns only when the whole owned subtree has been walked.
 
-So the cost of **one** `append` on a sliding list that owns 1000 anonymous children is **thousands** of Redis round-trips — a `HGETALL` + TTL re-apply per owned child (each step is an individual round-trip; this path is not pipelined, unlike `persist()`/`update_cache_mode_and_ttl()` which batch one pipeline per tree level). In a frequent-write loop this multiplies your apparent write cost by the subtree size.
+So the cost of **one** `append` on a sliding list that owns 1000 anonymous children is **thousands** of Redis round-trips — a `HGETALL` per owned child (to read that child's own policy) is an individual round-trip. The subsequent TTL re-applies are batched into one pipeline per tree level (same as `persist()`/`update_cache_mode_and_ttl()`), but the per-child `HGETALL` to load each policy is not — that is the load-bearing cost. In a frequent-write loop this multiplies your apparent write cost by the subtree size.
 
 ```mermaid
 graph TD

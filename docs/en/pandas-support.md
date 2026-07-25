@@ -114,7 +114,7 @@ The online accessors exist only when they are meaningfully cheaper than `.value`
 | `.loc[key]` | O(N), selective | depth-k prefix label scan; decodes only matched rows but reads every index level — **do not put in a hot loop** |
 | `df[col]` / `df[tuple]` | O(N), one column | (DataFrame) a single column as `pd.Series` |
 | `df[level0]` / `df[list]` | O(N_cols) + O(matches·N) | column-axis selection (cheap; few cols) |
-| `.value` | full restore | O(N) — the escape hatch |
+| `.value` | **full restore** (reads every column + every index level, rebuilds the whole frame — far heavier than selective `.loc` despite the same `O(N)` family) | the whole `pd.Series` / `pd.DataFrame`; the escape hatch |
 
 **Decision rule:**
 

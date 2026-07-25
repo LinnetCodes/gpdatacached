@@ -711,7 +711,23 @@ def validate_object_name(name: str) -> None
 
 ## 异常
 
-所有公开异常都派生自一个私有的 `GPDCError(Exception)` 基类。请按需逐个捕获以获得精确的错误处理。
+所有公开异常都派生自公开的 `GPDCError(Exception)` 根基类。用 `except GPDCError` 可捕获所有 gpdatacached 错误，或按需逐个捕获以获得精确处理。锁相关的错误额外共享一个公开的 `GPDCLockError` 基类 —— `except GPDCLockError` 可捕获所有锁获取/持有相关的失败（当前为 `LockAcquisitionTimeout`）。
+
+### `GPDCError`
+
+```python
+class GPDCError(Exception)
+```
+
+gpdatacached 异常层次的根基类。本库抛出的每一个异常都是 `GPDCError` 的子类，因此 `except GPDCError` 是最宽泛的全捕获。当你需要区分不同失败模式时，优先捕获具体的子类。
+
+### `GPDCLockError`
+
+```python
+class GPDCLockError(GPDCError)
+```
+
+锁获取/持有相关错误的基类。`except GPDCLockError` 可捕获所有锁相关失败（当前为 `LockAcquisitionTimeout`；`LockOwnershipError` 同样继承自它，但在内部被 `HeldLock.release()` 吞掉）。
 
 ### `ObjectGoneError`
 
@@ -743,7 +759,7 @@ class CyclicReferenceError(GPDCError)
 class LockAcquisitionTimeout(GPDCLockError)
 ```
 
-当 `obj.lock()` 在配置的 `timeout` 内未能获取到锁时抛出。携带 `.lock_key` 和 `.timeout`。详见[多进程加锁](./locking.md)。
+当 `obj.lock()` 在配置的 `timeout` 内未能获取到锁时抛出。携带 `.lock_key` 和 `.timeout`。它继承公开的 `GPDCLockError` 基类，因此 `except GPDCLockError` 可捕获它。详见[多进程加锁](./locking.md)。
 
 ### `GPDCLockConfigInconsistentError`
 
