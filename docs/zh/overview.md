@@ -254,7 +254,7 @@ ns["named"] = ns.get_object("parent")["inner"]
 ns.get_object("named").take_ownership()    # 该 ~anon:… 现在拥有自己；"parent" 不受影响
 ```
 
-此后匿名对象携带自己的策略（例如可以给它设独立于父对象的 TTL）。对**命名**（已自持）对象的引用，`take_ownership()` 是一个正确的 no-op。完整语义见[生命周期管理 §7](./lifecycle.md#7-ownership所有者模型)。
+此后匿名对象携带自己的策略（例如可以给它设独立于父对象的 TTL）。对**命名**（已自持）对象的引用，`take_ownership()` 是一个正确的 no-op。完整语义见[生命周期管理 §7](./lifecycle.md#7-the-ownership-model)。
 
 ### 为什么禁止跨 namespace 引用？
 

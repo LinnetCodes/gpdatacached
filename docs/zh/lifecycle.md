@@ -167,7 +167,7 @@ graph TD
 | `persist()` | 切换为 `permanent` 且 `ttl=0`。 | 仅 owner。 |
 | `update_cache_mode_and_ttl(mode, ttl)` | 用 `(mode, ttl)` 替换整个策略。 | 仅 owner。 |
 
-四个策略变更方法（`expire_in`、`expire_at`、`persist`、`update_cache_mode_and_ttl`）在权限检查（见 [§7](#7-ownership)）后都委托给 `set_lifecycle(policy)`。`expire_now()` 是明确的"立即删除"入口 —— 它委托给 `del ns[canonical_name]`（完整拆卸），而非 `set_lifecycle`。
+四个策略变更方法（`expire_in`、`expire_at`、`persist`、`update_cache_mode_and_ttl`）在权限检查（见 [§7](#7-the-ownership-model)）后都委托给 `set_lifecycle(policy)`。`expire_now()` 是明确的"立即删除"入口 —— 它委托给 `del ns[canonical_name]`（完整拆卸），而非 `set_lifecycle`。
 
 ### 级联传播
 
@@ -194,7 +194,7 @@ graph TD
 
 ---
 
-## 7. Ownership（所有者）模型
+## 7. The Ownership Model
 
 每个对象在元信息中有一个 `owner` 字段。所有权决定谁能控制对象的生命周期，也是匿名对象运作的核心。
 
@@ -311,7 +311,7 @@ ns["alias"] = ns["original"]   # 两个名字现在都解析到同一份 canonic
 
 ### 引用绑定自身的生命周期
 
-引用的 `obj:alias` key **没有应用 TTL**；它会一直存在，直到被显式删除。在引用上调用的生命周期变更方法作用于 **canonical owner**，而非别名绑定 —— 使用 `take_ownership()`（见 [§7](#7-ownership)）可以把**被引用对象**提升为自持，从而携带自己的策略。
+引用的 `obj:alias` key **没有应用 TTL**；它会一直存在，直到被显式删除。在引用上调用的生命周期变更方法作用于 **canonical owner**，而非别名绑定 —— 使用 `take_ownership()`（见 [§7](#7-the-ownership-model)）可以把**被引用对象**提升为自持，从而携带自己的策略。
 
 ---
 
