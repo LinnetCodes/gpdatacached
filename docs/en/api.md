@@ -312,16 +312,18 @@ domains use [`GPDCDomain`](#gpdcdomain) directly.
 
 **Dunder protocols**
 
-- `name in cache` → `True` iff a config named `name` exists in the folder (a pure config-snapshot check — does **not** touch Redis, does not construct a domain).
+- `name in cache` → `True` iff a config named `name` exists in the folder. This is a pure config-snapshot check: it does **not** touch Redis and does not construct (or require) a `GPDCDomain` instance — the answer depends only on whether the config file is present, not on whether `get_domain(name)` has been called. The domain instance is created lazily on first `get_domain(name)` access.
 - `with cache as c` / `__exit__` → closes every cached domain on exit; `close()` is idempotent.
+
+> **`close()` behaviour — the membership exception.** After `cache.close()`, the resource-touching methods (`get_domain`, `get_object_by_uri`, `has_uri`) raise `RuntimeError("GPDataCache is closed")`. The `name in cache` membership check is the **deliberate exception**: because it only reads the config snapshot and touches no resources, it keeps working after `close()`. This is intentional — "does a config for this domain exist?" is meaningful regardless of whether the cache is open.
 
 **Methods**
 
 | Method | Description |
 |---|---|
-| `get_domain(name)` | Return the cached `GPDCDomain` for `name`, constructing it lazily on first access. Propagates gpconfig's `ConfigNotFoundError` if no config exists for `name`. |
-| [`get_object_by_uri(uri)`](#get_object_by_uri) | Resolve a GPDC URI to a `GPDCDataObject`. |
-| `has_uri(uri)` | Return `True` iff `get_object_by_uri(uri)` would succeed. |
+| `get_domain(name)` | Return the cached `GPDCDomain` for `name`, constructing it lazily on first access. Propagates gpconfig's `ConfigNotFoundError` if no config exists for `name`. Raises `RuntimeError` after `close()`. |
+| [`get_object_by_uri(uri)`](#get_object_by_uri) | Resolve a GPDC URI to a `GPDCDataObject`. Raises `RuntimeError` after `close()`. |
+| `has_uri(uri)` | Return `True` iff `get_object_by_uri(uri)` would succeed. Raises `RuntimeError` after `close()`. |
 | `close()` | Close every cached domain. Idempotent. |
 
 ---

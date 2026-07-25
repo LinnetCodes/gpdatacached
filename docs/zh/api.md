@@ -294,16 +294,18 @@ class GPDataCache(folder: gpconfig.GPConfigFolder)   # 上下文管理器
 
 **支持的协议方法**
 
-- `name in cache` → 文件夹中存在名为 `name` 的配置时为 `True`（纯配置快照检查 —— **不**触碰 Redis，也不会构造 domain）。
+- `name in cache` → 文件夹中存在名为 `name` 的配置时为 `True`。这是纯配置快照检查：**不**触碰 Redis，也不构造（或要求存在）`GPDCDomain` 实例 —— 答案只取决于配置文件是否存在，与是否调用过 `get_domain(name)` 无关。domain 实例在首次 `get_domain(name)` 访问时惰性创建。
 - `with cache as c` / `__exit__` → 退出时关闭所有已缓存的 domain；`close()` 是幂等的。
+
+> **`close()` 后的行为 —— 成员检查的例外。** `cache.close()` 之后，触碰资源的方法（`get_domain`、`get_object_by_uri`、`has_uri`）会抛 `RuntimeError("GPDataCache is closed")`。`name in cache` 成员检查是**故意的例外**：因为它只读配置快照、不触碰任何资源，所以在 `close()` 后仍然可用。这是有意为之 —— "这个 domain 是否有配置？" 这个问题与 cache 是否打开无关。
 
 **方法**
 
 | 方法 | 说明 |
 |---|---|
-| `get_domain(name)` | 返回 `name` 对应的已缓存 `GPDCDomain`，首次访问时惰性构造。若 `name` 无对应配置，则抛出 gpconfig 的 `ConfigNotFoundError`。 |
-| [`get_object_by_uri(uri)`](#get_object_by_uri) | 将 GPDC URI 解析为 `GPDCDataObject`。 |
-| `has_uri(uri)` | 当 `get_object_by_uri(uri)` 会成功时返回 `True`。 |
+| `get_domain(name)` | 返回 `name` 对应的已缓存 `GPDCDomain`，首次访问时惰性构造。若 `name` 无对应配置，则抛出 gpconfig 的 `ConfigNotFoundError`。`close()` 后抛 `RuntimeError`。 |
+| [`get_object_by_uri(uri)`](#get_object_by_uri) | 将 GPDC URI 解析为 `GPDCDataObject`。`close()` 后抛 `RuntimeError`。 |
+| `has_uri(uri)` | 当 `get_object_by_uri(uri)` 会成功时返回 `True`。`close()` 后抛 `RuntimeError`。 |
 | `close()` | 关闭所有已缓存的 domain。幂等。 |
 
 ---

@@ -370,3 +370,57 @@ class TestCrossDomainIntegration:
 
         with pytest.raises(ConfigNotFoundError):
             data_cache.get_domain("no_such_domain")
+
+
+class TestGPDataCacheContainsContract:
+    """CQR-2026-07-24 inconsistency.03: pin the documented `__contains__` semantics
+    (a pure config-snapshot check — independent of instance creation AND of close())
+    and the close() behaviour of the resource-touching methods. No code change —
+    the existing behaviour is the intended design; these tests pin it."""
+
+    def test_contains_reflects_config_not_instance(self, data_cache):
+        # __contains__ is True for a configured domain BEFORE any instance exists.
+        data_cache._domains.clear()  # ensure no instance cached
+        assert "core_domain" not in data_cache._domains
+        assert "core_domain" in data_cache
+
+    def test_contains_unchanged_after_instance_created(self, data_cache):
+        assert "core_domain" in data_cache
+        data_cache.get_domain("core_domain")  # forces lazy construction
+        assert "core_domain" in data_cache  # still True
+
+    def test_contains_false_for_missing_config(self, data_cache):
+        assert "no_such_domain" not in data_cache
+
+    def test_lazy_get_domain_creates_and_caches_instance(self, data_cache):
+        data_cache._domains.clear()
+        d1 = data_cache.get_domain("core_domain")
+        d2 = data_cache.get_domain("core_domain")
+        assert d1 is d2  # second access returns the same cached instance
+
+    def test_contains_works_after_close(self, gpdc_config_folder, clean_redis):
+        # The deliberate exception: membership is a config-snapshot check and
+        # touches no resources, so it remains valid after close().
+        from gpdatacached.data_cache import GPDataCache
+
+        cache = GPDataCache(gpdc_config_folder)
+        cache.get_domain("core_domain")
+        assert "core_domain" in cache
+        cache.close()
+        assert "core_domain" in cache  # still works — config snapshot, not resources
+
+    def test_resource_methods_raise_after_close(self, gpdc_config_folder, clean_redis):
+        # The resource-touching methods all raise RuntimeError after close(),
+        # in contrast to __contains__ (the documented exception).
+        from gpdatacached.data_cache import GPDataCache
+
+        cache = GPDataCache(gpdc_config_folder)
+        cache.get_domain("core_domain")
+        cache.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            cache.get_domain("core_domain")
+        with pytest.raises(RuntimeError, match="closed"):
+            cache.get_object_by_uri("gpdc://core_domain/core_app/x")
+        with pytest.raises(RuntimeError, match="closed"):
+            cache.has_uri("gpdc://core_domain/core_app/x")
+
