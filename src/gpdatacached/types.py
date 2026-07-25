@@ -13,11 +13,19 @@ if TYPE_CHECKING:
 
 from .keys import make_object_key, make_raw_key, make_ref_key, parse_ref_encoded
 from .object import GPDCDataObject
-from .refset import add_referrer
+from .refset import add_referrer, release_ref
 
 
 _encode_memo_var: contextvars.ContextVar[dict[int, tuple[str, str | None]] | None] = contextvars.ContextVar(
     "_encode_memo", default=None
+)
+
+# Tracks (ref_key, referrer_name) pairs for add_referrer calls made on
+# PRE-EXISTING containers during an encode session, so a failed session can
+# reverse them (CQR-2026-07-24 logic.01 side-effect (b): phantom referrer).
+# Nested sessions inherit the active list (None -> create a new one).
+_ref_increments_var: contextvars.ContextVar[list[tuple[str, str]] | None] = contextvars.ContextVar(
+    "_ref_increments", default=None
 )
 
 
@@ -33,18 +41,26 @@ def encode_session(namespace: GPDCNamespace | None = None):
 
     If ``namespace`` is provided, any anonymous objects created during the
     session are rolled back (deleted from Redis) when an exception propagates
-    out of the session.
+    out of the session, AND any ``add_referrer`` bumps made on pre-existing
+    containers (via referencing them from an encoded value) are reversed — so
+    a failed multi-element encode leaves Redis untouched (CQR-2026-07-24
+    logic.01).
     """
     memo: dict[int, tuple[str, str | None]] = {}
     token = _encode_memo_var.set(memo)
+    # Inherit an outer session's ref-increment list if nested; else start one.
+    outer_refs = _ref_increments_var.get()
+    ref_increments: list[tuple[str, str]] = outer_refs if outer_refs is not None else []
+    ref_token = _ref_increments_var.set(ref_increments)
     ok = False
     try:
         yield
         ok = True
     finally:
         _encode_memo_var.reset(token)
+        _ref_increments_var.reset(ref_token)
         if not ok and namespace is not None:
-            _rollback_encode_memo(namespace, memo)
+            _rollback_encode_memo(namespace, memo, ref_increments)
 
 
 @dataclass(frozen=True)
@@ -162,8 +178,17 @@ def _add_alias_ref(namespace: GPDCNamespace, ref_val: str, owner_name: str) -> N
     add_referrer(namespace._redis(), ref_key, owner_name)
 
 
-def _rollback_encode_memo(namespace: GPDCNamespace, memo: dict[int, tuple[str, str | None]]) -> None:
-    """Delete all anonymous objects created during a failed encode session."""
+def _rollback_encode_memo(
+    namespace: GPDCNamespace,
+    memo: dict[int, tuple[str, str | None]],
+    ref_increments: list[tuple[str, str]] | None = None,
+) -> None:
+    """Reverse the side effects of a failed encode session.
+
+    Deletes all anonymous objects created during the session (existing
+    behaviour), AND reverses any ``add_referrer`` bumps made on pre-existing
+    containers (CQR-2026-07-24 logic.01 side-effect (b): phantom referrer).
+    """
     r = namespace._redis()
     for state, ref_val in memo.values():
         if state != "complete" or not ref_val:
@@ -175,6 +200,11 @@ def _rollback_encode_memo(namespace: GPDCNamespace, memo: dict[int, tuple[str, s
         raw_key = make_raw_key(namespace.domain.name, namespace.name, anon_name)
         ref_key = make_ref_key(namespace.domain.name, namespace.name, anon_name)
         r.delete(obj_key, raw_key, ref_key)
+    # Reverse add_referrer bumps on pre-existing containers so a failed encode
+    # does not leave phantom referrers that block cascade-deletion (logic.01).
+    if ref_increments:
+        for ref_key, referrer_name in ref_increments:
+            release_ref(r, ref_key, referrer_name)
 
 
 def _decode_scalar(encoded: str) -> object:
@@ -220,6 +250,11 @@ def _ref_existing_container(
     obj_key = make_object_key(namespace.domain.name, namespace.name, owner_name)
     ref_key = make_ref_key(namespace.domain.name, namespace.name, owner_name)
     add_referrer(namespace._redis(), ref_key, parent_name)
+    # Record this increment so a failing encode session can reverse it
+    # (logic.01: avoid leaving a phantom referrer on a pre-existing container).
+    active = _ref_increments_var.get()
+    if active is not None:
+        active.append((ref_key, parent_name))
     return f"ref:{obj_key}"
 
 

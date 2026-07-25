@@ -80,7 +80,7 @@ graph TD
 
 ### 优先级规则
 
-注册表按 **`priority` 降序**遍历条目，返回第一个其 `python_type` 能通过 `isinstance` 匹配 `value` 的条目。这一点在你自定义的类型**子类化了某个已注册类型**时至关重要。内建类型就依赖它：`bool` 以 `priority=10` 注册，`int` 以 `priority=0` 注册，因此 `True` 会优先命中 `bool`（否则会被错误地路由到 `int`，因为 `bool` 是 `int` 的子类）。见 [§8](#8)。
+注册表按 **`priority` 降序**遍历条目，返回第一个其 `python_type` 能通过 `isinstance` 匹配 `value` 的条目。这一点在你自定义的类型**子类化了某个已注册类型**时至关重要。内建类型就依赖它：`bool` 以 `priority=10` 注册，`int` 以 `priority=0` 注册，因此 `True` 会优先命中 `bool`（否则会被错误地路由到 `int`，因为 `bool` 是 `int` 的子类）。见 [§8](#extend-priority)。
 
 ---
 
@@ -194,7 +194,14 @@ class MyObject(GPDCScalarObject):
 - 所混入 ABC 的全部抽象方法（`__getitem__`、`__setitem__`、`__delitem__`、`__len__`、`__iter__`、`insert` …）。
 - 一个 `deepcopy()` 方法。
 
-你继承 `_touch()`、引用追踪辅助（`_release_element_ref`、`_data_owner_name`、`referrers()`）以及 encode/decode 辅助 —— 它们是 [§11](#11) 的积木。
+你继承 `_touch()`、引用追踪辅助（`_release_element_ref`、`_data_owner_name`、`referrers()`）以及 encode/decode 辅助 —— 它们是 [§11](#extend-mutation-hooks) 的积木。
+
+!!! note "你的 `__getitem__` 还有第二个调用者：URI 遍历"
+
+    [`GPDataCache.get_object_by_uri`](./api.md#get_object_by_uri) 会通过 `__getitem__` 逐段深入一个容器。对自定义容器而言有两点影响：
+
+    - 遍历只对 `ListObject` 把分段**强转**为 `int`；其他所有容器收到的都是原始的**字符串**分段。如果你的容器需要非字符串 key，它就无法通过 URI 路径分段到达（分段会以字符串形式到达）。
+    - 遍历返回的是**对象，绝不是值**。如果你的 `__getitem__` 返回原生 Python 值（正如内建 `DictObject`/`ListObject` 对标量元素所做的那样），那么终止于此处的 URI 会抛出 `ObjectNotFoundByURIError`。这是有意为之 —— 与 `__getitem__` 对标量元素返回原生值的行为保持一致。
 
 ---
 
@@ -286,7 +293,7 @@ GPDCTypeRegistry.register(
     priority=0,
 )
 
-domain = GPDCDomain("app", GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379))
+domain = GPDCDomain(GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379), name="app")
 ns = domain.ensure_namespace("ui")
 
 ns["background"] = Color(10, 20, 30)
@@ -302,7 +309,7 @@ ns.get_object("background").update_cache_mode_and_ttl("ttl", 60)  # 生命周期
 
 ---
 
-## 8. 优先级的实际用法：子类关系
+## 8. 优先级的实际用法：子类关系 { #extend-priority }
 
 注册表通过 `isinstance` 匹配，并按 `priority` 降序排序。每当你的类型**子类化了某个已注册类型**时，这一点都**至关重要**。
 
@@ -341,7 +348,7 @@ GPDCTypeRegistry.register(
 from collections import Counter
 ```
 
-`Counter` 是 `dict` 的子类 —— 因此我们需要 `priority > 0` 才能在 `dict` 之前被匹配（见 [§8](#8)）。
+`Counter` 是 `dict` 的子类 —— 因此我们需要 `priority > 0` 才能在 `dict` 之前被匹配（见 [§8](#extend-priority)）。
 
 ### 第 2 步 —— codec
 
@@ -453,7 +460,7 @@ GPDCTypeRegistry.register(
     priority=10,          # Counter 是 dict 子类 → 必须压过 dict（priority 0）
 )
 
-domain = GPDCDomain("counterapp", GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379))
+domain = GPDCDomain(GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379), name="counterapp")
 ns = domain.ensure_namespace("words")
 
 ns["word_counts"] = Counter({"hello": 3, "world": 1})
@@ -477,9 +484,9 @@ assert "world" not in counts
 | `encode_key(value)` / `decode_key(encoded)` | 可哈希标量元素（dict 键、set 成员、本例 Counter 的成员） | 始终是 `prefix:payload` 字符串；拒绝容器和空元组 |
 | `encode_element(value, namespace, owner_name, policy)` / `decode_element(encoded, namespace)` | 元素**既可能**是标量**也可能**是容器 | 一个标量编码字符串，**或**一个解析为活跃 `GPDCContainerObject` 的 `ref:{obj_key}` 指针 |
 
-例如，内建 `DictCodec` 对键（始终标量）使用 `encode_key`，但对值（可能是嵌套 list/dict/set）使用 `encode_element`。内建 `ListCodec` 对每个元素都用 `encode_element`。当你移除或覆盖一个后来发现是 `ref:` 指针的元素时，必须调用 `self._release_element_ref(old_encoded)`，以便递减匿名子对象的引用者计数（并在最后一个引用者消失时级联删除） —— 见 [§11](#11)。
+例如，内建 `DictCodec` 对键（始终标量）使用 `encode_key`，但对值（可能是嵌套 list/dict/set）使用 `encode_element`。内建 `ListCodec` 对每个元素都用 `encode_element`。当你移除或覆盖一个后来发现是 `ref:` 指针的元素时，必须调用 `self._release_element_ref(old_encoded)`，以便递减匿名子对象的引用者计数（并在最后一个引用者消失时级联删除） —— 见 [§11](#extend-mutation-hooks)。
 
-当 `create_raw` 在一次调用中编码**多个兄弟元素**时，请用 **`encode_session`** 上下文管理器包裹编码循环。它提供循环检测与原子回滚：编码中途失败时，会删除本次调用期间创建的所有匿名对象，让 Redis 保持原样：
+当 `create_raw` 在一次调用中编码**多个兄弟元素**时，请用 **`encode_session`** 上下文管理器包裹编码循环。它提供循环检测与回滚：编码中途失败时，会删除本次调用期间创建的所有匿名对象，并逆转其对既有容器所做的引用计数增量——编码路径的写入会被还原。（注意：`encode_session` 只管辖编码路径本身。如果你的 `create_raw` 在编码之前有任何写入——例如 pandas 在追加流水线之前提交的 RangeIndex→levels 索引表示提升——这些不在会话覆盖范围内，失败时仍保持已提交。请把编码前的写入排除在会话之外，或者接受失败的追加可能留下一个仅表示层面的变更。）
 
 ```python
 from gpdatacached.types import encode_element, encode_session
@@ -497,11 +504,11 @@ def create_raw(cls, namespace, raw_key, value, owner_name, cache_mode, ttl):
 
 > 完整参考可研读 `src/gpdatacached/builtins/list_object.py` 与 `dict_object.py` —— 它们展示了针对嵌套容器型容器的完整 encode/decode/release 模式。
 
-> ⚠️ **性能提示。** 每个嵌套容器都会成为独立的匿名对象，拥有自己的 key、引用追踪与 TTL。深嵌套会在存储、读取、sliding 刷新、级联删除上叠加此代价。何时该扁平化，见[性能指南 §4](./performance-guide.md#4)。
+> ⚠️ **性能提示。** 每个嵌套容器都会成为独立的匿名对象，拥有自己的 key、引用追踪与 TTL。深嵌套会在存储、读取、sliding 刷新、级联删除上叠加此代价。何时该扁平化，见[性能指南 §4](./performance-guide.md#perf-nesting)。
 
 ---
 
-## 11. 每个容器都必须调用的变更钩子
+## 11. 每个容器都必须调用的变更钩子 { #extend-mutation-hooks }
 
 实现容器对象时，每一个变更 Redis 的方法都必须遵守三个钩子。漏掉任何一个都会产生微妙 bug（TTL 过期不刷新、匿名子对象泄漏、更新时间戳错误）。
 

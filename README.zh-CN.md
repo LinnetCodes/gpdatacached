@@ -22,6 +22,7 @@
 - **生命周期控制** —— 每个对象可设置 `permanent` / `ttl` / `sliding`（滑动窗口）缓存模式，并将策略级联传播到所拥有的子树。
 - **后台 GC** —— 自动回收过期或成为孤儿的匿名对象。
 - **可选的分布式锁** —— 通过 `obj.lock()` 在多进程间串行化写入。
+- **基于 URI 的访问** —— 通过 `GPDataCache` 从配置管理多个 domain，并将 `gpdc://{domain}/{namespace}/{name}` 形式的 URI 解析为数据对象，包括对匿名嵌套容器的遍历。
 - **可选扩展** —— 可缓存 [pydantic](https://docs.pydantic.dev/) `BaseModel` 记录与 [pandas](https://pandas.pydata.org/) `Series` / `DataFrame`（见[扩展](#扩展)）。
 
 ---
@@ -52,7 +53,7 @@ config = GPDCDomainConfig(
     redis_port=6379,
     redis_password="secret",
 )
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 ns = domain.ensure_namespace("analytics")
 
 # 标量读取出来是原生 Python 值。
@@ -92,21 +93,21 @@ GPDCDomain ── GPDCNamespace ── GPDCDataObject (标量 | 容器)
 
 ## 文档
 
-📖 **[完整文档索引](./docs/zh-CN/index.md)** —— 以下所有指南与参考的入口。
+📖 **[完整文档索引](./docs/zh/index.md)** —— 以下所有指南与参考的入口。
 
-- **[总体概览](./docs/zh-CN/overview.md)** —— 设计目的、设计理念与端到端整体架构（从这里开始，从整体上理解本库）。
-- **[API 参考](./docs/zh-CN/api.md)** —— 完整的公共 API 参考。
-- **[生命周期管理](./docs/zh-CN/lifecycle.md)** —— 对象的创建、过期、刷新与删除如何运作，含匿名对象与引用对象（阅读本文以建立合理预期）。
-- **[可扩展性](./docs/zh-CN/extensibility.md)** —— 类型系统详解，含添加自定义标量与容器类型的完整示例（codec、对象类、注册）。
-- **[性能指南](./docs/zh-CN/performance-guide.md)** —— 会拖累性能的用法（滥用 sliding TTL、过深嵌套、不必要地启用 GC/加锁）及其推荐替代。把 GPDC 放上热路径前必读。
-- **[多进程加锁](./docs/zh-CN/locking.md)** —— 何时需要加锁、性能影响、推荐用法、避免死锁的顺序以及与 GC 的交互。
+- **[总体概览](./docs/zh/overview.md)** —— 设计目的、设计理念与端到端整体架构（从这里开始，从整体上理解本库）。
+- **[API 参考](./docs/zh/api.md)** —— 完整的公共 API 参考。
+- **[生命周期管理](./docs/zh/lifecycle.md)** —— 对象的创建、过期、刷新与删除如何运作，含匿名对象与引用对象（阅读本文以建立合理预期）。
+- **[可扩展性](./docs/zh/extensibility.md)** —— 类型系统详解，含添加自定义标量与容器类型的完整示例（codec、对象类、注册）。
+- **[性能指南](./docs/zh/performance-guide.md)** —— 会拖累性能的用法（滥用 sliding TTL、过深嵌套、不必要地启用 GC/加锁）及其推荐替代。把 GPDC 放上热路径前必读。
+- **[多进程加锁](./docs/zh/locking.md)** —— 何时需要加锁、性能影响、推荐用法、避免死锁的顺序以及与 GC 的交互。
 
 ## 扩展
 
 `gpdatacached.extensions` 下的可选内建扩展：
 
-- **[Pydantic 支持](./docs/zh-CN/pydantic-support.md)** —— 缓存 pydantic `BaseModel` 记录。两种存储模式：标量模式（原子 JSON，适用于纯标量模型）和容器模式（Redis hash，适用于需要字段级访问或嵌套 `list`/`dict`/`set` 字段的模型）。pydantic 是核心依赖，无需额外安装。
-- **[Pandas 支持](./docs/zh-CN/pandas-support.md)** —— 将 pandas `Series` / `DataFrame` 缓存为活跃对象。在线选择性访问器（`.iloc`、`.loc`、`df[col]`）用于一次性子集读取；`.value` 用于完整还原；`extend` 用于追加。需要 `pip install "gpdatacached[pandas]"`。
+- **[Pydantic 支持](./docs/zh/pydantic-support.md)** —— 缓存 pydantic `BaseModel` 记录。两种存储模式：标量模式（原子 JSON，适用于纯标量模型）和容器模式（Redis hash，适用于需要字段级访问或嵌套 `list`/`dict`/`set` 字段的模型）。pydantic 是核心依赖，无需额外安装。
+- **[Pandas 支持](./docs/zh/pandas-support.md)** —— 将 pandas `Series` / `DataFrame` 缓存为活跃对象。在线选择性访问器（`.iloc`、`.loc`、`df[col]`）用于一次性子集读取；`.value` 用于完整还原；`extend` 用于追加。需要 `pip install "gpdatacached[pandas]"`。
 
 ---
 

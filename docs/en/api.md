@@ -44,7 +44,7 @@ GPDCDomain  ──┬── GPDCNamespace ──┬── GPDCDataObject (scalar
 
 ---
 
-## Quick Start
+## Quick Start { #api-quick-start }
 
 ```python
 import gpdatacached
@@ -57,7 +57,7 @@ config = GPDCDomainConfig(
     redis_db=0,
     redis_password="secret",
 )
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 
 # 2. Get or create a namespace.
 ns = domain.ensure_namespace("analytics")
@@ -90,12 +90,49 @@ domain.close()
 
 ---
 
+## Managing Domains via Configuration: `GPDataCache`
+
+When your application drives many domains from configuration files managed by
+[`gpconfig`](https://github.com/linnetcodes/gpconfig), `GPDataCache` is the
+higher-level entry point. It holds a `GPConfigFolder`, lazily constructs and
+caches `GPDCDomain` instances from it, and resolves GPDC URIs to data objects.
+
+```python
+from gpconfig import GPConfigManager
+import gpdatacached                                       # registers GPDCDomain with gpconfig
+from gpdatacached import GPDataCache
+
+# 1. Build a GPConfigFolder for the "gpdc" subfolder of your config folder.
+mgr = GPConfigManager("myproject", cfg_folder="/path/to/configs")
+folder = mgr.get_config("gpdc")        # -> GPConfigFolder; sample layouts in tests/configs/gpdc
+
+# 2. GPDataCache manages the domains found in that folder.
+with GPDataCache(folder) as cache:
+    "core_domain" in cache                                  # True iff a config exists (no Redis)
+    domain = cache.get_domain("core_domain")                # lazy construct + cache
+
+    # 3. Resolve objects by GPDC URI — including anonymous nested objects.
+    ns = domain.get_namespace("core_app")
+    ns["config"] = {"server": {"host": "localhost", "port": 8080}, "tags": ["a", "b"]}
+
+    cfg = cache.get_object_by_uri("gpdc://core_domain/core_app/config")
+    server = cache.get_object_by_uri("gpdc://core_domain/core_app/config/server")
+    cache.has_uri("gpdc://core_domain/core_app/missing")    # False
+# close() on exit closes every cached domain (idempotent).
+```
+
+See [`GPDataCache`](#gpdatacache) below for the full API and the [URI resolution
+rules](#get_object_by_uri) (path traversal, scalar terminals, `ListObject`
+index coercion).
+
+---
+
 ## Core Types
 
 ### `GPDCDomain`
 
 ```python
-class GPDCDomain(name: str, config: GPDCDomainConfig)
+class GPDCDomain(config: GPDCDomainConfig, name: str | None = None)
 ```
 
 The configuration root and Redis connection pool. On construction it:
@@ -158,7 +195,7 @@ Configuration for a `GPDCDomain`. All fields are validated; lock fields must be 
 | `default_cache_mode` | `str` | `"permanent"` | One of `"permanent"`, `"ttl"`, `"sliding"`. |
 | `default_ttl_seconds` | `int` | `0` | Default TTL; must be `> 0` when mode is `"ttl"`/`"sliding"`. |
 | `gc_enabled` | `bool` | `False` | Start the background GC thread. |
-| `gc_interval_seconds` | `int` | `300` | Background GC cycle interval. |
+| `gc_interval_seconds` | `int` | `300` | Background GC cycle interval (must be `≥ 30`; smaller values busy-loop the GC thread and flood Redis). |
 | `namespaces` | `dict[str, GPDCNamespaceConfig]` | `{}` | Predefined namespaces to create eagerly. |
 | `default_lock_ttl_seconds` | `int` | `30` | TTL on lock keys (must be `≥ 1`). |
 | `default_lock_acquire_timeout_seconds` | `int` | `30` | Blocking timeout for `obj.lock()` (must be `≥ 0`). |
@@ -239,10 +276,130 @@ Delete the four lock-config fields (`default_lock_ttl_seconds`, `default_lock_ac
 
 ```python
 reset_domain_config("mydomain", old_config)     # must be called BEFORE construction
-domain = GPDCDomain("mydomain", new_config)     # writes the new lock config
+domain = GPDCDomain(new_config, name="mydomain")     # writes the new lock config
 ```
 
 Only the Redis connection fields on `config` are read; lock fields on the passed config are ignored.
+
+---
+
+### `GPDataCache`
+
+```python
+class GPDataCache(folder: gpconfig.GPConfigFolder)   # context manager
+```
+
+A facade that manages `GPDCDomain` instances discovered in a
+[`gpconfig`](https://github.com/linnetcodes/gpconfig) `GPConfigFolder`, and
+resolves GPDC URIs to [`GPDCDataObject`](#gpdcdataobject) instances. It is the
+recommended entry point when your domains are driven by config files rather
+than constructed ad-hoc in code.
+
+**Construction.** Built from a `GPConfigFolder`. On construction it stores the
+folder reference only — **no domain is created**. Domains are constructed
+lazily (via gpconfig's object factory `folder.get_object(name)`) on first
+[`get_domain`](#gpdatacache) access, and cached in an internal dict. The cache
+is a snapshot: config files edited after construction are **not** re-read;
+rebuild the `GPDataCache` to pick up changes.
+
+`GPDataCache` does **not** create domains lacking a config file — for ad-hoc
+domains use [`GPDCDomain`](#gpdcdomain) directly.
+
+> **Registration side effect.** `import gpdatacached` registers `GPDCDomain`
+> and `GPDCDomainConfig` with gpconfig's object factory (idempotent), which is
+> what makes `folder.get_object(name)` able to construct a `GPDCDomain`. No
+> extra setup is needed.
+
+**Dunder protocols**
+
+- `name in cache` → `True` iff a config named `name` exists in the folder. This is a pure config-snapshot check: it does **not** touch Redis and does not construct (or require) a `GPDCDomain` instance — the answer depends only on whether the config file is present, not on whether `get_domain(name)` has been called. The domain instance is created lazily on first `get_domain(name)` access.
+- `with cache as c` / `__exit__` → closes every cached domain on exit; `close()` is idempotent.
+
+> **`close()` behaviour — the membership exception.** After `cache.close()`, the resource-touching methods (`get_domain`, `get_object_by_uri`, `has_uri`) raise `RuntimeError("GPDataCache is closed")`. The `name in cache` membership check is the **deliberate exception**: because it only reads the config snapshot and touches no resources, it keeps working after `close()`. This is intentional — "does a config for this domain exist?" is meaningful regardless of whether the cache is open.
+
+**Methods**
+
+| Method | Description |
+|---|---|
+| `get_domain(name)` | Return the cached `GPDCDomain` for `name`, constructing it lazily on first access. Propagates gpconfig's `ConfigNotFoundError` if no config exists for `name`. Raises `RuntimeError` after `close()`. |
+| [`get_object_by_uri(uri)`](#get_object_by_uri) | Resolve a GPDC URI to a `GPDCDataObject`. Raises `RuntimeError` after `close()`. |
+| `has_uri(uri)` | Return `True` iff `get_object_by_uri(uri)` would succeed. Raises `RuntimeError` after `close()`. |
+| `close()` | Close every cached domain. Idempotent. |
+
+---
+
+#### `get_object_by_uri`
+
+```python
+def get_object_by_uri(self, uri: str) -> GPDCDataObject
+```
+
+Resolve a GPDC URI to a [`GPDCDataObject`](#gpdcdataobject). The URI must begin
+with `gpdc://` and has the form:
+
+```
+gpdc://{domain}/{namespace}/{name}[/{path_segment}...]
+```
+
+- The first three segments (`domain` / `namespace` / `name`) locate the **root
+  object**, fetched via `namespace.get_object(name)` — so the root is always
+  returned as a `GPDCDataObject`, **even when it is a scalar** (unlike
+  `ns[name]`, which unwraps scalars to native values).
+- Any further segments form a **path** that descends into the object via
+  `__getitem__`, one segment at a time. This is how anonymous nested containers
+  become reachable: `gpdc://d/ns/obj/key/0` walks `obj["key"][0]`.
+
+**Returns objects, never values.** `get_object_by_uri` always returns a
+`GPDCDataObject`. It cannot be used to read a scalar value or an element value
+directly.
+
+**Path-segment rules**
+
+| Current object | Segment handling |
+|---|---|
+| `ListObject` | The segment must be a **non-negative integer** (a pure-digit string); it is converted to `int` before indexing. Negative indices, decimals, and slices are rejected. |
+| `DictObject` / pydantic container-mode model / other subscriptable container | The segment is used as-is (a string key). |
+| `SetObject`, scalar objects | Have no `__getitem__` — any further path segment raises `ObjectNotFoundByURIError`. |
+
+**Scalar terminals are rejected.** Scalars nested inside a container are stored
+as inlined values (not as referenced objects), so descending into a scalar
+element yields a native Python value. Because `get_object_by_uri` returns
+objects only, a path that terminates on a scalar raises `ObjectNotFoundByURIError`.
+For example, given `ns["cfg"] = {"port": 8080}`, `gpdc://d/ns/cfg/port` raises
+(the value `8080` is a scalar, not a data object).
+
+**Errors.** Every failure mode raises [`ObjectNotFoundByURIError`](#objectnotfoundbyurierror)
+(carries `.uri` and `.reason`): malformed URI (missing `gpdc://`, fewer than
+three segments, empty segment), unknown domain, missing namespace, missing root
+object, a path segment that fails (`KeyError`/`IndexError`/`TypeError`), and a
+scalar terminal.
+
+**Example.** Given `ns["cfg"] = {"server": {"host": "x"}, "tags": ["a","b"]}`:
+
+| URI | Result |
+|---|---|
+| `gpdc://d/ns/cfg` | the `DictObject` for `cfg` |
+| `gpdc://d/ns/cfg/server` | the nested `DictObject` for `server` |
+| `gpdc://d/ns/cfg/server/host` | raises — `host` is the scalar `"x"` |
+| `gpdc://d/ns/cfg/tags/0` | raises — `tags[0]` is the scalar `"a"` |
+| `gpdc://d/ns/cfg/missing` | raises — `KeyError` on the path segment |
+
+---
+
+### `ObjectNotFoundByURIError`
+
+```python
+class ObjectNotFoundByURIError(GPDCError)
+```
+
+Raised by [`GPDataCache.get_object_by_uri`](#get_object_by_uri) when a GPDC URI
+cannot be resolved to a `GPDCDataObject`. Covers every failure mode: malformed
+URI syntax, unknown domain (no config), missing namespace, missing root object,
+a path segment that fails, and a scalar terminal. Carries `.uri` (the URI
+string) and `.reason` (a short explanation).
+
+`has_uri` swallows only this exception; infrastructure errors (e.g. Redis
+connection failures) propagate.
 
 ---
 
@@ -286,12 +443,13 @@ Abstract base class for every GPDC data object. Subclasses are split into [`GPDC
 
 | Method | Description |
 |---|---|
-| `expire_in(seconds)` | Set a new TTL. Object must be in `cache_mode="ttl"`. Requires ownership. |
+| `expire_in(seconds)` | Set a new TTL. Object must be in `cache_mode="ttl"`. `seconds` must be `> 0` — to delete now, use `expire_now()`. Requires ownership. |
 | `expire_at(when)` | Set absolute expiry time. Object must be in `cache_mode="ttl"`. Requires ownership. Deletes the object immediately if `when` is in the past (equivalent to `del ns[name]`: cleans `obj:`/`raw:`/`ref:` and cascade-deletes anonymous subtrees; raises `CanonicalObjectReferencedError` if the owner is still referenced — check `has_referrers()` first). |
+| `expire_now()` | Delete this object immediately. Equivalent to `del ns[canonical_name]`: full teardown (obj:/raw:/ref: + cascade-delete of anonymous subtrees). Works in any `cache_mode` (unlike `expire_in`/`expire_at`, which require `cache_mode="ttl"`). Requires ownership; raises `CanonicalObjectReferencedError` if the owner is still referenced by aliases — check `has_referrers()` first. |
 | `persist()` | Switch to `cache_mode="permanent"` with `ttl=0`. Requires ownership. |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | Replace the full cache policy. Requires ownership. |
 | `refresh_ttl()` | Re-apply this object's own TTL to its keys and cascade-refresh its owned subtree (used by the sliding-window path). No-op for permanent objects. |
-| `take_ownership()` | Promote a reference object to be the canonical owner of its own data. Only valid for named references. |
+| `take_ownership()` | Promote **the referenced object** to own itself (primary use case: a named reference to an anonymous nested object). On a reference to a named (already self-owned) object it is a correct no-op. The call itself must be made via a named reference handle. See [Lifecycle §7](./lifecycle.md#7-the-ownership-model). |
 
 **Locking methods** (opt-in, never called automatically by mutations)
 
@@ -467,7 +625,7 @@ Members may be any hashable scalar (no containers, no empty tuple). Implements t
 
 ## Codecs
 
-Codecs convert between Python values and their Redis storage representation. Every type registered with [`GPDCTypeRegistry`](#type-registry) must supply a codec.
+Codecs convert between Python values and their Redis storage representation. Every type registered with [`GPDCTypeRegistry`](#api-type-registry) must supply a codec.
 
 > This section is the API summary. For a full walkthrough of writing codecs — scalar and container, with worked examples (`Color`, `Counter`) and the mutation hooks every container must call — see the dedicated [Extensibility](./extensibility.md) document.
 
@@ -516,7 +674,7 @@ Abstract base for container codecs. Containers store their elements in a dedicat
 
 ---
 
-## Type Registry
+## Type Registry { #api-type-registry }
 
 ### `GPDCTypeRegistry`
 
@@ -562,7 +720,10 @@ GPDCTypeRegistry.register(
 
 ## Key & URI Utilities
 
-Low-level helpers for working with GPDC's key/URI scheme. Most applications never need these directly.
+Low-level helpers for working with GPDC's key/URI scheme. For actually
+*resolving* a URI to a data object, use
+[`GPDataCache.get_object_by_uri`](#get_object_by_uri) — these helpers only build
+or convert URI/key strings and are rarely needed directly.
 
 ### `make_uri`
 
@@ -592,7 +753,23 @@ Validate that `name` contains only letters, digits, `.` or `_` and is not a rese
 
 ## Exceptions
 
-All public exceptions descend from a private `GPDCError(Exception)` base. Catch them individually for precise error handling.
+All public exceptions descend from the public `GPDCError(Exception)` root. Use `except GPDCError` to catch every gpdatacached error, or catch them individually for precise handling. The lock-acquisition errors additionally share a public `GPDCLockError` base — `except GPDCLockError` catches every lock-acquisition/ownership failure (currently `LockAcquisitionTimeout`).
+
+### `GPDCError`
+
+```python
+class GPDCError(Exception)
+```
+
+The root of the gpdatacached exception hierarchy. Every exception raised by this library is a subclass of `GPDCError`, so `except GPDCError` is the broad catch-all. Prefer catching the specific subclass when you need to distinguish failure modes.
+
+### `GPDCLockError`
+
+```python
+class GPDCLockError(GPDCError)
+```
+
+Base class for lock-acquisition/ownership errors. `except GPDCLockError` catches every lock-related failure (currently `LockAcquisitionTimeout`; `LockOwnershipError` also descends from it but is swallowed internally by `HeldLock.release()`).
 
 ### `ObjectGoneError`
 
@@ -624,7 +801,7 @@ Raised during encoding when a container references itself (directly or transitiv
 class LockAcquisitionTimeout(GPDCLockError)
 ```
 
-Raised when `obj.lock()` cannot acquire the lock within the configured `timeout`. Carries `.lock_key` and `.timeout`. See [Multi-Process Locking](./locking.md).
+Raised when `obj.lock()` cannot acquire the lock within the configured `timeout`. Carries `.lock_key` and `.timeout`. It extends the public `GPDCLockError` base, so `except GPDCLockError` catches it. See [Multi-Process Locking](./locking.md).
 
 ### `GPDCLockConfigInconsistentError`
 

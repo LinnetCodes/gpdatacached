@@ -537,6 +537,68 @@ class TestPydanticContainerNamespaceIntegration:
         with pytest.raises(KeyError, match="unknown_field"):
             obj["unknown_field"] = "value"
 
+    def test_field_set_type_mismatch_rejected(self, ns, register_container_types):
+        # CQR-2026-07-24 behavior.01: __setitem__ validates the value against
+        # the field's declared type before writing. A type mismatch must raise
+        # at the write site, not be deferred to a later .value read.
+        from pydantic import ValidationError
+
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        with pytest.raises(ValidationError):
+            obj["total"] = "not-a-number"
+        # And the rejected write must NOT have touched Redis:
+        assert obj["total"] == 99.5
+        assert obj.value.total == 99.5
+
+    def test_field_set_coercible_value_accepted(self, ns, register_container_types):
+        # pydantic's default (lenient) config coerces int->float for a float
+        # field, just like OrderModel(total=5) would. The validation step uses
+        # the same config, so a coercible value is accepted.
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns["order1"]
+        obj["total"] = 5  # int -> float coercion accepted
+        assert obj["total"] == 5.0
+        assert obj.value.total == 5.0
+
+    def test_field_set_cross_field_constraint_not_enforced(self, ns, register_container_types):
+        # Container mode validates a single field's TYPE only; it deliberately
+        # does NOT run cross-field / model-level validators. Users who need
+        # cross-field validation should register their model with the scalar
+        # codec (PydanticModelScalarCodec), which validates atomically.
+        from pydantic import ValidationError, model_validator
+
+        class IntervalChecked(BaseModel):
+            start: int
+            end: int
+
+            @model_validator(mode="after")
+            def _end_after_start(self):
+                if self.end <= self.start:
+                    raise ValueError("end must be > start")
+                return self
+
+        IntervalObject = type(
+            "IntervalObject", (BaseModelContainerObject,), {"TYPE": "collection:IntervalChecked"}
+        )
+        GPDCTypeRegistry.register(
+            python_type=IntervalChecked,
+            gpdc_type="collection:IntervalChecked",
+            object_class=IntervalObject,
+            codec_class=PydanticModelContainerCodec,
+        )
+        ns["iv"] = IntervalChecked(start=10, end=20)
+        obj = ns["iv"]
+        # Single-field type validation passes (5 is a valid int) even though the
+        # cross-field rule (end > start) would reject the resulting snapshot.
+        # This documents the intentional container-mode contract.
+        obj["end"] = 5  # accepted: type-correct; cross-field rule NOT evaluated
+        assert obj["end"] == 5
+        # The cross-field violation surfaces only on full-materialization (.value),
+        # same as before — container mode does not promise whole-model validation.
+        with pytest.raises(ValidationError):
+            _ = obj.value
+
     def test_delete_field_raises(self, ns, register_container_types):
         ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
         obj = ns["order1"]
@@ -634,3 +696,19 @@ class TestPydanticContainerTTL:
         obj["total"] = 199.5
         remaining = obj.remaining_ttl()
         assert remaining > 0
+
+
+class TestStaleHandleLogic02Pydantic:
+    """CQR-2026-07-24 logic.02: a stale pydantic-container handle must raise before any Redis write."""
+
+    def test_setitem_raises_and_leaves_raw_untouched(self, ns, register_container_types, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["order1"] = OrderModel(order_id="ORD-001", total=99.5)
+        obj = ns.get_object("order1")
+        before = raw_redis.hgetall(obj.raw_key)
+        raw_redis.delete(obj._canonical_redis_key())  # make the handle stale
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj["total"] = 199.5
+        assert raw_redis.hgetall(obj.raw_key) == before
+

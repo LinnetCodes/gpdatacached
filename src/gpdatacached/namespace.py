@@ -366,13 +366,22 @@ class GPDCNamespace(MutableMapping):
             self._write_container_meta(
                 obj_key, entry, raw_key, policy, now, is_new=is_new, item_count=count, obj_name=key
             )
-            if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
-                if not is_new:
-                    entry.codec_class.delete_raw(self, raw_key)
-                from .types import encode_session
+            try:
+                if entry.codec_class and issubclass(entry.codec_class, GPDCContainerCodec):
+                    if not is_new:
+                        entry.codec_class.delete_raw(self, raw_key)
+                    from .types import encode_session
 
-                with encode_session(self):
-                    entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
+                    with encode_session(self):
+                        entry.codec_class.create_raw(self, raw_key, value, key, policy.cache_mode, policy.declared_ttl)
+            except BaseException:
+                # A failed encode must not leave the obj: meta (written above,
+                # before the encode session) as an orphan key. create_raw writes
+                # raw: only after a successful encode, so raw:/ref: are typically
+                # absent here, but delete them defensively (CQR-2026-07-24 logic.01).
+                ref_key = make_ref_key(self._domain.name, self._name, key)
+                r.delete(obj_key, raw_key, ref_key)
+                raise
             from .lifecycle import apply_ttl
 
             ref_key = make_ref_key(self._domain.name, self._name, key)

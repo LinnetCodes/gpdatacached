@@ -43,7 +43,7 @@ def domain_config():
 def domain(clean_redis, domain_config):
     from gpdatacached.domain import GPDCDomain
 
-    d = GPDCDomain("testdomain", domain_config)
+    d = GPDCDomain(domain_config, name="testdomain")
     yield d
     d.close()
 
@@ -71,6 +71,6 @@ def domain_config_with_namespaces():
 def domain_with_namespaces(clean_redis, domain_config_with_namespaces):
     from gpdatacached.domain import GPDCDomain
 
-    d = GPDCDomain("testdomain", domain_config_with_namespaces)
+    d = GPDCDomain(domain_config_with_namespaces, name="testdomain")
     yield d
     d.close()

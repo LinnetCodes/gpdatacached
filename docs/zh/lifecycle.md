@@ -23,7 +23,7 @@ graph LR
     E --> D
 ```
 
-GPDC 为你自动处理 **①②③**。只有当你想要**改变**某个对象的策略（让永久对象过期、让 ttl 对象永久化等），或需要显式**删除**某个对象时，才会直接接触生命周期。最容易让用户困惑的，是**匿名对象与引用对象如何进入和离开这些阶段** —— [§8](#8) 与 [§9](#9) 会详述。
+GPDC 为你自动处理 **①②③**。只有当你想要**改变**某个对象的策略（让永久对象过期、让 ttl 对象永久化等），或需要显式**删除**某个对象时，才会直接接触生命周期。最容易让用户困惑的，是**匿名对象与引用对象如何进入和离开这些阶段** —— [§8](#lifecycle-anon) 与 [§9](#lifecycle-reference) 会详述。
 
 ---
 
@@ -112,7 +112,7 @@ graph TD
 
 ---
 
-## 5. 滑动窗口刷新
+## 5. 滑动窗口刷新 { #lifecycle-sliding }
 
 `sliding` 模式让 GPDC 适合用作“在使用时保持活跃”的缓存。每次变更都会重新应用 TTL。
 
@@ -153,20 +153,21 @@ graph TD
 
 ---
 
-## 6. 手动变更策略与级联传播
+## 6. 手动变更策略与级联传播 { #lifecycle-manual }
 
 你很少需要在生命周期中途变更策略，但当你这么做时，GPDC 会把变更传播到所属子树。
 
-### 四个面向用户的变更方法
+### 面向用户的变更方法
 
 | 方法 | 效果 | 权限 |
 |---|---|---|
-| `expire_in(seconds)` | 设置新 TTL。要求已处于 `cache_mode == "ttl"`。 | 仅 owner。 |
+| `expire_in(seconds)` | 设置新 TTL。要求已处于 `cache_mode == "ttl"` 且 `seconds > 0`。要立即删除请用 `expire_now()`。 | 仅 owner。 |
 | `expire_at(when)` | 设置绝对过期时间。要求 `cache_mode == "ttl"`。若 `when` 已过去则立即删除（等价于 `del ns[name]`：完整拆卸含匿名子树；若仍被引用则抛出 `CanonicalObjectReferencedError` —— 可先用 `has_referrers()` 检查）。 | 仅 owner。 |
+| `expire_now()` | 立即删除本对象（等价于 `del ns[canonical_name]`：完整拆卸含匿名子树；若仍被引用则抛出 `CanonicalObjectReferencedError`）。适用于任何 `cache_mode` —— 当你想要一个明确、与模式无关的"立即删除"入口时，用它而非 `expire_in(0)`/`expire_at(过去)`。 | 仅 owner。 |
 | `persist()` | 切换为 `permanent` 且 `ttl=0`。 | 仅 owner。 |
 | `update_cache_mode_and_ttl(mode, ttl)` | 用 `(mode, ttl)` 替换整个策略。 | 仅 owner。 |
 
-四者在权限检查（见 [§7](#7-ownership)）后都委托给 `set_lifecycle(policy)`。
+四个策略变更方法（`expire_in`、`expire_at`、`persist`、`update_cache_mode_and_ttl`）在权限检查（见 [§7](#7-the-ownership-model)）后都委托给 `set_lifecycle(policy)`。`expire_now()` 是明确的"立即删除"入口 —— 它委托给 `del ns[canonical_name]`（完整拆卸），而非 `set_lifecycle`。
 
 ### 级联传播
 
@@ -193,7 +194,7 @@ graph TD
 
 ---
 
-## 7. Ownership（所有者）模型
+## 7. The Ownership Model
 
 每个对象在元信息中有一个 `owner` 字段。所有权决定谁能控制对象的生命周期，也是匿名对象运作的核心。
 
@@ -208,19 +209,28 @@ graph TD
 
 ### `take_ownership()`
 
-**具名引用**（别名）可以把自己提升为数据的所有者：
+`take_ownership()` 的作用对象是**被引用的数据对象**，而不是引用（别名）绑定本身。它让**被引用对象**成为自己的 owner，从而可以独立管理自己的生命周期。
+
+主要用例是**命名引用指向匿名嵌套对象**。匿名对象创建时 `owner = parent`（其生命周期依附于父容器）。当你持有一个指向它的命名引用时，`take_ownership()` 会把该匿名对象提升为自持 —— 它的 `owner` 从父对象名变为自己的 `~anon:…` canonical name：
 
 ```python
-ns["alias"] = ns["original"]   # alias 是一个引用
-obj = ns.get_object("alias")
-obj.take_ownership()           # 现在 alias 拥有数据；owner = "alias"
+ns["parent"] = {"inner": [1, 2, 3]}          # inner 变为 ~anon:… ，owner 是 "parent"
+inner = ns.get_object("parent")["inner"]      # 这个匿名 list 对象
+ns["named"] = inner                           # 指向该匿名对象的命名引用
+obj = ns.get_object("named")
+obj.take_ownership()                          # 现在 ~anon:… 对象拥有自己；
+                                             # owner = "~anon:…"，独立于 "parent"
+# 此后 obj.update_cache_mode_and_ttl("ttl", 60) 给该 ~anon:… 对象设 TTL，
+# 不会影响 "parent" —— 匿名对象现在有自己的生命周期。
 ```
 
-`take_ownership()` 之后，别名变为自持，可以独立变更其生命周期。只有具名引用可以这么做 —— 匿名对象（`~anon:…`）不能，因为它们对用户不可见。
+**对命名（已自持）对象的引用调用 `take_ownership()` 是一个正确的 no-op。** 命名对象创建时就是自己的 owner，所以调用不改变任何东西 —— 这正是预期行为。在多进程共享环境里，调用者不一定是数据的创建者，也无法（也无需）知道被引用对象当初是匿名的还是命名的；调用者的意图 —— "让被引用对象自管生命周期" —— 对匿名对象是*被落实*，对命名对象则*已经满足*。两种情况下调用都合法。
+
+调用本身必须**经由命名引用句柄**发起：`obj._is_reference` 必须为 `True`，且 `obj.name` 不能以 `~` 开头。在普通（非引用）对象上调用会抛 `TypeError`。
 
 ---
 
-## 8. 匿名对象的生命周期
+## 8. 匿名对象的生命周期 { #lifecycle-anon }
 
 匿名对象是 GPDC 中**自动化程度最高**的部分。你永远不会直接创建或删除它们。理解它们的生命周期，能消除大多数“我的数据去哪了？”的困惑。
 
@@ -241,8 +251,8 @@ ns["nested"] = {"a": [1, 2, 3]}       # 这个 list 值 → 一个匿名对象
 
 匿名对象继承编码时生效的策略 —— 即创建时父容器的有效策略（在父上下文下计算的 `policy_from_defaults`）。创建之后，其生命周期由 **owner 链**驱动，而不仅靠自身策略：
 
-- 对任一后代的 `sliding` 变更会刷新自持祖先的 TTL（见 [§5](#5)）。
-- 对自持祖先的策略变更会向下传播到所属子对象（见 [§6](#6)）。
+- 对任一后代的 `sliding` 变更会刷新自持祖先的 TTL（见 [§5](#lifecycle-sliding)）。
+- 对自持祖先的策略变更会向下传播到所属子对象（见 [§6](#lifecycle-manual)）。
 
 ### 引用计数
 
@@ -266,15 +276,15 @@ graph TD
 
 1. **最后一个引用者释放** —— 当引用该匿名对象的最后一个槽位被移除（元素被覆盖或 pop，或父对象自身被删除并遍历其子对象）。GPDC 检查 `has_referrers`；若为空且目标是匿名的，则级联。
 2. **自持父对象被删除** —— `del ns["matrix"]` 删除父对象绑定，然后 `_cascade_delete_anonymous` 遍历父对象存储的原始数据，释放嵌套引用，并递归删除任何成为孤儿的匿名对象。
-3. **编码会话回滚** —— 若异常从 `encode_session` 中传播出来（例如 `CyclicReferenceError`），本次会话期间创建的每个匿名对象都会被删除，不留孤儿匿名对象。（父容器自身的元信息 key 在编码会话开启之前写入，因此不会被这条路径回滚。）
+3. **编码会话回滚** —— 若异常从 `encode_session` 中传播出来（例如 `CyclicReferenceError`），本次会话期间创建的每个匿名对象都会被删除，且会话对既有容器所做的引用计数增量也会被逆转，不留孤儿匿名对象或幽灵引用者。清理覆盖到哪一层取决于调用点：失败的**首次存储**（`ns[name] = value`）由 `namespace.__setitem__` 包裹，它还会额外删除刚写入的绑定的 `obj:`/`raw:`/`ref:` key，因此不会留下任何孤儿元信息；而在既有容器**内部的再编码**失败（如 `dict.update`/`list.extend` 这样的变更方法）只回滚编码会话创建/引用过的内容——容器自身长久存在的 `obj:`/`raw:` 元信息保持原样（这是正确的：它持有的是有效的既有数据）。
 
 ### 重要后果
 
-**GPDC 永远不会“泄漏”匿名对象。** 在三种级联触发与 GC（见 [§10](#10)）之间，失去所有引用者的匿名对象终会被回收。最坏情况是异常崩溃到下一次 GC 周期之间的一段短暂窗口。
+**GPDC 永远不会“泄漏”匿名对象。** 在三种级联触发与 GC（见 [§10](#lifecycle-gc)）之间，失去所有引用者的匿名对象终会被回收。最坏情况是异常崩溃到下一次 GC 周期之间的一段短暂窗口。
 
 ---
 
-## 9. 引用（别名）的生命周期
+## 9. 引用（别名）的生命周期 { #lifecycle-reference }
 
 **引用**是一个具名绑定（`obj:alias` STRING 持有 `ref:{canonical_obj_key}`），指向某个 canonical owner。引用让多个名字可以共享同一份数据而无需拷贝。
 
@@ -301,13 +311,13 @@ ns["alias"] = ns["original"]   # 两个名字现在都解析到同一份 canonic
 
 ### 引用绑定自身的生命周期
 
-引用的 `obj:alias` key **没有应用 TTL**；它会一直存在，直到被显式删除。在引用上调用的生命周期变更方法作用于 **canonical owner**，而非别名绑定 —— 使用 `take_ownership()`（见 [§7](#7-ownership)）可以把引用提升为自持、拥有自身策略的对象。
+引用的 `obj:alias` key **没有应用 TTL**；它会一直存在，直到被显式删除。在引用上调用的生命周期变更方法作用于 **canonical owner**，而非别名绑定 —— 使用 `take_ownership()`（见 [§7](#7-the-ownership-model)）可以把**被引用对象**提升为自持，从而携带自己的策略。
 
 ---
 
-## 10. 垃圾回收
+## 10. 垃圾回收 { #lifecycle-gc }
 
-GPDC 的后台 GC 清理**孤儿** —— 对象过期或引用者抖动后残留的 key。它**不替代** [§8](#8) 中的级联删除逻辑；它是同步路径无法原子处理的情形的安全网：
+GPDC 的后台 GC 清理**孤儿** —— 对象过期或引用者抖动后残留的 key。它**不替代** [§8](#lifecycle-anon) 中的级联删除逻辑；它是同步路径无法原子处理的情形的安全网：
 
 - **TTL 过期**：当 `ttl`/`sliding` 对象的 Redis TTL 触发，它会消失，但引用者与引用者集合条目可能残留。
 - **引用抖动**：覆盖/移除容器元素会留下过期的 `ref:` 条目。
@@ -343,12 +353,13 @@ domain.run_gc("analytics")      # 单个 namespace
 
 | 方法 | 用途 |
 |---|---|
-| `expire_in(seconds)` | 设置新 TTL（必须已处于 `ttl` 模式）。 |
+| `expire_in(seconds)` | 设置新 TTL（必须已处于 `ttl` 模式；`seconds > 0`）。 |
 | `expire_at(when)` | 设置绝对过期（必须已处于 `ttl` 模式）。 |
+| `expire_now()` | 立即删除本对象（任何 cache_mode；完整拆卸含匿名子树）。 |
 | `persist()` | 切换为 `permanent`。 |
 | `update_cache_mode_and_ttl(mode, ttl)` | 替换整个策略。 |
 | `refresh_ttl()` | 强制对该对象及其所属子树做一次滑动窗口刷新。 |
-| `take_ownership()` | 把一个具名引用提升为数据的所有者。 |
+| `take_ownership()` | 把**被引用对象**提升为自持（主要用例：指向匿名嵌套对象的命名引用；对已自持的命名对象的引用是正确的 no-op）。 |
 | `ttl`（属性） | 声明的 TTL（秒）。 |
 | `cache_mode`（属性） | 当前缓存模式。 |
 | `remaining_ttl()` | Redis 报告的实际剩余 TTL（可为 0 或 -1）。 |
@@ -374,7 +385,7 @@ domain.run_gc("analytics")      # 单个 namespace
 | “`ttl` 模式带 `ttl=0` 被接受了” | 绝不会。会抛 `ValueError`。 | 严格校验：`ttl`/`sliding` 要求 `ttl > 0`。 |
 | “我的 `permanent` 对象消失了” | 有东西删除了它（`del`、namespace `clear()`、`destroy()`，或对孤儿匿名对象的 GC）。 | `permanent` 只意味着无 TTL，并非永生。 |
 | “我把祖先改成 `permanent`，但某个子对象仍有 TTL” | 传播只抵达**所属**子对象。 | 被引用但**不被**祖先拥有的子对象保留自身策略。 |
-| “写入中途崩溃后我的数据没了” | 编码会话回滚了失败写入期间创建的所有匿名对象。 | 这是有意为之：失败的写入不留孤儿匿名对象（父容器自身的元信息 key 在编码会话之前写入，因此不会被回滚）。 |
+| “写入中途崩溃后我的数据没了” | 编码会话回滚了失败写入期间创建的所有匿名对象（对于首次存储，还会清理绑定的 `obj:`/`raw:`/`ref:` key）。 | 这是有意为之：失败的写入不留孤儿匿名对象。首次存储时整个绑定都会被清理；在既有容器内部的再编码，则有意保留容器自身既有的元信息（它持有有效数据）。 |
 
 ---
 

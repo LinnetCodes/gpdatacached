@@ -140,17 +140,40 @@ class BaseModelContainerObject(GPDCContainerObject, collections.abc.MutableMappi
     def __setitem__(self, key: str, value: object) -> None:
         if key not in self._field_names:
             raise KeyError(f"Cannot set unknown field {key!r} on {self._model_class.__name__}")
+        # Validate the value against the field's declared type BEFORE any Redis
+        # write, so a rejected value leaves the object untouched (CQR-2026-07-24
+        # behavior.01). This is single-field validation only — it does NOT run
+        # cross-field / model-level validators. That is intentional: container
+        # mode trades whole-model validation for field-level access; users who
+        # need cross-field validation should register their model with the
+        # scalar codec (PydanticModelScalarCodec), which stores and validates
+        # the model atomically.
+        self._validate_field_value(key, value)
         from ..lifecycle import policy_from_meta
-        from ..meta import ObjectMeta
 
         r = self._redis()
         old_encoded = r.hget(self.raw_key, key)
-        meta = ObjectMeta.load(r, self._canonical_redis_key())
-        policy = policy_from_meta(meta) if meta else None
+        # Liveness check before any Redis write (logic.02); meta reused for policy + _touch.
+        meta = self._check_alive(r)
+        policy = policy_from_meta(meta)
         encoded_val = encode_element(value, self._namespace, self._data_owner_name(), policy)
         r.hset(self.raw_key, key, encoded_val)
         self._release_element_ref(old_encoded)
-        self._touch()
+        self._touch(meta)
+
+    def _validate_field_value(self, key: str, value: object) -> None:
+        """Validate ``value`` against the declared type of field ``key``.
+
+        Raises ``pydantic.ValidationError`` on a type mismatch (e.g. a string
+        into a ``float`` field). Uses the model class's own field annotation
+        with pydantic's default (lenient, coercing) config, so it accepts the
+        same coercions a normal ``Model(field=value)`` construction would.
+        Cross-field validators are NOT evaluated here (see __setitem__ docstring).
+        """
+        from pydantic import TypeAdapter
+
+        field = self._model_class.model_fields[key]
+        TypeAdapter(field.annotation).validate_python(value)
 
     def __delitem__(self, key: str) -> None:
         raise TypeError("Cannot delete fields from a Pydantic model container")

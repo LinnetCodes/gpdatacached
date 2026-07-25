@@ -4,7 +4,6 @@ import collections.abc
 
 from ..codec import GPDCContainerCodec
 from ..container import GPDCContainerObject
-from ..meta import ObjectMeta
 from ..lifecycle import policy_from_meta
 from ..types import decode_element, decode_key, encode_element, encode_key
 
@@ -75,12 +74,12 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         encoded_key = encode_key(key)
         r = self._redis()
         old_encoded = r.hget(self.raw_key, encoded_key)
-        meta = ObjectMeta.load(r, self._canonical_redis_key())
-        policy = policy_from_meta(meta) if meta else None
+        meta = self._check_alive(r)
+        policy = policy_from_meta(meta)
         encoded_val = encode_element(value, self._namespace, self._data_owner_name(), policy)
         r.hset(self.raw_key, encoded_key, encoded_val)
         self._release_element_ref(old_encoded)
-        self._touch()
+        self._touch(meta)
 
     def __delitem__(self, key: object) -> None:
         encoded_key = encode_key(key)
@@ -88,6 +87,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         old_encoded = r.hget(self.raw_key, encoded_key)
         if old_encoded is None:
             raise KeyError(key)
+        self._check_alive(r)
         r.hdel(self.raw_key, encoded_key)
         self._release_element_ref(old_encoded)
         self._touch()
@@ -168,23 +168,27 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
             return
         r = self._redis()
         owner_name = self._data_owner_name()
-        meta = ObjectMeta.load(r, self._canonical_redis_key())
-        policy = policy_from_meta(meta) if meta else None
-        dirty = False
-        try:
-            with encode_session(self._namespace):
-                for k, v in pairs:
-                    encoded_key = encode_key(k)
-                    old_encoded = r.hget(self.raw_key, encoded_key)
-                    encoded_val = encode_element(v, self._namespace, owner_name, policy)
-                    r.hset(self.raw_key, encoded_key, encoded_val)
-                    self._release_element_ref(old_encoded)
-                    dirty = True
-        finally:
-            if dirty:
-                self._touch()
+        meta = self._check_alive(r)
+        policy = policy_from_meta(meta)
+        # Stage all encoded values + the old values they replace IN MEMORY, and
+        # only commit (hset + release old refs) after the whole encode succeeds.
+        # A failing pair thus leaves the parent hash and old refs untouched
+        # (CQR-2026-07-24 logic.01: no partial parent write, no early release).
+        staged: list[tuple[str, str, str | None]] = []
+        with encode_session(self._namespace):
+            for k, v in pairs:
+                encoded_key = encode_key(k)
+                old_encoded = r.hget(self.raw_key, encoded_key)
+                encoded_val = encode_element(v, self._namespace, owner_name, policy)
+                staged.append((encoded_key, encoded_val, old_encoded))
+        # Encode succeeded for every pair -> commit atomically.
+        for encoded_key, encoded_val, old_encoded in staged:
+            r.hset(self.raw_key, encoded_key, encoded_val)
+            self._release_element_ref(old_encoded)
+        self._touch(meta)
 
     def clear(self):
+        self._check_alive()
         encoded_vals = self._redis().hvals(self.raw_key)
         self._redis().delete(self.raw_key)
         for encoded_val in encoded_vals:

@@ -6,7 +6,7 @@ This index is the entry point for the documentation. Each section below links to
 
 ## Start here
 
-- **[Overview](./overview.md)** — *design purpose, philosophy, and end-to-end architecture.* Read this first to understand the Domain → Namespace → Object model, the Redis key layout, the ownership/reference/anonymous-object model, and where each subsequent document fits in.
+- **[Overview](./overview.md)** — *design purpose, philosophy, and end-to-end architecture.* Read this first to understand the Domain → Namespace → Object model, the Redis key layout, the ownership/reference/anonymous-object model, the `GPDataCache` facade for managing multiple domains and resolving URIs, and where each subsequent document fits in.
 
 ## Reference
 
@@ -35,6 +35,7 @@ This index is the entry point for the documentation. Each section below links to
 |---|---|
 | New to the library | Overview → API Reference → Quick Start (in API Reference) |
 | Building a real workload | + Lifecycle Management → Performance Guide |
+| Driving many domains from config / addressing objects by URI | + the `GPDataCache` section in API Reference |
 | Going multi-process | + Multi-Process Locking |
 | Needing a custom type | Extensibility → (+ Lifecycle, Locking, Performance Guide if the type is complex) |
 | Caching structured records | Pydantic Support |

@@ -33,7 +33,7 @@ def _make_config() -> GPDCDomainConfig:
 
 def _worker_hold_then_append(domain_name: str, ns_name: str, key: str, barrier, results, idx: int):
     """Worker: acquire lock, record entry order, append idx, release."""
-    domain = GPDCDomain(domain_name, _make_config())
+    domain = GPDCDomain(_make_config(), name=domain_name)
     try:
         ns = domain.ensure_namespace(ns_name)
         obj = ns.get_object(key)
@@ -50,7 +50,7 @@ def _worker_holder_then_crash(domain_name: str, ns_name: str, key: str, started_
     """Worker: acquire lock, signal started, then os._exit(0) to simulate crash."""
     cfg = _make_config()
     cfg.default_lock_ttl_seconds = lock_ttl
-    domain = GPDCDomain(domain_name, cfg)
+    domain = GPDCDomain(cfg, name=domain_name)
     try:
         ns = domain.ensure_namespace(ns_name)
         obj = ns.get_object(key)
@@ -79,7 +79,7 @@ def _worker_hold_and_record_release(
     multiprocessing start method, where children re-import ``__main__`` and look up
     the target by qualified name.
     """
-    d = GPDCDomain(domain_name, _make_config())
+    d = GPDCDomain(_make_config(), name=domain_name)
     try:
         ns = d.ensure_namespace(ns_name)
         obj = ns.get_object(key)
@@ -104,7 +104,7 @@ def _writer_lock_and_append(
     """
     cfg = _make_config()
     cfg.gc_enabled = False
-    d = GPDCDomain(domain_name, cfg)
+    d = GPDCDomain(cfg, name=domain_name)
     try:
         ns = d.ensure_namespace(ns_name)
         obj = ns.get_object(key)
@@ -123,7 +123,7 @@ class TestCrossProcessMutex:
         key = "shared_list"
 
         # Setup: create the shared list.
-        d = GPDCDomain(domain_name, _make_config())
+        d = GPDCDomain(_make_config(), name=domain_name)
         ns = d.ensure_namespace(ns_name)
         ns[key] = []
         d.close()
@@ -154,7 +154,7 @@ class TestCrossProcessMutex:
         assert sorted(exit_idxs) == [0, 1, 2]
 
         # Verify list contents: each idx appended exactly once.
-        d = GPDCDomain(domain_name, _make_config())
+        d = GPDCDomain(_make_config(), name=domain_name)
         try:
             ns = d.ensure_namespace(ns_name)
             obj = ns.get_object(key)
@@ -172,7 +172,7 @@ class TestCrossProcessMutex:
         # Create the domain with a short TTL for faster test.
         cfg = _make_config()
         cfg.default_lock_ttl_seconds = 2
-        d = GPDCDomain(domain_name, cfg)
+        d = GPDCDomain(cfg, name=domain_name)
         ns = d.ensure_namespace(ns_name)
         ns[key] = []
         d.close()
@@ -190,7 +190,7 @@ class TestCrossProcessMutex:
         # Now try to acquire from this process.
         cfg = _make_config()
         cfg.default_lock_ttl_seconds = 2
-        d = GPDCDomain(domain_name, cfg)
+        d = GPDCDomain(cfg, name=domain_name)
         try:
             ns = d.ensure_namespace(ns_name)
             obj = ns.get_object(key)
@@ -210,7 +210,7 @@ class TestCrossProcessMutex:
         key = "shared"
 
         # Pre-create the shared object.
-        d = GPDCDomain(domain_name, _make_config())
+        d = GPDCDomain(_make_config(), name=domain_name)
         ns = d.ensure_namespace(ns_name)
         ns[key] = 0
         d.close()
@@ -230,7 +230,7 @@ class TestCrossProcessMutex:
         time.sleep(0.2)
 
         # Parent tries to acquire — will block in BLPOP until holder releases.
-        d = GPDCDomain(domain_name, _make_config())
+        d = GPDCDomain(_make_config(), name=domain_name)
         try:
             ns = d.ensure_namespace(ns_name)
             obj = ns.get_object(key)
@@ -258,7 +258,7 @@ class TestGCConcurrency:
 
         cfg = _make_config()
         cfg.gc_enabled = False  # we trigger run_gc manually
-        d = GPDCDomain(domain_name, cfg)
+        d = GPDCDomain(cfg, name=domain_name)
         ns = d.ensure_namespace(ns_name)
         ns[key] = []
         d.close()
@@ -273,7 +273,7 @@ class TestGCConcurrency:
         # Concurrently run GC from this process.
         cfg = _make_config()
         cfg.gc_enabled = False
-        d = GPDCDomain(domain_name, cfg)
+        d = GPDCDomain(cfg, name=domain_name)
         try:
             # Run GC a few times while writer is active.
             for _ in range(5):
@@ -287,7 +287,7 @@ class TestGCConcurrency:
 
         # Verify no elements lost.
         cfg = _make_config()
-        d = GPDCDomain(domain_name, cfg)
+        d = GPDCDomain(cfg, name=domain_name)
         try:
             ns = d.ensure_namespace(ns_name)
             obj = ns.get_object(key)

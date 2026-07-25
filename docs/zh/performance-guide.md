@@ -26,7 +26,7 @@ graph TD
 
 ---
 
-## 2. 每操作成本参考
+## 2. 每操作成本参考 { #perf-cost-ref }
 
 速查表。“RTT” = Redis 往返。N = 元素数；次数为近似值，未计竞争。必要时以“本地”标注不访问 Redis 的工作。
 
@@ -46,6 +46,9 @@ graph TD
 | `obj.persist()` / `update_cache_mode_and_ttl(...)` | O(所属子树大小) | 跨子树重写元信息（`HSET`）+ 重新应用 TTL，每层级一条流水线。 |
 | `domain.run_gc()` | O(N 个 canonical name) | 三类 `SCAN` + 每对象加锁 + 类型/存在性检查。见 [§5](#5-gc)。 |
 | `.value`（完整容器读取） | 扁平：1 RTT + O(N) 本地；嵌套：+O(嵌套数) RTT | 一次批量读（`LRANGE`/`HGETALL`/`SMEMBERS`）；每个 `ref:` 元素再加一次 `HGETALL` + 解码其匿名对象。 |
+| `name in cache`（`GPDataCache`） | **本地，0 RTT** | 纯配置快照检查，通过 `folder.list_configs()` 实现。不触碰 Redis，也不会构造 domain。是本库中最便宜的成员测试。 |
+| `cache.get_domain(name)` | 首次调用：domain 构造（读/校验 domain meta）；后续：**0 RTT** | 首次访问时经由 gpconfig 的工厂构造并缓存 `GPDCDomain`；之后的调用返回已缓存实例。不会重新读取配置文件。 |
+| `cache.get_object_by_uri(uri)` | 根：约 4–5 RTT；**每条路径分段 +1 RTT** | `get_namespace`（`SISMEMBER` + namespace-meta `HGETALL`，约 2 RTT）+ 根对象解析（`TYPE` + `HGETALL`，约 2–3 RTT）。每条额外路径分段是一次 `__getitem__` 读取（`ListObject` 用 `LINDEX`，`DictObject` 用 `HGET`）。`cache.has_uri(uri)` 成本相同（它用 try/except 调用 `get_object_by_uri`）。domain 仅在首次访问时构造；同一 domain 之后的 URI 会复用已缓存的 domain。 |
 
 ---
 
@@ -61,7 +64,7 @@ graph TD
 2. 递归下钻每个**所属子对象**：每个子对象都做一次 `HGETALL`（读取该子对象自身的策略），并把其 TTL 重新应用到它的 key。
 3. 直到整棵所属子树都被遍历完才返回。
 
-因此，对一个拥有 1000 个匿名子对象的 sliding list 做一次 `append`，代价是**数千次** Redis 往返 —— 每个所属子对象一次 `HGETALL` + TTL 重应用（每一步都是一次单独的往返；这条路径并未流水线化，不像 `persist()`/`update_cache_mode_and_ttl()` 那样按子树层级批量成一条流水线）。在频繁写入的循环里，这会把你的表观写入代价放大到子树大小倍。
+因此，对一个拥有 1000 个匿名子对象的 sliding list 做一次 `append`，代价是**数千次** Redis 往返 —— 每个所属子对象一次 `HGETALL`（读取该子对象自身策略）是一次单独往返。随后的 TTL 重应用已按子树层级批量成一条流水线（与 `persist()`/`update_cache_mode_and_ttl()` 相同），但逐个加载子对象策略的 `HGETALL` 没有批量——那才是关键开销。在频繁写入的循环里，这会把你的表观写入代价放大到子树大小倍。
 
 ```mermaid
 graph TD
@@ -87,11 +90,11 @@ graph TD
 - **让 sliding 对象保持扁平。** 由于刷新开销是 O(所属子树大小)，拥有深嵌套匿名子对象的 sliding 容器是最坏情形。必须用 sliding 时，优先选扁平结构。
 - **避免在高抖动容器上用 `sliding`**（频繁 append/pop）。每次变更都要付出完整子树遍历的代价。
 
-> 完整机制 —— owner 链、向上 vs 向下传播、校验规则 —— 见[生命周期管理](./lifecycle.md#5)。
+> 完整机制 —— owner 链、向上 vs 向下传播、校验规则 —— 见[生命周期管理](./lifecycle.md#lifecycle-sliding)。
 
 ---
 
-## 4. 过深的容器嵌套
+## 4. 过深的容器嵌套 { #perf-nesting }
 
 GPDC 支持任意深度的容器嵌套（`ns["x"] = [[[[1]]]]` 可行）。但每层嵌套都有实在的代价。
 
@@ -107,7 +110,7 @@ GPDC 支持任意深度的容器嵌套（`ns["x"] = [[[[1]]]]` 可行）。但�
 
 **读取**时，`.value` 会加载每个匿名子对象的元信息（每个 `ref:` 元素一次 `HGETALL`）并返回一个活跃的 `GPDCContainerObject` 句柄 —— 它**不会**递归解码嵌套数据。若你需要完整解码的 Python 结构，请使用 `.deepcopy()`（它会递归物化每一层）。
 
-**变更**时，sliding 刷新与级联删除的开销都与子树大小成正比（见 [§3](#3-sliding-ttl) 与 [§10](#10)）。
+**变更**时，sliding 刷新与级联删除的开销都与子树大小成正比（见 [§3](#3-sliding-ttl) 与 [§10](#perf-ref-churn)）。
 
 ### 推荐
 
@@ -129,7 +132,7 @@ GPDC 支持任意深度的容器嵌套（`ns["x"] = [[[[1]]]]` 可行）。但�
 两层代价：
 
 1. **GC 周期本身。** 每次 `run_gc_for_namespace` 做三类 `SCAN`（`obj:` / `raw:` / `ref:`）—— O(N)，N 为 canonical name 数 —— 且对每个 canonical name 获取对象级锁并跑若干类型/存在性检查。在百万级对象的 namespace 上，这相当可观。
-2. **强制加锁契约。** 这才是更大的代价。当 `gc_enabled=True` 时，**每个写入者都必须使用 `obj.lock()`** —— 包括同一进程内与你自己的写入线程竞态的 GC 线程。这意味着每个竞争对象上的每次变更 **+2 RTT**，外加锁串行化。见 [§6](#6) 与[多进程加锁](./locking.md)。
+2. **强制加锁契约。** 这才是更大的代价。当 `gc_enabled=True` 时，**每个写入者都必须使用 `obj.lock()`** —— 包括同一进程内与你自己的写入线程竞态的 GC 线程。这意味着每个竞争对象上的每次变更 **+2 RTT**，外加锁串行化。见 [§6](#perf-lock-misuse) 与[多进程加锁](./locking.md)。
 
 ### 推荐
 
@@ -138,13 +141,13 @@ GPDC 支持任意深度的容器嵌套（`ns["x"] = [[[[1]]]]` 可行）。但�
 - **孤儿量不大时，在维护窗口手动跑 GC**：`domain.run_gc(namespace=None)` 返回被删除的 key 数。这既避免了后台线程，也免除了常驻的加锁契约。
 - **若确实启用 GC，就接受加锁代价**，并在所有写入者预算每变更 +2 RTT。完整契约见[多进程加锁](./locking.md)。
 
-> GC 清理什么、何时运行，见[生命周期管理 §10](./lifecycle.md#10)。
+> GC 清理什么、何时运行，见[生命周期管理 §10](./lifecycle.md#lifecycle-gc)。
 
 ---
 
-## 6. 锁的误用
+## 6. 锁的误用 { #perf-lock-misuse }
 
-锁是**可选且建议性的**，且并非免费。完整分析见[多进程加锁 → 性能影响](./locking.md#_3)；简版如下：
+锁是**可选且建议性的**，且并非免费。完整分析见[多进程加锁 → 性能影响](./locking.md#locking-perf)；简版如下：
 
 - 无竞争的 `obj.lock()` 给每个操作加 **+2 RTT**（获取 + 释放）。
 - 有竞争的锁会串行化访问：吞吐降到 `1 / (关键区 + 2·RTT)`。
@@ -163,7 +166,7 @@ GPDC 支持任意深度的容器嵌套（`ns["x"] = [[[[1]]]]` 可行）。但�
 - **关键区保持最小** —— 读 → 计算 → 写，仅此而已。
 - **投机路径优先 `try_lock()`**，可推迟时即推迟。
 
-> 完整经验法则与开销表见[多进程加锁 → 推荐用法](./locking.md#_9)。
+> 完整经验法则与开销表见[多进程加锁 → 推荐用法](./locking.md#locking-recommended)。
 
 ---
 
@@ -210,7 +213,7 @@ ns["matrix"][0][0] = 99            # 一次定向写入
 - **使用容器的变更方法**（`append`、`extend`、`__setitem__`、`pop` …）—— 它们在元素级别直接命中 Redis。
 - **需要对同一份数据做多次操作时，先用 `.value` 拉到本地一次**，然后一次性写回结果。
 - **用 `extend(...)` 批量追加**，而非多次 `append(...)`。
-- **对 pandas**，见 [Pandas 支持 → 访问器成本指南](./pandas-support.md#_5)：一次性子集读取用在线选择性访问器；重度重复操作用 `.value`。永远不要按行或按单元格访问缓存。
+- **对 pandas**，见 [Pandas 支持 → 访问器成本指南](./pandas-support.md#pandas-cost-guide)：一次性子集读取用在线选择性访问器；重度重复操作用 `.value`。永远不要按行或按单元格访问缓存。
 
 ---
 
@@ -257,11 +260,12 @@ for name in ns:                    # SCAN
 
 - **不要把 `iter(ns)` / `len(ns)` 放进热循环。** 需要多次使用时，把结果缓存起来。
 - **高频成员测试，也不要把 `k in ns` 放进紧凑循环** —— 每次检查仍是一次 Redis 往返。要么自维护一份索引（一个 `SetObject` 存合法名称），要么直接读并捕获 `KeyError`。
+- **`cache.has_uri(uri)` / `cache.get_object_by_uri(uri)` 同样并非免费** —— 每次都要一次 Redis 往返（外加每条路径分段一次；见 [§2](#perf-cost-ref)）。对同一组 URI 做紧凑的存在性检查循环时，应把结果缓存到本地，而非每次迭代都重新解析。（相比之下，`name in cache` 是一次本地 0-RTT 的配置检查。）
 - **namespace 级清理优先用 `ns.clear()`**（一次批量 SCAN+DELETE），而非反复 `del ns[k]`。
 
 ---
 
-## 10. 引用抖动
+## 10. 引用抖动 { #perf-ref-churn }
 
 持有**嵌套匿名子对象**的容器，每次结构变更都要付出代价：移除或覆盖一个元素会释放一个引用；当某个匿名子对象的最后一个引用者消失时，它会被级联删除（而这又会遍历*它的*子对象）。在这类结构上高抖动会产生源源不断的引用追踪流量与级联删除。
 
@@ -321,7 +325,7 @@ while True:
 
 ## 延伸阅读
 
-- **[多进程加锁 → 性能影响](./locking.md#_3)** —— 锁开销模型的详解。
-- **[生命周期管理 → 滑动窗口刷新](./lifecycle.md#5)** —— sliding 刷新为何会遍历子树。
-- **[生命周期管理 → 垃圾回收](./lifecycle.md#10)** —— GC 每个周期实际做什么。
-- **[Pandas 支持 → 访问器成本指南](./pandas-support.md#_5)** —— 选择性读取 vs 完整还原的开销。
+- **[多进程加锁 → 性能影响](./locking.md#locking-perf)** —— 锁开销模型的详解。
+- **[生命周期管理 → 滑动窗口刷新](./lifecycle.md#lifecycle-sliding)** —— sliding 刷新为何会遍历子树。
+- **[生命周期管理 → 垃圾回收](./lifecycle.md#lifecycle-gc)** —— GC 每个周期实际做什么。
+- **[Pandas 支持 → 访问器成本指南](./pandas-support.md#pandas-cost-guide)** —— 选择性读取 vs 完整还原的开销。

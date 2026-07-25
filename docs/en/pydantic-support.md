@@ -103,7 +103,7 @@ GPDCTypeRegistry.register(
 
 # ── Use ──────────────────────────────────────────────────────────
 config = GPDCDomainConfig(redis_host="127.0.0.1", redis_port=6379, redis_password="secret")
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 ns = domain.ensure_namespace("app")
 
 # Scalar mode: atomic read/write of the whole model.
@@ -122,7 +122,7 @@ domain.close()
 
 ---
 
-## Scalar Mode
+## Scalar Mode { #pydantic-scalar-mode }
 
 Stores the entire model as a single JSON-encoded Redis string. Reads return a freshly constructed model instance.
 
@@ -185,11 +185,23 @@ Base class for container-mode pydantic objects. Subclasses must set `TYPE = "col
 | Operation | Behaviour |
 |---|---|
 | `obj["field"]` | Read one field. If the stored hash slot is present, returns the stored value. If the slot is missing (model evolution, external ops, GC edge cases), falls back to the field's declared `default_factory` (called) or `default` — including an explicit `default=None`, which correctly returns `None`. A *required* field (no `default`, no `default_factory`) with a missing slot raises `KeyError`. Unknown fields raise `KeyError`. |
-| `obj["field"] = value` | Write one field. Unknown fields raise `KeyError`. Releases the previous ref held by the overwritten value and applies sliding-TTL semantics. |
+| `obj["field"] = value` | Write one field. The value is **validated against the field's declared type** before any Redis write — a type mismatch raises `pydantic.ValidationError` at the call site and leaves the object untouched. Unknown fields raise `KeyError`. Releases the previous ref held by the overwritten value and applies sliding-TTL semantics. |
 | `del obj["field"]` | **Rejected** — model fields are structural and cannot be deleted. Always raises `TypeError`. |
 | `"field" in obj` | `True` if `field` is a declared model field. |
 | `iter(obj)` | Iterate the declared field names. |
 | `len(obj)` | Number of declared fields. |
+
+!!! warning "Container mode validates one field at a time"
+
+    `__setitem__` validates the value against **that field's type only** (using pydantic's default, coercing config — the same coercions a normal `Model(field=value)` construction accepts). It does **not** run cross-field / model-level validators (e.g. `@model_validator` rules relating two fields), because evaluating those requires the whole model snapshot. Container mode trades whole-model validation for field-level access.
+
+    If you need cross-field validation, register the model with the **scalar codec** ([`PydanticModelScalarCodec`](#pydantic-scalar-mode)) instead — it stores and reconstructs the model atomically, so every validator runs on every read. Container mode is the right choice when you want field-level access and can tolerate single-field-only validation. |
+
+!!! tip "URI path traversal works on container-mode models"
+
+    Because `BaseModelContainerObject` is a `MutableMapping`, a GPDC URI with extra path segments descends into a container-mode model by field name: `gpdc://d/ns/order_obj/order_id` walks `obj["order_id"]`. A field whose value is itself a nested container can be traversed further (`gpdc://d/ns/order_obj/items/0`). A URI that terminates on a **scalar** field raises `ObjectNotFoundByURIError` — `get_object_by_uri` returns data objects, never values.
+
+    Scalar-mode pydantic models (the atomic-JSON `PydanticModelScalarCodec` / a plain `GPDCScalarObject` subclass) have **no `__getitem__`**, so any path segment beyond the root raises `ObjectNotFoundByURIError`. The root object itself (`gpdc://d/ns/order_obj`, no path) resolves fine in either mode.
 
 **Other members**
 

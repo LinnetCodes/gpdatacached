@@ -158,6 +158,70 @@ class TestCreateRawHashLayout:
             DataFrameCodec.create_raw(ns, raw_key, df, "owner", "permanent", 0)
 
 
+class TestDataFrameRangeIndexNonUnitStepLogic03:
+    """CQR-2026-07-24 logic.03: non-unit RangeIndex step honoured by __len__,
+    extend, and column assignment (previously __len__ used stop-start and extend
+    added n instead of n*step)."""
+
+    def test_len_non_unit_step(self, ns):
+        ns["df"] = pd.DataFrame({"v": [10, 20, 30]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        assert len(obj) == 3  # not 15
+
+    def test_len_negative_step(self, ns):
+        ns["df"] = pd.DataFrame({"v": [30, 20, 10]}, index=pd.RangeIndex(20, 5, -5))
+        obj = ns.get_object("df")
+        assert len(obj) == 3
+
+    def test_column_assignment_correct_length_accepted(self, ns):
+        # Before the fix, __len__ returned 15 so a 3-value column was rejected.
+        ns["df"] = pd.DataFrame({"v": [10, 20, 30]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        obj["w"] = [100, 200, 300]
+        assert list(obj["w"]) == [100, 200, 300]
+
+    def test_extend_non_unit_step_stays_compact_and_correct(self, ns):
+        # Direction A: a non-unit RangeIndex stays compact (does NOT promote to levels)
+        # and advances range_stop by n*step.
+        ns["df"] = pd.DataFrame({"v": [1, 2, 3]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"v": [4, 5]}, index=pd.RangeIndex(20, 30, 5)))
+        # Still compact range storage (logic.03 direction A):
+        from gpdatacached.extensions.pandas_support import _decode_scalar
+
+        assert _decode_scalar(obj._raw_fields()["~index_kind"]) == "range"
+        val = obj.value
+        assert len(val) == 5
+        assert list(val.index) == [5, 10, 15, 20, 25]
+        assert list(val["v"]) == [1, 2, 3, 4, 5]
+
+    def test_extend_negative_step_stays_compact_and_correct(self, ns):
+        ns["df"] = pd.DataFrame({"v": [3, 2, 1]}, index=pd.RangeIndex(20, 5, -5))
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"v": [5, 0]}, index=pd.RangeIndex(5, -5, -5)))
+        from gpdatacached.extensions.pandas_support import _decode_scalar
+
+        assert _decode_scalar(obj._raw_fields()["~index_kind"]) == "range"
+        val = obj.value
+        assert len(val) == 5
+        assert list(val.index) == [20, 15, 10, 5, 0]
+
+    def test_extend_repeated_non_unit_step(self, ns):
+        ns["df"] = pd.DataFrame({"v": [1, 2, 3]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        obj.extend(pd.DataFrame({"v": [4]}, index=pd.RangeIndex(20, 25, 5)))
+        obj.extend(pd.DataFrame({"v": [5, 6]}, index=pd.RangeIndex(25, 35, 5)))
+        val = obj.value
+        assert list(val.index) == [5, 10, 15, 20, 25, 30]
+        assert list(val["v"]) == [1, 2, 3, 4, 5, 6]
+
+    def test_iloc_slice_non_unit_step(self, ns):
+        ns["df"] = pd.DataFrame({"v": [10, 20, 30]}, index=pd.RangeIndex(5, 20, 5))
+        obj = ns.get_object("df")
+        sub = obj.iloc[0:2]
+        assert list(sub.index) == [5, 10]
+
+
 class TestDataFrameRoundTrip:
     @pytest.mark.parametrize(
         "df",
@@ -1404,3 +1468,64 @@ class TestDataFrameMultiIndexIntegration:
         assert isinstance(sub.columns, pd.MultiIndex)
         assert sub.columns.names == ("CL0", "CL1")
         assert list(sub.index) == [("r", 1), ("r", 2)]
+
+
+class TestStaleHandleLogic02DataFrame:
+    """CQR-2026-07-24 logic.02: a stale DataFrame handle must raise before any Redis write."""
+
+    def _delete_meta(self, obj, raw_redis):
+        raw_redis.delete(obj._canonical_redis_key())
+
+    def test_extend_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["df"] = pd.DataFrame({"v": [1, 2]}, index=pd.RangeIndex(2))
+        obj = ns.get_object("df")
+        before = raw_redis.hgetall(obj.raw_key)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj.extend(pd.DataFrame({"v": [3, 4]}, index=pd.RangeIndex(2, 4)))
+        assert raw_redis.hgetall(obj.raw_key) == before
+
+    def test_setitem_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["df"] = pd.DataFrame({"v": [1, 2]}, index=pd.RangeIndex(2))
+        obj = ns.get_object("df")
+        before = raw_redis.hgetall(obj.raw_key)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            obj["w"] = [10, 20]
+        assert raw_redis.hgetall(obj.raw_key) == before
+
+    def test_delitem_raises_and_leaves_raw_untouched(self, ns, raw_redis):
+        from gpdatacached.exceptions import ObjectGoneError
+
+        ns["df"] = pd.DataFrame({"v": [1, 2], "w": [3, 4]}, index=pd.RangeIndex(2))
+        obj = ns.get_object("df")
+        before = raw_redis.hgetall(obj.raw_key)
+        self._delete_meta(obj, raw_redis)
+        with pytest.raises(ObjectGoneError, match="no longer exists"):
+            del obj["w"]
+        assert raw_redis.hgetall(obj.raw_key) == before
+
+
+class TestFailedEncodeLogic01DataFrame:
+    """CQR-2026-07-24 logic.01: a failing DataFrame __setitem__ (column replace
+    whose value fails to encode) must not release the old column ref early."""
+
+    def test_setitem_replacing_column_with_cyclic_value_leaves_old_intact(self, ns, raw_redis):
+        # Build a DataFrame with a container column whose replacement would fail.
+        # Simplest failing-encode: a self-referential list (cycle) as the new value.
+        ns["df"] = pd.DataFrame({"v": [1, 2]}, index=pd.RangeIndex(2))
+        obj = ns.get_object("df")
+        before = raw_redis.hgetall(obj.raw_key)
+
+        cyclic = []
+        cyclic.append(cyclic)  # self-reference -> CyclicReferenceError on encode
+        with pytest.raises(Exception):
+            obj["v"] = cyclic
+        # Parent hash unchanged; the old column 'v' was NOT released/deleted.
+        assert raw_redis.hgetall(obj.raw_key) == before
+
+

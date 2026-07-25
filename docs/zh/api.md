@@ -44,7 +44,7 @@ GPDCDomain  ──┬── GPDCNamespace ──┬── GPDCDataObject (标量
 
 ---
 
-## 快速开始
+## 快速开始 { #api-quick-start }
 
 ```python
 import gpdatacached
@@ -57,7 +57,7 @@ config = GPDCDomainConfig(
     redis_db=0,
     redis_password="secret",
 )
-domain = GPDCDomain("mydomain", config)
+domain = GPDCDomain(config, name="mydomain")
 
 # 2. 获取或创建 namespace。
 ns = domain.ensure_namespace("analytics")
@@ -90,12 +90,44 @@ domain.close()
 
 ---
 
+## 通过配置管理 Domain：`GPDataCache`
+
+当你的应用由 [`gpconfig`](https://github.com/linnetcodes/gpconfig) 管理的配置文件驱动大量 domain 时，`GPDataCache` 是更高层的入口。它持有一个 `GPConfigFolder`，从中惰性地构造并缓存 `GPDCDomain` 实例，并将 GPDC URI 解析为数据对象。
+
+```python
+from gpconfig import GPConfigManager
+import gpdatacached                                       # 向 gpconfig 注册 GPDCDomain
+from gpdatacached import GPDataCache
+
+# 1. 为你配置文件夹下的 "gpdc" 子文件夹构建一个 GPConfigFolder。
+mgr = GPConfigManager("myproject", cfg_folder="/path/to/configs")
+folder = mgr.get_config("gpdc")        # -> GPConfigFolder；示例布局见 tests/configs/gpdc
+
+# 2. GPDataCache 管理该文件夹中发现的 domain。
+with GPDataCache(folder) as cache:
+    "core_domain" in cache                                  # 存在对应配置时为 True（不触碰 Redis）
+    domain = cache.get_domain("core_domain")                # 惰性构造 + 缓存
+
+    # 3. 通过 GPDC URI 解析对象 —— 包括匿名嵌套对象。
+    ns = domain.get_namespace("core_app")
+    ns["config"] = {"server": {"host": "localhost", "port": 8080}, "tags": ["a", "b"]}
+
+    cfg = cache.get_object_by_uri("gpdc://core_domain/core_app/config")
+    server = cache.get_object_by_uri("gpdc://core_domain/core_app/config/server")
+    cache.has_uri("gpdc://core_domain/core_app/missing")    # False
+# 退出时 close() 会关闭所有已缓存的 domain（幂等）。
+```
+
+完整的 API 及 [URI 解析规则](#get_object_by_uri)（路径遍历、标量终结点、`ListObject` 索引强转）见下文的 [`GPDataCache`](#gpdatacache)。
+
+---
+
 ## 核心类型
 
 ### `GPDCDomain`
 
 ```python
-class GPDCDomain(name: str, config: GPDCDomainConfig)
+class GPDCDomain(config: GPDCDomainConfig, name: str | None = None)
 ```
 
 配置根与 Redis 连接池。构造时会：
@@ -158,7 +190,7 @@ class GPDCDomainConfig(**fields)   # 继承自 gpconfig.GPConfig / pydantic Base
 | `default_cache_mode` | `str` | `"permanent"` | 取值：`"permanent"`、`"ttl"`、`"sliding"`。 |
 | `default_ttl_seconds` | `int` | `0` | 默认 TTL；当模式为 `"ttl"`/`"sliding"` 时必须 `> 0`。 |
 | `gc_enabled` | `bool` | `False` | 是否启动后台 GC 线程。 |
-| `gc_interval_seconds` | `int` | `300` | 后台 GC 周期间隔（秒）。 |
+| `gc_interval_seconds` | `int` | `300` | 后台 GC 周期间隔（秒；必须 `≥ 30`，更小值会让 GC 线程忙循环并冲击 Redis）。 |
 | `namespaces` | `dict[str, GPDCNamespaceConfig]` | `{}` | 需要预创建的 namespace。 |
 | `default_lock_ttl_seconds` | `int` | `30` | 锁 key 的 TTL（必须 `≥ 1`）。 |
 | `default_lock_acquire_timeout_seconds` | `int` | `30` | `obj.lock()` 的阻塞超时（必须 `≥ 0`）。 |
@@ -239,10 +271,95 @@ def reset_domain_config(name: str, config: GPDCDomainConfig) -> None
 
 ```python
 reset_domain_config("mydomain", old_config)     # 必须在构造之前调用
-domain = GPDCDomain("mydomain", new_config)     # 写入新的锁配置
+domain = GPDCDomain(new_config, name="mydomain")     # 写入新的锁配置
 ```
 
 只会读取 `config` 中的 Redis 连接字段；传入 config 上的锁字段会被忽略。
+
+---
+
+### `GPDataCache`
+
+```python
+class GPDataCache(folder: gpconfig.GPConfigFolder)   # 上下文管理器
+```
+
+一个门面（facade），负责管理从 [`gpconfig`](https://github.com/linnetcodes/gpconfig) 的 `GPConfigFolder` 中发现的 `GPDCDomain` 实例，并将 GPDC URI 解析为 [`GPDCDataObject`](#gpdcdataobject) 实例。当你的 domain 由配置文件驱动、而非在代码中临时构造时，它是推荐的入口。
+
+**构造。** 基于 `GPConfigFolder` 构造。构造时只会保存该文件夹的引用 —— **不会创建任何 domain**。Domain 在首次通过 [`get_domain`](#gpdatacache) 访问时惰性构造（经由 gpconfig 的对象工厂 `folder.get_object(name)`），并缓存在一个内部 dict 中。该缓存是一个快照：构造之后被编辑的配置文件**不会**被重新读取；要应用变更需重建 `GPDataCache`。
+
+`GPDataCache` **不会**创建缺少配置文件的 domain —— 临时 domain 请直接使用 [`GPDCDomain`](#gpdcdomain)。
+
+> **注册副作用。** `import gpdatacached` 会将 `GPDCDomain` 和 `GPDCDomainConfig` 注册到 gpconfig 的对象工厂（幂等），这正是 `folder.get_object(name)` 能够构造 `GPDCDomain` 的原因。无需额外设置。
+
+**支持的协议方法**
+
+- `name in cache` → 文件夹中存在名为 `name` 的配置时为 `True`。这是纯配置快照检查：**不**触碰 Redis，也不构造（或要求存在）`GPDCDomain` 实例 —— 答案只取决于配置文件是否存在，与是否调用过 `get_domain(name)` 无关。domain 实例在首次 `get_domain(name)` 访问时惰性创建。
+- `with cache as c` / `__exit__` → 退出时关闭所有已缓存的 domain；`close()` 是幂等的。
+
+> **`close()` 后的行为 —— 成员检查的例外。** `cache.close()` 之后，触碰资源的方法（`get_domain`、`get_object_by_uri`、`has_uri`）会抛 `RuntimeError("GPDataCache is closed")`。`name in cache` 成员检查是**故意的例外**：因为它只读配置快照、不触碰任何资源，所以在 `close()` 后仍然可用。这是有意为之 —— "这个 domain 是否有配置？" 这个问题与 cache 是否打开无关。
+
+**方法**
+
+| 方法 | 说明 |
+|---|---|
+| `get_domain(name)` | 返回 `name` 对应的已缓存 `GPDCDomain`，首次访问时惰性构造。若 `name` 无对应配置，则抛出 gpconfig 的 `ConfigNotFoundError`。`close()` 后抛 `RuntimeError`。 |
+| [`get_object_by_uri(uri)`](#get_object_by_uri) | 将 GPDC URI 解析为 `GPDCDataObject`。`close()` 后抛 `RuntimeError`。 |
+| `has_uri(uri)` | 当 `get_object_by_uri(uri)` 会成功时返回 `True`。`close()` 后抛 `RuntimeError`。 |
+| `close()` | 关闭所有已缓存的 domain。幂等。 |
+
+---
+
+#### `get_object_by_uri`
+
+```python
+def get_object_by_uri(self, uri: str) -> GPDCDataObject
+```
+
+将一个 GPDC URI 解析为 [`GPDCDataObject`](#gpdcdataobject)。URI 必须以 `gpdc://` 开头，形式如下：
+
+```
+gpdc://{domain}/{namespace}/{name}[/{path_segment}...]
+```
+
+- 前三个分段（`domain` / `namespace` / `name`）用于定位**根对象**，通过 `namespace.get_object(name)` 获取 —— 因此根对象始终以 `GPDCDataObject` 形式返回，**即使它是标量也不例外**（不同于 `ns[name]` 会把标量解包为原生值）。
+- 之后的所有分段构成一条**路径**，通过 `__getitem__` 逐段深入对象内部。匿名嵌套容器正是通过这种方式变得可寻址：`gpdc://d/ns/obj/key/0` 等价于 `obj["key"][0]`。
+
+**始终返回对象，绝不返回值。** `get_object_by_uri` 始终返回 `GPDCDataObject`。它不能用于直接读取某个标量值或元素值。
+
+**路径分段规则**
+
+| 当前对象 | 分段处理方式 |
+|---|---|
+| `ListObject` | 分段必须是**非负整数**（纯数字字符串）；在索引前会被转换为 `int`。负索引、小数和切片会被拒绝。 |
+| `DictObject` / pydantic 容器模式模型 / 其他可下标容器 | 分段按原样使用（作为字符串 key）。 |
+| `SetObject`、标量对象 | 没有 `__getitem__` —— 任何进一步的路径分段都会抛出 `ObjectNotFoundByURIError`。 |
+
+**标量终结点会被拒绝。** 嵌套在容器内部的标量以内联值形式存储（而非作为被引用对象），因此深入到一个标量元素得到的是原生 Python 值。由于 `get_object_by_uri` 只返回对象，终止于标量的路径会抛出 `ObjectNotFoundByURIError`。例如，给定 `ns["cfg"] = {"port": 8080}`，`gpdc://d/ns/cfg/port` 会抛错（值 `8080` 是标量，而非数据对象）。
+
+**错误。** 每一种失败情况都会抛出 [`ObjectNotFoundByURIError`](#objectnotfoundbyurierror)（携带 `.uri` 和 `.reason`）：URI 格式错误（缺少 `gpdc://`、分段少于三段、存在空分段）、未知的 domain、缺少 namespace、缺少根对象、某个路径分段失败（`KeyError`/`IndexError`/`TypeError`），以及标量终结点。
+
+**示例。** 给定 `ns["cfg"] = {"server": {"host": "x"}, "tags": ["a","b"]}`：
+
+| URI | 结果 |
+|---|---|
+| `gpdc://d/ns/cfg` | `cfg` 对应的 `DictObject` |
+| `gpdc://d/ns/cfg/server` | `server` 对应的嵌套 `DictObject` |
+| `gpdc://d/ns/cfg/server/host` | 抛错 —— `host` 是标量 `"x"` |
+| `gpdc://d/ns/cfg/tags/0` | 抛错 —— `tags[0]` 是标量 `"a"` |
+| `gpdc://d/ns/cfg/missing` | 抛错 —— 路径分段触发 `KeyError` |
+
+---
+
+### `ObjectNotFoundByURIError`
+
+```python
+class ObjectNotFoundByURIError(GPDCError)
+```
+
+当 GPDC URI 无法解析为 `GPDCDataObject` 时，由 [`GPDataCache.get_object_by_uri`](#get_object_by_uri) 抛出。涵盖所有失败情况：URI 语法格式错误、未知的 domain（无配置）、缺少 namespace、缺少根对象、某个路径分段失败，以及标量终结点。携带 `.uri`（URI 字符串）和 `.reason`（简短说明）。
+
+`has_uri` 只会吞掉这个异常；基础设施错误（如 Redis 连接失败）会继续向上传播。
 
 ---
 
@@ -286,12 +403,13 @@ class GPDCDataObject(name, namespace, *, canonical_name=None)   # ABC
 
 | 方法 | 说明 |
 |---|---|
-| `expire_in(seconds)` | 设置新的 TTL。对象必须处于 `cache_mode="ttl"`。需要 ownership。 |
+| `expire_in(seconds)` | 设置新的 TTL。对象必须处于 `cache_mode="ttl"`。`seconds` 必须 `> 0` —— 要立即删除请用 `expire_now()`。需要 ownership。 |
 | `expire_at(when)` | 设置绝对过期时间。对象必须处于 `cache_mode="ttl"`。需要 ownership。若 `when` 已过去则立即删除对象（等价于 `del ns[name]`：清理 `obj:`/`raw:`/`ref:` 并级联删除匿名子树；若 owner 仍被引用则抛出 `CanonicalObjectReferencedError` —— 可先用 `has_referrers()` 检查）。 |
+| `expire_now()` | 立即删除本对象。等价于 `del ns[canonical_name]`：完整拆卸（obj:/raw:/ref: + 级联删除匿名子树）。适用于任何 `cache_mode`（不像 `expire_in`/`expire_at` 要求 `cache_mode="ttl"`）。需要 ownership；若 owner 仍被别名引用则抛出 `CanonicalObjectReferencedError` —— 可先用 `has_referrers()` 检查。 |
 | `persist()` | 切换为 `cache_mode="permanent"` 且 `ttl=0`。需要 ownership。 |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | 替换整个缓存策略。需要 ownership。 |
 | `refresh_ttl()` | 将对象自身的 TTL 重新应用到其 key，并级联刷新其拥有的子树（用于滑动窗口刷新路径）。永久对象为空操作。 |
-| `take_ownership()` | 将一个引用对象提升为其数据的 canonical owner。仅对具名引用有效。 |
+| `take_ownership()` | 把**被引用对象**提升为自持（主要用例：指向匿名嵌套对象的命名引用）。对命名（已自持）对象的引用是正确的 no-op。调用本身必须经由命名引用句柄发起。见[生命周期 §7](./lifecycle.md#7-the-ownership-model)。 |
 
 **加锁方法**（可选使用，变更操作永远不会自动调用）
 
@@ -467,7 +585,7 @@ GPDC 类型 `collection:set`，底层为 Redis set。
 
 ## 编解码器（Codec）
 
-Codec 负责 Python 值与 Redis 存储表示之间的相互转换。注册到 [`GPDCTypeRegistry`](#_8) 的每种类型都必须提供一个 codec。
+Codec 负责 Python 值与 Redis 存储表示之间的相互转换。注册到 [`GPDCTypeRegistry`](#api-type-registry) 的每种类型都必须提供一个 codec。
 
 > 本节为 API 摘要。有关编写 codec 的完整指南 —— 标量与容器，含实战示例（`Color`、`Counter`）以及每个容器都必须调用的变更钩子 —— 见专门的[可扩展性](./extensibility.md)文档。
 
@@ -516,7 +634,7 @@ class GPDCContainerCodec(ABC)
 
 ---
 
-## 类型注册表
+## 类型注册表 { #api-type-registry }
 
 ### `GPDCTypeRegistry`
 
@@ -562,7 +680,8 @@ GPDCTypeRegistry.register(
 
 ## Key 与 URI 工具函数
 
-用于操作 GPDC 的 key/URI 方案的低层辅助函数。大多数应用不需要直接使用。
+用于操作 GPDC 的 key/URI 方案的低层辅助函数。如果需要真正将一个 URI *解析*为数据对象，请使用
+[`GPDataCache.get_object_by_uri`](#get_object_by_uri) —— 这些辅助函数仅负责构造或转换 URI/key 字符串，很少需要直接使用。
 
 ### `make_uri`
 
@@ -592,7 +711,23 @@ def validate_object_name(name: str) -> None
 
 ## 异常
 
-所有公开异常都派生自一个私有的 `GPDCError(Exception)` 基类。请按需逐个捕获以获得精确的错误处理。
+所有公开异常都派生自公开的 `GPDCError(Exception)` 根基类。用 `except GPDCError` 可捕获所有 gpdatacached 错误，或按需逐个捕获以获得精确处理。锁相关的错误额外共享一个公开的 `GPDCLockError` 基类 —— `except GPDCLockError` 可捕获所有锁获取/持有相关的失败（当前为 `LockAcquisitionTimeout`）。
+
+### `GPDCError`
+
+```python
+class GPDCError(Exception)
+```
+
+gpdatacached 异常层次的根基类。本库抛出的每一个异常都是 `GPDCError` 的子类，因此 `except GPDCError` 是最宽泛的全捕获。当你需要区分不同失败模式时，优先捕获具体的子类。
+
+### `GPDCLockError`
+
+```python
+class GPDCLockError(GPDCError)
+```
+
+锁获取/持有相关错误的基类。`except GPDCLockError` 可捕获所有锁相关失败（当前为 `LockAcquisitionTimeout`；`LockOwnershipError` 同样继承自它，但在内部被 `HeldLock.release()` 吞掉）。
 
 ### `ObjectGoneError`
 
@@ -624,7 +759,7 @@ class CyclicReferenceError(GPDCError)
 class LockAcquisitionTimeout(GPDCLockError)
 ```
 
-当 `obj.lock()` 在配置的 `timeout` 内未能获取到锁时抛出。携带 `.lock_key` 和 `.timeout`。详见[多进程加锁](./locking.md)。
+当 `obj.lock()` 在配置的 `timeout` 内未能获取到锁时抛出。携带 `.lock_key` 和 `.timeout`。它继承公开的 `GPDCLockError` 基类，因此 `except GPDCLockError` 可捕获它。详见[多进程加锁](./locking.md)。
 
 ### `GPDCLockConfigInconsistentError`
 
