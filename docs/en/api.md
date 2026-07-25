@@ -44,7 +44,7 @@ GPDCDomain  ──┬── GPDCNamespace ──┬── GPDCDataObject (scalar
 
 ---
 
-## Quick Start
+## Quick Start { #api-quick-start }
 
 ```python
 import gpdatacached
@@ -298,7 +298,7 @@ than constructed ad-hoc in code.
 **Construction.** Built from a `GPConfigFolder`. On construction it stores the
 folder reference only — **no domain is created**. Domains are constructed
 lazily (via gpconfig's object factory `folder.get_object(name)`) on first
-[`get_domain`](#get_domain) access, and cached in an internal dict. The cache
+[`get_domain`](#gpdatacache) access, and cached in an internal dict. The cache
 is a snapshot: config files edited after construction are **not** re-read;
 rebuild the `GPDataCache` to pick up changes.
 
@@ -625,7 +625,7 @@ Members may be any hashable scalar (no containers, no empty tuple). Implements t
 
 ## Codecs
 
-Codecs convert between Python values and their Redis storage representation. Every type registered with [`GPDCTypeRegistry`](#type-registry) must supply a codec.
+Codecs convert between Python values and their Redis storage representation. Every type registered with [`GPDCTypeRegistry`](#api-type-registry) must supply a codec.
 
 > This section is the API summary. For a full walkthrough of writing codecs — scalar and container, with worked examples (`Color`, `Counter`) and the mutation hooks every container must call — see the dedicated [Extensibility](./extensibility.md) document.
 
@@ -674,7 +674,7 @@ Abstract base for container codecs. Containers store their elements in a dedicat
 
 ---
 
-## Type Registry
+## Type Registry { #api-type-registry }
 
 ### `GPDCTypeRegistry`
 

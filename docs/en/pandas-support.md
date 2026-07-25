@@ -103,7 +103,7 @@ domain.close()
 
 ---
 
-## Accessor Cost Guide
+## Accessor Cost Guide { #pandas-cost-guide }
 
 The online accessors exist only when they are meaningfully cheaper than `.value`. Use this table to decide. (For the broader performance picture across all of GPDC — sliding TTL, nesting, GC, locking — see the [Performance Guide](./performance-guide.md).)
 

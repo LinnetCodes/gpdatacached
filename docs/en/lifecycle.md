@@ -23,7 +23,7 @@ graph LR
     E --> D
 ```
 
-GPDC automates **①②③** for you. You only touch lifecycle directly when you want to **change** an object's policy (make a permanent object expire, make a ttl object persist, etc.) or when you need to **delete** something explicitly. The part that most often confuses users is **how anonymous and reference objects enter and leave these phases** — sections [§8](#8-anonymous-object-lifecycle) and [§9](#9-reference-alias-lifecycle) cover that in detail.
+GPDC automates **①②③** for you. You only touch lifecycle directly when you want to **change** an object's policy (make a permanent object expire, make a ttl object persist, etc.) or when you need to **delete** something explicitly. The part that most often confuses users is **how anonymous and reference objects enter and leave these phases** — sections [§8](#lifecycle-anon) and [§9](#lifecycle-reference) cover that in detail.
 
 ---
 
@@ -112,7 +112,7 @@ This is why a container's metadata, raw data, and referrer set always vanish tog
 
 ---
 
-## 5. Sliding-Window Refresh
+## 5. Sliding-Window Refresh { #lifecycle-sliding }
 
 The `sliding` mode is what makes GPDC useful for caches that should "stay alive while in use." Every mutation re-applies the TTL.
 
@@ -153,7 +153,7 @@ After refreshing the ancestor, GPDC also re-applies each owned child's **own** p
 
 ---
 
-## 6. Manual Policy Changes & Cascade Propagation
+## 6. Manual Policy Changes & Cascade Propagation { #lifecycle-manual }
 
 You rarely need to change policy mid-life, but when you do, GPDC propagates the change across the owned subtree.
 
@@ -230,7 +230,7 @@ The call itself must be made **via a named reference handle**: `obj._is_referenc
 
 ---
 
-## 8. Anonymous Object Lifecycle
+## 8. Anonymous Object Lifecycle { #lifecycle-anon }
 
 Anonymous objects are the **most automatic** part of GPDC. You never create or delete them directly. Understanding their lifecycle prevents most "where did my data go?" confusion.
 
@@ -251,8 +251,8 @@ Each anonymous object gets a generated name (`~anon:{uuid}`), its own `obj:`/`ra
 
 Anonymous objects inherit the policy that was active during encoding — i.e. the parent container's effective policy at create time (`policy_from_defaults` computed from the parent's context). After creation, their lifecycle is **driven by the owner chain**, not by their own policy alone:
 
-- A `sliding` mutation on any descendant refreshes the self-owned ancestor's TTL (see [§5](#5-sliding-window-refresh)).
-- A policy change on the self-owned ancestor propagates down to owned children (see [§6](#6-manual-policy-changes-cascade-propagation)).
+- A `sliding` mutation on any descendant refreshes the self-owned ancestor's TTL (see [§5](#lifecycle-sliding)).
+- A policy change on the self-owned ancestor propagates down to owned children (see [§6](#lifecycle-manual)).
 
 ### Reference counting
 
@@ -276,15 +276,15 @@ graph TD
 
 1. **Last referrer release** — when the last slot referencing the anon is removed (an element is overwritten or popped, or the parent itself is deleted and walks its children). GPDC checks `has_referrers`; if empty and the target is anonymous, it cascades.
 2. **Self-owned parent deletion** — `del ns["matrix"]` deletes the parent's binding, then `_cascade_delete_anonymous` walks the parent's stored raw data, releases nested refs, and recursively deletes any orphaned anons.
-3. **Encode-session rollback** — if an exception propagates out of an `encode_session` (e.g. a `CyclicReferenceError`), every anonymous object created during that session is deleted, leaving no orphan anons behind. (The parent container's own metadata key, written before the encode session opened, is not rolled back by this path.)
+3. **Encode-session rollback** — if an exception propagates out of an `encode_session` (e.g. a `CyclicReferenceError`), every anonymous object created during that session is deleted and any ref-count increments the session made on pre-existing containers are reversed, leaving no orphan anons or phantom referrers behind. How far the cleanup reaches depends on the call site: a failed **first-time store** (`ns[name] = value`) is wrapped by `namespace.__setitem__`, which additionally deletes the just-written binding `obj:`/`raw:`/`ref:` keys, so no orphan meta survives at all; a failed **re-encode inside an existing container** (a mutator like `dict.update`/`list.extend`) only rolls back what the encode session created/referenced — the container's own long-standing `obj:`/`raw:` meta stays put (which is correct: it holds valid pre-existing data).
 
 ### Important consequence
 
-**Anonymous objects are never "leaked" by GPDC.** Between the three cascade triggers and the GC (see [§10](#10-garbage-collection)), an anon that loses all referrers will be reclaimed. The worst case is a brief window between an ungraceful crash and the next GC cycle.
+**Anonymous objects are never "leaked" by GPDC.** Between the three cascade triggers and the GC (see [§10](#lifecycle-gc)), an anon that loses all referrers will be reclaimed. The worst case is a brief window between an ungraceful crash and the next GC cycle.
 
 ---
 
-## 9. Reference (Alias) Lifecycle
+## 9. Reference (Alias) Lifecycle { #lifecycle-reference }
 
 A **reference** is a named binding (`obj:alias` STRING holding `ref:{canonical_obj_key}`) that points at a canonical owner. References let multiple names share one piece of data without copying.
 
@@ -315,9 +315,9 @@ A reference's `obj:alias` key has **no TTL applied**; it persists until explicit
 
 ---
 
-## 10. Garbage Collection
+## 10. Garbage Collection { #lifecycle-gc }
 
-GPDC's background GC cleans up **orphans** — keys left behind when objects expire or referrers churn. It does **not** replace the cascade-delete logic in [§8](#8-anonymous-object-lifecycle); it is a safety net for cases the synchronous path cannot handle atomically:
+GPDC's background GC cleans up **orphans** — keys left behind when objects expire or referrers churn. It does **not** replace the cascade-delete logic in [§8](#lifecycle-anon); it is a safety net for cases the synchronous path cannot handle atomically:
 
 - **TTL expiry**: when a `ttl`/`sliding` object's Redis TTL fires, it vanishes, but referrers and referrer-set entries can linger.
 - **Reference churn**: overwriting/removing container elements leaves stale `ref:` entries.
@@ -385,7 +385,7 @@ A short list of "I expected X, but got Y" scenarios, resolved.
 | "`ttl` mode with `ttl=0` was accepted" | Never. It raises `ValueError`. | Strict validation: `ttl`/`sliding` require `ttl > 0`. |
 | "My `permanent` object disappeared" | Something deleted it (`del`, namespace `clear()`, `destroy()`, or GC of an orphaned anon). | `permanent` only means no TTL; it is not immortality. |
 | "I changed the ancestor to `permanent` but a child still has a TTL" | Propagation only reaches **owned** children. | Children referenced but not **owned** by the ancestor keep their own policy. |
-| "My data vanished after a crash mid-write" | The encode session rolled back all anonymous objects created during the failed write. | This is intentional: a failed write leaves no orphan anons behind (the parent container's own metadata key, written before the encode session, is not rolled back). |
+| "My data vanished after a crash mid-write" | The encode session rolled back all anonymous objects created during the failed write (and, for a first-time store, the binding's `obj:`/`raw:`/`ref:` keys too). | This is intentional: a failed write leaves no orphan anons behind. For a first-time store the whole binding is cleaned up; for a re-encode inside an existing container, the container's own pre-existing meta is intentionally left in place (it holds valid data). |
 
 ---
 

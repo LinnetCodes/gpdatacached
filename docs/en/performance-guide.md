@@ -26,7 +26,7 @@ The anti-patterns below all boil down to **triggering one of these costs unneces
 
 ---
 
-## 2. Cost-per-Operation Reference
+## 2. Cost-per-Operation Reference { #perf-cost-ref }
 
 A quick reference. "RTT" = Redis round-trip. N = number of elements; counts are approximate and ignore contention. Where helpful, "local" marks work that does not hit Redis.
 
@@ -90,11 +90,11 @@ graph TD
 - **Keep sliding objects shallow.** Because the refresh is O(owned subtree size), a sliding container with deeply nested anon children is the worst case. If you must use sliding, prefer flat structures.
 - **Avoid `sliding` on high-churn containers** (frequent appends/pops). Each mutation pays the full subtree walk.
 
-> The full mechanics — owner chain, upward vs downward propagation, validation rules — are in [Lifecycle Management](./lifecycle.md#5-sliding-window-refresh).
+> The full mechanics — owner chain, upward vs downward propagation, validation rules — are in [Lifecycle Management](./lifecycle.md#lifecycle-sliding).
 
 ---
 
-## 4. Excessive Container Nesting
+## 4. Excessive Container Nesting { #perf-nesting }
 
 GPDC supports nesting containers to arbitrary depth (`ns["x"] = [[[[1]]]]` works). Each nesting level has a real cost.
 
@@ -110,7 +110,7 @@ Every nested container is materialised as a **separate anonymous object** with i
 
 On **read**, `.value` loads each anonymous child's meta (one `HGETALL` per `ref:` element) and returns a live `GPDCContainerObject` handle for each — it does **not** recursively decode nested data. Use `.deepcopy()` if you need the fully decoded Python structure (it recursively materialises every level).
 
-On **mutation**, the sliding-refresh and cascade-delete costs scale with the subtree size (see [§3](#3-sliding-ttl-overuse) and [§10](#10-reference-churn)).
+On **mutation**, the sliding-refresh and cascade-delete costs scale with the subtree size (see [§3](#3-sliding-ttl-overuse) and [§10](#perf-ref-churn)).
 
 ### Recommendation
 
@@ -132,7 +132,7 @@ On **mutation**, the sliding-refresh and cascade-delete costs scale with the sub
 Two costs:
 
 1. **The GC cycle itself.** Each `run_gc_for_namespace` does three `SCAN` families (`obj:` / `raw:` / `ref:`) — O(N) where N is the number of canonical names — and for each canonical name acquires the per-object lock and runs several type/existence checks. On a namespace with millions of objects this is noticeable.
-2. **The mandatory-locking contract.** This is the bigger cost. When `gc_enabled=True`, **every writer must use `obj.lock()`** — including your own writer thread racing the GC thread in the same process. That means **+2 RTT per mutation** on every contended object, plus lock serialisation. See [§6](#6-lock-misuse) and [Multi-Process Locking](./locking.md).
+2. **The mandatory-locking contract.** This is the bigger cost. When `gc_enabled=True`, **every writer must use `obj.lock()`** — including your own writer thread racing the GC thread in the same process. That means **+2 RTT per mutation** on every contended object, plus lock serialisation. See [§6](#perf-lock-misuse) and [Multi-Process Locking](./locking.md).
 
 ### Recommendation
 
@@ -141,13 +141,13 @@ Two costs:
 - **Run GC manually in a maintenance window** if orphan volume is low: `domain.run_gc(namespace=None)` returns the number of keys deleted. This avoids both the background thread and the always-on locking contract.
 - **If you do enable GC, accept the locking cost** and budget the +2 RTT per mutation across all writers. See [Multi-Process Locking](./locking.md) for the full contract.
 
-> For what GC cleans and when, see [Lifecycle Management §10](./lifecycle.md#10-garbage-collection).
+> For what GC cleans and when, see [Lifecycle Management §10](./lifecycle.md#lifecycle-gc).
 
 ---
 
-## 6. Lock Misuse
+## 6. Lock Misuse { #perf-lock-misuse }
 
-Locks are **opt-in and advisory**, and they are not free. The full analysis is in [Multi-Process Locking → Performance Impact](./locking.md#performance-impact); the short version:
+Locks are **opt-in and advisory**, and they are not free. The full analysis is in [Multi-Process Locking → Performance Impact](./locking.md#locking-perf); the short version:
 
 - An **uncontended** `obj.lock()` adds **+2 RTT** (acquire + release) per operation.
 - A **contended** lock serialises access: throughput drops to `1 / (critical_section + 2·RTT)`.
@@ -166,7 +166,7 @@ Locks are **opt-in and advisory**, and they are not free. The full analysis is i
 - **Keep critical sections minimal** — read → compute → write, nothing else.
 - **Prefer `try_lock()`** for opportunistic paths where you can defer.
 
-> Full rules of thumb and the cost table are in [Multi-Process Locking → Recommended Usage](./locking.md#recommended-usage).
+> Full rules of thumb and the cost table are in [Multi-Process Locking → Recommended Usage](./locking.md#locking-recommended).
 
 ---
 
@@ -213,7 +213,7 @@ ns["matrix"][0][0] = 99            # one targeted write
 - **Use container mutating methods** (`append`, `extend`, `__setitem__`, `pop`, …) — they hit Redis directly at the element level.
 - **Pull data local once** with `.value` when you need to do many operations on the same data, then write the result back in one pass.
 - **Batch appends** with `extend(...)` rather than many `append(...)` calls.
-- **For pandas**, see [Pandas Support → Accessor Cost Guide](./pandas-support.md#accessor-cost-guide): use online selective accessors for one-shot subset reads; use `.value` for heavy repeated work. Never ping the cache per-row or per-cell.
+- **For pandas**, see [Pandas Support → Accessor Cost Guide](./pandas-support.md#pandas-cost-guide): use online selective accessors for one-shot subset reads; use `.value` for heavy repeated work. Never ping the cache per-row or per-cell.
 
 ---
 
@@ -260,12 +260,12 @@ for name in ns:                    # SCAN
 
 - **Don't put `iter(ns)` / `len(ns)` in hot loops.** Cache the result if you need it more than once.
 - **For high-frequency membership tests, don't put `k in ns` in a tight loop either** — each check is still a Redis round-trip. Either maintain your own index (a `SetObject` of valid names), or just try to read and catch `KeyError`.
-- **`cache.has_uri(uri)` / `cache.get_object_by_uri(uri)` are not free either** — each costs a Redis round-trip (plus one per path segment; see [§2](#2-cost-per-operation-reference)). For a tight existence-check loop over the same set of URIs, cache the result locally rather than re-resolving each iteration. (`name in cache`, by contrast, is a local 0-RTT config check.)
+- **`cache.has_uri(uri)` / `cache.get_object_by_uri(uri)` are not free either** — each costs a Redis round-trip (plus one per path segment; see [§2](#perf-cost-ref)). For a tight existence-check loop over the same set of URIs, cache the result locally rather than re-resolving each iteration. (`name in cache`, by contrast, is a local 0-RTT config check.)
 - **For namespace-wide cleanup, prefer `ns.clear()`** (one bulk SCAN+DELETE) over repeated `del ns[k]` calls.
 
 ---
 
-## 10. Reference Churn
+## 10. Reference Churn { #perf-ref-churn }
 
 Containers that hold **nested anonymous children** pay a cost on every structural change: removing or overwriting an element releases a ref, and when the last referrer of an anonymous child goes, the child is cascade-deleted (which itself walks *its* children). High churn on such structures produces continuous ref-tracking traffic and cascade-delete cascades.
 
@@ -325,7 +325,7 @@ Because RTT dominates small operations, where Redis lives matters as much as how
 
 ## Further Reading
 
-- **[Multi-Process Locking → Performance Impact](./locking.md#performance-impact)** — the lock cost model in detail.
-- **[Lifecycle Management → Sliding-Window Refresh](./lifecycle.md#5-sliding-window-refresh)** — why sliding refresh walks the subtree.
-- **[Lifecycle Management → Garbage Collection](./lifecycle.md#10-garbage-collection)** — what GC actually does each cycle.
-- **[Pandas Support → Accessor Cost Guide](./pandas-support.md#accessor-cost-guide)** — selective read vs full restore costs.
+- **[Multi-Process Locking → Performance Impact](./locking.md#locking-perf)** — the lock cost model in detail.
+- **[Lifecycle Management → Sliding-Window Refresh](./lifecycle.md#lifecycle-sliding)** — why sliding refresh walks the subtree.
+- **[Lifecycle Management → Garbage Collection](./lifecycle.md#lifecycle-gc)** — what GC actually does each cycle.
+- **[Pandas Support → Accessor Cost Guide](./pandas-support.md#pandas-cost-guide)** — selective read vs full restore costs.

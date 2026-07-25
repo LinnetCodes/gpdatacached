@@ -103,7 +103,7 @@ domain.close()
 
 ---
 
-## 访问器成本指南
+## 访问器成本指南 { #pandas-cost-guide }
 
 在线访问器存在的唯一理由是明显比 `.value` 更廉价。请依据下表选择。（GPDC 全库的性能图景 —— sliding TTL、嵌套、GC、加锁 —— 见[性能指南](./performance-guide.md)。）
 

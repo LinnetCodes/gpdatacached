@@ -122,7 +122,7 @@ domain.close()
 
 ---
 
-## Scalar Mode
+## Scalar Mode { #pydantic-scalar-mode }
 
 Stores the entire model as a single JSON-encoded Redis string. Reads return a freshly constructed model instance.
 
@@ -191,7 +191,7 @@ Base class for container-mode pydantic objects. Subclasses must set `TYPE = "col
 
     `__setitem__` validates the value against **that field's type only** (using pydantic's default, coercing config — the same coercions a normal `Model(field=value)` construction accepts). It does **not** run cross-field / model-level validators (e.g. `@model_validator` rules relating two fields), because evaluating those requires the whole model snapshot. Container mode trades whole-model validation for field-level access.
 
-    If you need cross-field validation, register the model with the **scalar codec** ([`PydanticModelScalarCodec`](#scalar-mode-atomic-json)) instead — it stores and reconstructs the model atomically, so every validator runs on every read. Container mode is the right choice when you want field-level access and can tolerate single-field-only validation.
+    If you need cross-field validation, register the model with the **scalar codec** ([`PydanticModelScalarCodec`](#pydantic-scalar-mode)) instead — it stores and reconstructs the model atomically, so every validator runs on every read. Container mode is the right choice when you want field-level access and can tolerate single-field-only validation.
 | `del obj["field"]` | **Rejected** — model fields are structural and cannot be deleted. Always raises `TypeError`. |
 | `"field" in obj` | `True` if `field` is a declared model field. |
 | `iter(obj)` | Iterate the declared field names. |

@@ -122,7 +122,7 @@ domain.close()
 
 ---
 
-## 标量模式
+## 标量模式 { #pydantic-scalar-mode }
 
 将整个模型存储为单个 JSON 编码的 Redis 字符串。读取时返回一个新构造的模型实例。
 
@@ -191,7 +191,7 @@ class BaseModelContainerObject(GPDCContainerObject, collections.abc.MutableMappi
 
     `__setitem__` 只校验值**是否符合该字段的类型**（用 pydantic 默认的、允许 coercing 的配置 —— 与正常 `Model(field=value)` 构造接受的 coercions 相同）。它**不**跑跨字段 / model 级 validators（例如关联两个字段的 `@model_validator` 规则），因为评估这些需要整个 model 快照。容器模式用"整 model 校验"换取了"字段级访问"。
 
-    如果你需要跨字段校验，请改用**标量 codec**（[`PydanticModelScalarCodec`](#scalar-mode-atomic-json)）注册 model —— 它原子地存储和重建 model，因此每次读取都会跑所有 validator。当你需要字段级访问、且能接受"仅单字段校验"时，容器模式才是合适的选择。
+    如果你需要跨字段校验，请改用**标量 codec**（[`PydanticModelScalarCodec`](#pydantic-scalar-mode)）注册 model —— 它原子地存储和重建 model，因此每次读取都会跑所有 validator。当你需要字段级访问、且能接受"仅单字段校验"时，容器模式才是合适的选择。
 | `del obj["field"]` | **被拒绝** —— 模型字段属于结构，不能删除。始终抛出 `TypeError`。 |
 | `"field" in obj` | 当 `field` 是声明的模型字段时为 `True`。 |
 | `iter(obj)` | 遍历声明的字段名。 |

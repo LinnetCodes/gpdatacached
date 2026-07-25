@@ -150,7 +150,7 @@ graph TD
 
 ### Opening domains: direct vs managed
 
-A single domain is opened directly with [`GPDCDomain`](./api.md#gpdcdomain) (see the [Quick Start](./api.md#quick-start)). When your application uses many domains driven by [gpconfig](https://github.com/linnetcodes/gpconfig) config files, [`GPDataCache`](./api.md#gpdatacache) is the managed entry point: it takes a `GPConfigFolder`, lazily constructs and caches the `GPDCDomain` for each config, and resolves GPDC URIs to data objects. Domains without a config file cannot be created through `GPDataCache` — use `GPDCDomain` directly for those.
+A single domain is opened directly with [`GPDCDomain`](./api.md#gpdcdomain) (see the [Quick Start](./api.md#api-quick-start)). When your application uses many domains driven by [gpconfig](https://github.com/linnetcodes/gpconfig) config files, [`GPDataCache`](./api.md#gpdatacache) is the managed entry point: it takes a `GPConfigFolder`, lazily constructs and caches the `GPDCDomain` for each config, and resolves GPDC URIs to data objects. Domains without a config file cannot be created through `GPDataCache` — use `GPDCDomain` directly for those.
 
 ### Identity: canonical name vs binding name
 
@@ -246,7 +246,7 @@ When you store a **nested container** — `ns["matrix"] = [[1, 2], [3, 4]]` — 
 
 ### Promoting an anonymous object: `take_ownership()`
 
-Because an anonymous object's lifetime is attached to its parent container (`owner = parent`), it has no independent lifecycle — its TTL is driven by the owner chain (see [§5](./lifecycle.md#5-sliding-window-refresh)). When you hold a **named reference** to an anonymous object, you can promote the **referenced object** to self-owned with `take_ownership()`:
+Because an anonymous object's lifetime is attached to its parent container (`owner = parent`), it has no independent lifecycle — its TTL is driven by the owner chain (see [§5](./lifecycle.md#lifecycle-sliding)). When you hold a **named reference** to an anonymous object, you can promote the **referenced object** to self-owned with `take_ownership()`:
 
 ```python
 ns["parent"] = {"inner": [1, 2, 3]}        # inner is ~anon:… owned by "parent"
@@ -309,7 +309,7 @@ A top-level encode may emit many sibling operations (e.g. storing a list of list
 
 1. Maintains an `id(value) → state` memo to detect **cycles** (raises `CyclicReferenceError`).
 2. Aliases repeated references to the **same** container instead of double-storing it.
-3. On exception, **rolls back** every anonymous object created during the session, leaving Redis untouched.
+3. On exception, **rolls back** every anonymous object created during the session and reverses any ref-count increments it made on pre-existing containers, so a failed encode leaves the encode path's writes reverted. (For a first-time store, `namespace.__setitem__` additionally deletes the just-written binding `obj:`/`raw:`/`ref:` keys, so a failed `ns[name] = value` leaves no orphan meta at all.)
 
 ---
 

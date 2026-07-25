@@ -44,7 +44,7 @@ GPDCDomain  ──┬── GPDCNamespace ──┬── GPDCDataObject (标量
 
 ---
 
-## 快速开始
+## 快速开始 { #api-quick-start }
 
 ```python
 import gpdatacached
@@ -286,7 +286,7 @@ class GPDataCache(folder: gpconfig.GPConfigFolder)   # 上下文管理器
 
 一个门面（facade），负责管理从 [`gpconfig`](https://github.com/linnetcodes/gpconfig) 的 `GPConfigFolder` 中发现的 `GPDCDomain` 实例，并将 GPDC URI 解析为 [`GPDCDataObject`](#gpdcdataobject) 实例。当你的 domain 由配置文件驱动、而非在代码中临时构造时，它是推荐的入口。
 
-**构造。** 基于 `GPConfigFolder` 构造。构造时只会保存该文件夹的引用 —— **不会创建任何 domain**。Domain 在首次通过 [`get_domain`](#get_domain) 访问时惰性构造（经由 gpconfig 的对象工厂 `folder.get_object(name)`），并缓存在一个内部 dict 中。该缓存是一个快照：构造之后被编辑的配置文件**不会**被重新读取；要应用变更需重建 `GPDataCache`。
+**构造。** 基于 `GPConfigFolder` 构造。构造时只会保存该文件夹的引用 —— **不会创建任何 domain**。Domain 在首次通过 [`get_domain`](#gpdatacache) 访问时惰性构造（经由 gpconfig 的对象工厂 `folder.get_object(name)`），并缓存在一个内部 dict 中。该缓存是一个快照：构造之后被编辑的配置文件**不会**被重新读取；要应用变更需重建 `GPDataCache`。
 
 `GPDataCache` **不会**创建缺少配置文件的 domain —— 临时 domain 请直接使用 [`GPDCDomain`](#gpdcdomain)。
 
@@ -585,7 +585,7 @@ GPDC 类型 `collection:set`，底层为 Redis set。
 
 ## 编解码器（Codec）
 
-Codec 负责 Python 值与 Redis 存储表示之间的相互转换。注册到 [`GPDCTypeRegistry`](#_8) 的每种类型都必须提供一个 codec。
+Codec 负责 Python 值与 Redis 存储表示之间的相互转换。注册到 [`GPDCTypeRegistry`](#api-type-registry) 的每种类型都必须提供一个 codec。
 
 > 本节为 API 摘要。有关编写 codec 的完整指南 —— 标量与容器，含实战示例（`Color`、`Counter`）以及每个容器都必须调用的变更钩子 —— 见专门的[可扩展性](./extensibility.md)文档。
 
@@ -634,7 +634,7 @@ class GPDCContainerCodec(ABC)
 
 ---
 
-## 类型注册表
+## 类型注册表 { #api-type-registry }
 
 ### `GPDCTypeRegistry`
 

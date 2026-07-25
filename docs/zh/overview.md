@@ -150,7 +150,7 @@ graph TD
 
 ### 打开 domain：直接方式与托管方式
 
-单个 domain 可通过 [`GPDCDomain`](./api.md#gpdcdomain) 直接打开（见[快速开始](./api.md#快速开始)）。当你的应用使用由 [gpconfig](https://github.com/linnetcodes/gpconfig) 配置文件驱动的多个 domain 时，[`GPDataCache`](./api.md#gpdatacache) 就是托管入口：它接收一个 `GPConfigFolder`，为每个配置惰性构造并缓存对应的 `GPDCDomain`，并将 GPDC URI 解析为数据对象。没有配置文件的 domain 无法通过 `GPDataCache` 创建 —— 这类情况请直接使用 `GPDCDomain`。
+单个 domain 可通过 [`GPDCDomain`](./api.md#gpdcdomain) 直接打开（见[快速开始](./api.md#api-quick-start)）。当你的应用使用由 [gpconfig](https://github.com/linnetcodes/gpconfig) 配置文件驱动的多个 domain 时，[`GPDataCache`](./api.md#gpdatacache) 就是托管入口：它接收一个 `GPConfigFolder`，为每个配置惰性构造并缓存对应的 `GPDCDomain`，并将 GPDC URI 解析为数据对象。没有配置文件的 domain 无法通过 `GPDataCache` 创建 —— 这类情况请直接使用 `GPDCDomain`。
 
 ### 身份：canonical name 与 binding name
 
@@ -246,7 +246,7 @@ graph LR
 
 ### 提升匿名对象：`take_ownership()`
 
-由于匿名对象的生命周期依附于其父容器（`owner = parent`），它没有独立的生命周期 —— 其 TTL 由 owner 链驱动（见[§5](./lifecycle.md#5-滑动窗口刷新)）。当你持有一个指向匿名对象的**命名引用**时，可以用 `take_ownership()` 把**被引用对象**提升为自持：
+由于匿名对象的生命周期依附于其父容器（`owner = parent`），它没有独立的生命周期 —— 其 TTL 由 owner 链驱动（见[§5](./lifecycle.md#lifecycle-sliding)）。当你持有一个指向匿名对象的**命名引用**时，可以用 `take_ownership()` 把**被引用对象**提升为自持：
 
 ```python
 ns["parent"] = {"inner": [1, 2, 3]}        # inner 是 ~anon:… ，owner 为 "parent"
@@ -309,7 +309,7 @@ graph LR
 
 1. 维护一份 `id(value) → state` 的备忘录，用于检测**循环**（抛出 `CyclicReferenceError`）。
 2. 把对**同一个**容器的重复引用别名为同一对象，而非重复存储。
-3. 出现异常时，**回滚**本次会话期间创建的所有匿名对象，让 Redis 保持原样。
+3. 出现异常时，**回滚**本次会话期间创建的所有匿名对象，并逆转其对既有容器所做的引用计数增量，使失败的编码不留下编码路径的写入残留。（对于首次存储，`namespace.__setitem__` 还会删除刚写入的绑定的 `obj:`/`raw:`/`ref:` key，因此一次失败的 `ns[name] = value` 不会留下任何孤儿元信息。）
 
 ---
 

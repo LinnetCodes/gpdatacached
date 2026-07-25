@@ -80,7 +80,7 @@ graph TD
 
 ### The priority rule
 
-The registry iterates entries **sorted by descending `priority`** and returns the first one whose `python_type` matches `value` via `isinstance`. This matters whenever your custom type **subclasses a type that is already registered**. The built-ins rely on it: `bool` is registered at `priority=10` and `int` at `priority=0`, so a `True` value matches `bool` first (otherwise it would be misrouted to `int`, since `bool` subclasses `int`). See [§8](#8-priority-in-practice-subclass-relationships).
+The registry iterates entries **sorted by descending `priority`** and returns the first one whose `python_type` matches `value` via `isinstance`. This matters whenever your custom type **subclasses a type that is already registered**. The built-ins rely on it: `bool` is registered at `priority=10` and `int` at `priority=0`, so a `True` value matches `bool` first (otherwise it would be misrouted to `int`, since `bool` subclasses `int`). See [§8](#extend-priority).
 
 ---
 
@@ -194,7 +194,7 @@ Subclasses mix in a `collections.abc` interface (`MutableSequence`, `MutableMapp
 - All abstract methods of the mixed-in ABC (`__getitem__`, `__setitem__`, `__delitem__`, `__len__`, `__iter__`, `insert`, …).
 - A `deepcopy()` method.
 
-You inherit `_touch()`, ref-tracking helpers (`_release_element_ref`, `_data_owner_name`, `referrers()`), and the encode/decode helpers — these are the building blocks for [§11](#11-mutation-hooks-every-container-must-call).
+You inherit `_touch()`, ref-tracking helpers (`_release_element_ref`, `_data_owner_name`, `referrers()`), and the encode/decode helpers — these are the building blocks for [§11](#extend-mutation-hooks).
 
 !!! note "Your `__getitem__` has a second caller: URI traversal"
 
@@ -309,7 +309,7 @@ The codec is also invoked automatically when your type appears as a list/dict el
 
 ---
 
-## 8. Priority in Practice: Subclass Relationships
+## 8. Priority in Practice: Subclass Relationships { #extend-priority }
 
 The registry matches via `isinstance`, sorted by descending `priority`. This is **critical** whenever your type subclasses an already-registered type.
 
@@ -348,7 +348,7 @@ Goal: cache a `collections.Counter` (a multiset). This is a **container** — it
 from collections import Counter
 ```
 
-`Counter` is a `dict` subclass — so we will need `priority > 0` to be matched before `dict` (see [§8](#8-priority-in-practice-subclass-relationships)).
+`Counter` is a `dict` subclass — so we will need `priority > 0` to be matched before `dict` (see [§8](#extend-priority)).
 
 ### Step 2 — the codec
 
@@ -484,9 +484,9 @@ The `Counter` example uses `encode_key` / `decode_key` because its members are *
 | `encode_key(value)` / `decode_key(encoded)` | Hashable scalar elements (dict keys, set members, our Counter's members) | Always a `prefix:payload` string; rejects containers and the empty tuple |
 | `encode_element(value, namespace, owner_name, policy)` / `decode_element(encoded, namespace)` | Elements that may be **either** scalar **or** container | A scalar-encoded string, **or** a `ref:{obj_key}` pointer that resolves to a live `GPDCContainerObject` |
 
-For example, the built-in `DictCodec` uses `encode_key` for keys (always scalar) but `encode_element` for values (may be a nested list/dict/set). The built-in `ListCodec` uses `encode_element` for every element. When you remove or overwrite an element that turned out to be a `ref:` pointer, you must call `self._release_element_ref(old_encoded)` so the anonymous child's referrer count is decremented (and the child cascade-deleted when its last referrer goes) — see [§11](#11-mutation-hooks-every-container-must-call).
+For example, the built-in `DictCodec` uses `encode_key` for keys (always scalar) but `encode_element` for values (may be a nested list/dict/set). The built-in `ListCodec` uses `encode_element` for every element. When you remove or overwrite an element that turned out to be a `ref:` pointer, you must call `self._release_element_ref(old_encoded)` so the anonymous child's referrer count is decremented (and the child cascade-deleted when its last referrer goes) — see [§11](#extend-mutation-hooks).
 
-When `create_raw` encodes **multiple sibling elements in one call**, wrap the encode loop in an **`encode_session`** context manager. It provides cycle detection and atomic rollback so that a failure mid-encode deletes every anonymous object created during the call, leaving Redis untouched:
+When `create_raw` encodes **multiple sibling elements in one call**, wrap the encode loop in an **`encode_session`** context manager. It provides cycle detection and rollback so that a failure mid-encode deletes every anonymous object created during the call and reverses any ref-count increments it made on pre-existing containers — the encode path's writes are reverted. (Note: `encode_session` only governs the encode path. If your `create_raw` does any **pre-encode** writes — e.g. the pandas RangeIndex→levels index-representation promotion committed before the append pipeline — those are not covered by the session and stay committed on failure. Keep pre-encode writes out of the session, or accept that a failed append may leave a representation-only change behind.)
 
 ```python
 from gpdatacached.types import encode_element, encode_session
@@ -504,11 +504,11 @@ def create_raw(cls, namespace, raw_key, value, owner_name, cache_mode, ttl):
 
 > For full reference, study `src/gpdatacached/builtins/list_object.py` and `dict_object.py` — they show the complete encode/decode/release pattern for nested-container containers.
 
-> ⚠️ **Performance note.** Each nested container becomes its own anonymous object with its own keys, ref tracking, and TTL. Deep nesting compounds this cost on store, read, sliding refresh, and cascade delete. See [Performance Guide §4](./performance-guide.md#4-excessive-container-nesting) for guidance on when to flatten.
+> ⚠️ **Performance note.** Each nested container becomes its own anonymous object with its own keys, ref tracking, and TTL. Deep nesting compounds this cost on store, read, sliding refresh, and cascade delete. See [Performance Guide §4](./performance-guide.md#perf-nesting) for guidance on when to flatten.
 
 ---
 
-## 11. Mutation Hooks Every Container Must Call
+## 11. Mutation Hooks Every Container Must Call { #extend-mutation-hooks }
 
 When you implement a container object, every method that mutates Redis must honour three hooks. Skipping any of them produces subtle bugs (stale TTL, leaked anonymous children, wrong update timestamps).
 
