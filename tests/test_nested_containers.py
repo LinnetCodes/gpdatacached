@@ -42,7 +42,8 @@ def ns(r):
         redis_host=REDIS_HOST, redis_port=REDIS_PORT, redis_db=REDIS_DB, redis_password=REDIS_PASSWORD
     )
     domain = GPDCDomain(config, name=DOMAIN)
-    return domain.ensure_namespace(NS)
+    yield domain.ensure_namespace(NS)
+    domain.close()
 
 
 class TestDictNestedList:
