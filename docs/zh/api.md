@@ -190,7 +190,7 @@ class GPDCDomainConfig(**fields)   # 继承自 gpconfig.GPConfig / pydantic Base
 | `default_cache_mode` | `str` | `"permanent"` | 取值：`"permanent"`、`"ttl"`、`"sliding"`。 |
 | `default_ttl_seconds` | `int` | `0` | 默认 TTL；当模式为 `"ttl"`/`"sliding"` 时必须 `> 0`。 |
 | `gc_enabled` | `bool` | `False` | 是否启动后台 GC 线程。 |
-| `gc_interval_seconds` | `int` | `300` | 后台 GC 周期间隔（秒）。 |
+| `gc_interval_seconds` | `int` | `300` | 后台 GC 周期间隔（秒；必须 `≥ 30`，更小值会让 GC 线程忙循环并冲击 Redis）。 |
 | `namespaces` | `dict[str, GPDCNamespaceConfig]` | `{}` | 需要预创建的 namespace。 |
 | `default_lock_ttl_seconds` | `int` | `30` | 锁 key 的 TTL（必须 `≥ 1`）。 |
 | `default_lock_acquire_timeout_seconds` | `int` | `30` | `obj.lock()` 的阻塞超时（必须 `≥ 0`）。 |

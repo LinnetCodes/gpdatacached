@@ -195,7 +195,7 @@ Configuration for a `GPDCDomain`. All fields are validated; lock fields must be 
 | `default_cache_mode` | `str` | `"permanent"` | One of `"permanent"`, `"ttl"`, `"sliding"`. |
 | `default_ttl_seconds` | `int` | `0` | Default TTL; must be `> 0` when mode is `"ttl"`/`"sliding"`. |
 | `gc_enabled` | `bool` | `False` | Start the background GC thread. |
-| `gc_interval_seconds` | `int` | `300` | Background GC cycle interval. |
+| `gc_interval_seconds` | `int` | `300` | Background GC cycle interval (must be `≥ 30`; smaller values busy-loop the GC thread and flood Redis). |
 | `namespaces` | `dict[str, GPDCNamespaceConfig]` | `{}` | Predefined namespaces to create eagerly. |
 | `default_lock_ttl_seconds` | `int` | `30` | TTL on lock keys (must be `≥ 1`). |
 | `default_lock_acquire_timeout_seconds` | `int` | `30` | Blocking timeout for `obj.lock()` (must be `≥ 0`). |
