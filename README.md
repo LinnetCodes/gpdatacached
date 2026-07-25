@@ -93,21 +93,21 @@ GPDCDomain ── GPDCNamespace ── GPDCDataObject (scalar | container)
 
 ## Documentation
 
-📖 **[Full documentation index](./docs/index.md)** — the entry point to all guides and references below.
+📖 **[Full documentation index](./docs/en/index.md)** — the entry point to all guides and references below.
 
-- **[Overview](./docs/overview.md)** — design purpose, philosophy, and end-to-end architecture (start here to understand the library as a whole).
-- **[API Reference](./docs/api.md)** — complete public API reference.
-- **[Lifecycle Management](./docs/lifecycle.md)** — how object creation, expiry, refresh, and deletion work, including anonymous and reference objects (read this to set correct expectations).
-- **[Extensibility](./docs/extensibility.md)** — the type system explained, with worked examples for adding your own scalar and container types (codecs, object classes, registration).
-- **[Performance Guide](./docs/performance-guide.md)** — usage patterns that degrade performance (sliding TTL overuse, deep nesting, unnecessary GC/locking) and their recommended alternatives. Read before putting GPDC on a hot path.
-- **[Multi-Process Locking](./docs/locking.md)** — when to lock, performance impact, recommended usage, deadlock avoidance, and GC interaction.
+- **[Overview](./docs/en/overview.md)** — design purpose, philosophy, and end-to-end architecture (start here to understand the library as a whole).
+- **[API Reference](./docs/en/api.md)** — complete public API reference.
+- **[Lifecycle Management](./docs/en/lifecycle.md)** — how object creation, expiry, refresh, and deletion work, including anonymous and reference objects (read this to set correct expectations).
+- **[Extensibility](./docs/en/extensibility.md)** — the type system explained, with worked examples for adding your own scalar and container types (codecs, object classes, registration).
+- **[Performance Guide](./docs/en/performance-guide.md)** — usage patterns that degrade performance (sliding TTL overuse, deep nesting, unnecessary GC/locking) and their recommended alternatives. Read before putting GPDC on a hot path.
+- **[Multi-Process Locking](./docs/en/locking.md)** — when to lock, performance impact, recommended usage, deadlock avoidance, and GC interaction.
 
 ## Extensions
 
 Optional built-in extensions under `gpdatacached.extensions`:
 
-- **[Pydantic Support](./docs/pydantic-support.md)** — cache pydantic `BaseModel` records. Two storage modes: scalar (atomic JSON) for scalar-only models, container (Redis hash) for models needing field-level access or nested `list`/`dict`/`set` fields. Pydantic is a core dependency; no extra install needed.
-- **[Pandas Support](./docs/pandas-support.md)** — cache pandas `Series` / `DataFrame` as live objects. Online selective accessors (`.iloc`, `.loc`, `df[col]`) for one-shot subset reads; `.value` for full restore; `extend` for appends. Requires `pip install "gpdatacached[pandas]"`.
+- **[Pydantic Support](./docs/en/pydantic-support.md)** — cache pydantic `BaseModel` records. Two storage modes: scalar (atomic JSON) for scalar-only models, container (Redis hash) for models needing field-level access or nested `list`/`dict`/`set` fields. Pydantic is a core dependency; no extra install needed.
+- **[Pandas Support](./docs/en/pandas-support.md)** — cache pandas `Series` / `DataFrame` as live objects. Online selective accessors (`.iloc`, `.loc`, `df[col]`) for one-shot subset reads; `.value` for full restore; `extend` for appends. Requires `pip install "gpdatacached[pandas]"`.
 
 ---
 
