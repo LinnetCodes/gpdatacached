@@ -71,7 +71,7 @@ graph TD
     end
     subgraph L4["Layer 4 — Built-in types"]
         BREG["builtins.registry<br/>(auto-registered on import)"]
-        SCALARS["scalar types<br/>int·float·str·bool·datetime·date·time·none·tuple"]
+        SCALARS["scalar types<br/>int·float·decimal·str·bool·datetime·date·time·none·tuple"]
         CONTAINERS["container types<br/>list·dict·set"]
     end
     subgraph L3["Layer 3 — Type system"]
@@ -92,7 +92,7 @@ graph TD
         EXC["exceptions"]
     end
     REDIS[("Redis")]
-    L5 --> L4
+    L5 --> L3
     L4 --> L3
     L3 --> L2
     L3 --> L1

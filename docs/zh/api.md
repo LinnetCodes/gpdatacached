@@ -391,11 +391,13 @@ class GPDCDataObject(name, namespace, *, canonical_name=None)   # ABC
 |---|---|---|
 | `type` | `str` | GPDC 类型字符串，如 `"scalar:int"`、`"collection:list"`。 |
 | `meta` | `ObjectMeta \| None` | 完整元信息记录；对象已消失时为 `None`。 |
-| `cache_mode` | `str` | 生效的缓存模式；不存在则抛 `ObjectGoneError`。 |
+| `cache_mode` | `str` | 生效的缓存模式。 |
 | `ttl` | `int` | 声明的 TTL（秒），`0` 表示永久。 |
 | `created_at` | `datetime \| None` | 创建时间戳。 |
 | `updated_at` | `datetime \| None` | 最近更新时间戳。 |
 | `value` | `object` | Python 值（抽象；由子类实现）。 |
+
+> 元信息支撑的属性（`cache_mode`、`ttl`、`created_at`、`updated_at`）在对象元信息已不存在时都会抛出 `ObjectGoneError`。
 
 **生命周期方法**
 
@@ -409,6 +411,7 @@ class GPDCDataObject(name, namespace, *, canonical_name=None)   # ABC
 | `persist()` | 切换为 `cache_mode="permanent"` 且 `ttl=0`。需要 ownership。 |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | 替换整个缓存策略。需要 ownership。 |
 | `refresh_ttl()` | 将对象自身的 TTL 重新应用到其 key，并级联刷新其拥有的子树（用于滑动窗口刷新路径）。永久对象为空操作。 |
+| `remaining_ttl()` | canonical key 上的剩余 TTL（秒），直接来自 Redis `TTL` 命令（`-1` = 无过期，`-2` = key 不存在）。 |
 | `take_ownership()` | 把**被引用对象**提升为自持（主要用例：指向匿名嵌套对象的命名引用）。对命名（已自持）对象的引用是正确的 no-op。调用本身必须经由命名引用句柄发起。见[生命周期 §7](./lifecycle.md#7-the-ownership-model)。 |
 
 **加锁方法**（可选使用，变更操作永远不会自动调用）
@@ -440,7 +443,7 @@ class GPDCScalarObject(name, namespace, *, canonical_name=None)   # GPDCDataObje
 - `value` 的 getter 通过已注册的 codec 解码存储的值。
 - `value` 的 setter 会校验 Python 类型是否与已注册 codec 匹配，更新元信息，并在 `cache_mode="sliding"` 时刷新 TTL。
 
-内建子类：[`IntObject`](#intobject)、[`FloatObject`](#floatobject)、[`StrObject`](#strobject)、[`BoolObject`](#boolobject)、[`DateTimeObject`](#datetimeobject)、[`DateObject`](#dateobject)、[`TimeObject`](#timeobject)、[`NoneObject`](#noneobject)、[`TupleObject`](#tupleobject)。
+内建子类：[`IntObject`](#intobject)、[`FloatObject`](#floatobject)、[`StrObject`](#strobject)、[`BoolObject`](#boolobject)、[`DateTimeObject`](#datetimeobject)、[`DateObject`](#dateobject)、[`TimeObject`](#timeobject)、[`DecimalObject`](#decimalobject)、[`NoneObject`](#noneobject)、[`TupleObject`](#tupleobject)。
 
 ---
 
@@ -486,6 +489,7 @@ class GPDCContainerObject(name, namespace, *, canonical_name=None)   # GPDCDataO
 | [`DateTimeObject`](#datetimeobject) | `scalar:datetime` | `datetime.datetime` | `datetime:{isoformat}` |
 | [`DateObject`](#dateobject) | `scalar:date` | `datetime.date`（不含 `datetime`） | `date:{isoformat}` |
 | [`TimeObject`](#timeobject) | `scalar:time` | `datetime.time` | `time:{isoformat}` |
+| [`DecimalObject`](#decimalobject) | `scalar:decimal` | `decimal.Decimal` | `decimal:{str(d)}` |
 | [`NoneObject`](#noneobject) | `scalar:none` | `NoneType` | `none:None` |
 | [`TupleObject`](#tupleobject) | `scalar:tuple` | `tuple`（仅标量元素） | `tuple:{json}` |
 
@@ -516,6 +520,14 @@ class GPDCContainerObject(name, namespace, *, canonical_name=None)   # GPDCDataO
 ### `TimeObject`
 
 封装 `datetime.time`。
+
+### `DecimalObject`
+
+封装 `decimal.Decimal`（0.2.1 新增）。编码为 `decimal:{str(value)}`：payload 为 `str(Decimal)`，精确保留系数与指数 —— `Decimal("1.10")` 往返后仍是 `1.10` 而非 `1.1`，极大/极小指数使用科学计数法（`1E-27`）。解码遇到非法 payload 抛出 `ValueError`。
+
+- **非有限值**（`NaN`、`sNaN`、`±Infinity`）与 `-0` 原样存取，与 `float` codec 对 `nan`/`inf` 的处理一致。比较语义遵循标准库：`NaN != NaN`，对 `sNaN` 做 `==` 比较会抛出 `decimal.InvalidOperation`。
+- **精确性**：`str()` 与上下文无关 —— 存取过程不做任何舍入。若想表达十进制字面量，请用字符串构造（`Decimal("0.1")`）；`Decimal(0.1)` 会忠实存储完整的二进制展开。
+- **跨类型相等性**：GPDC 按 wire 编码形式匹配字典键与集合成员，因此原生命中相等的不同数值类型在存储后是不同条目 —— 先 `d[1] = "a"` 再 `d[Decimal(1)] = "b"` 会得到两个条目（`1` 与 `1.0` 之间早就是如此）。而原生字面量 `{1: "a", Decimal(1): "b"}` 在 GPDC 接触之前就已坍缩为一个键。
 
 ### `NoneObject`
 
@@ -614,7 +626,7 @@ class GPDCScalarCodec(GPDCCodec)
 |---|---|
 | `_parse_encoded(encoded) -> tuple[str, str]` | 将 `name:payload` 形式的编码值拆分为 `(type_name, raw)`。输入为空或不含冒号时抛 `ValueError`。 |
 
-内建子类：`BoolCodec`、`DateTimeCodec`、`DateCodec`、`DictCodec` *（见下注）*、`FloatCodec`、`IntCodec`、`ListCodec` *（见下注）*、`NoneCodec`、`SetCodec` *（见下注）*、`StrCodec`、`TimeCodec`、`TupleCodec`。
+内建子类：`BoolCodec`、`DateTimeCodec`、`DateCodec`、`DecimalCodec`、`DictCodec` *（见下注）*、`FloatCodec`、`IntCodec`、`ListCodec` *（见下注）*、`NoneCodec`、`SetCodec` *（见下注）*、`StrCodec`、`TimeCodec`、`TupleCodec`。
 
 > 容器的标量 codec 类（`ListCodec`、`DictCodec`、`SetCodec`）被再次导出仅为完整性 —— 它们实际上继承自 [`GPDCContainerCodec`](#gpdccontainercodec)。
 
@@ -719,7 +731,7 @@ def validate_object_name(name: str) -> None
 class GPDCError(Exception)
 ```
 
-gpdatacached 异常层次的根基类。本库抛出的每一个异常都是 `GPDCError` 的子类，因此 `except GPDCError` 是最宽泛的全捕获。当你需要区分不同失败模式时，优先捕获具体的子类。
+gpdatacached 异常层次的根基类。本库抛出的每一个自定义异常都是 `GPDCError` 的子类，因此 `except GPDCError` 是最宽泛的全捕获。（普通的标准库异常 —— 如类型不支持或参数顺序错误抛出的 `TypeError`、非法 payload 抛出的 `ValueError` —— 按原样抛出。）当你需要区分不同失败模式时，优先捕获具体的子类。
 
 ### `GPDCLockError`
 

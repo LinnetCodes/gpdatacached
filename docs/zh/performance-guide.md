@@ -36,7 +36,7 @@ graph TD
 | `ns[k]`（标量读） | O(1)，约 3 RTT | `_resolve_binding`（`TYPE` + `HGETALL`）**再加**标量 `.value` getter 重新加载 meta（`HGETALL`）。 |
 | `ns[k] = [a, b, c]`（扁平、元素为标量的容器） | O(N) 本地编码，数据写入 **O(1)** RTT | 一次 `encode_session` + 一次批量 `create_raw`（单条 `RPUSH`/`HSET`/`SADD` 携带全部元素）+ `HGET` ×2（namespace 默认策略）+ 元信息 `HSET` + 对 obj/raw/ref key 的 TTL 应用（共约 8 RTT，与 N 无关，对标量元素成立）。 |
 | `ns[k] = [[...], ...]`（嵌套容器） | O(**嵌套容器数量**) RTT + O(N) 本地 | 每个嵌套容器成为一个匿名对象（meta `HSET` + 自身 `create_raw` + `HINCRBY` 引用 + TTL 应用，每个约 5–6 RTT）。**深度不乘** —— 决定规模的是总节点数。 |
-| `container.append(x)` / `container[k] = v`（标量元素、非 sliding） | O(1)，约 5–6 RTT | `HGETALL`（取策略）+ 数据写入（`RPUSH`/`HSET`）+ `_touch`（`LLEN`/`HLEN` + `HGETALL` + `HSET`）。**若 `cache_mode="sliding"` 再加子树遍历**（§3）；**若元素本身是容器，再加约 5–6 RTT**（创建匿名对象）。 |
+| `container.append(x)` / `container[k] = v`（标量元素、非 sliding） | O(1)，约 5–6 RTT | `HGETALL` ×2（存活/策略检查 + data-owner 解析）+ 数据写入（`RPUSH`/`HSET`）+ `LLEN`/`HLEN` + 元信息 `HSET`。**若 `cache_mode="sliding"` 再加子树遍历**（§3）；**若元素本身是容器，再加约 5–6 RTT**（创建匿名对象）。 |
 | `iter(ns)` / `len(ns)` | O(N)，批量 SCAN | 每 ~100 个 key 一页若干 RTT（`len` 委托给 `iter`）。不要放进热循环。 |
 | `k in ns` | O(1)，1–4 RTT | 直接对该具名 key 做 `TYPE` + `HGETALL`（owner 绑定 1–2 RTT）；引用会再加一次 `GET` + 另一次 `TYPE`（别名最多 4 RTT）。**不是** SCAN。不随 namespace 大小而增长。 |
 | `del ns[k]`（容器 owner） | O(所属子树大小) | `_teardown_owner_container` 释放每个嵌套引用（`HDEL`）并级联删除成为孤儿的匿名子对象；每节点约 1+ RTT。若仍存在活跃的别名引用者则抛 `CanonicalObjectReferencedError` —— 先删别名。 |
@@ -48,7 +48,7 @@ graph TD
 | `.value`（完整容器读取） | 扁平：1 RTT + O(N) 本地；嵌套：+O(嵌套数) RTT | 一次批量读（`LRANGE`/`HGETALL`/`SMEMBERS`）；每个 `ref:` 元素再加一次 `HGETALL` + 解码其匿名对象。 |
 | `name in cache`（`GPDataCache`） | **本地，0 RTT** | 纯配置快照检查，通过 `folder.list_configs()` 实现。不触碰 Redis，也不会构造 domain。是本库中最便宜的成员测试。 |
 | `cache.get_domain(name)` | 首次调用：domain 构造（读/校验 domain meta）；后续：**0 RTT** | 首次访问时经由 gpconfig 的工厂构造并缓存 `GPDCDomain`；之后的调用返回已缓存实例。不会重新读取配置文件。 |
-| `cache.get_object_by_uri(uri)` | 根：约 4–5 RTT；**每条路径分段 +1 RTT** | `get_namespace`（`SISMEMBER` + namespace-meta `HGETALL`，约 2 RTT）+ 根对象解析（`TYPE` + `HGETALL`，约 2–3 RTT）。每条额外路径分段是一次 `__getitem__` 读取（`ListObject` 用 `LINDEX`，`DictObject` 用 `HGET`）。`cache.has_uri(uri)` 成本相同（它用 try/except 调用 `get_object_by_uri`）。domain 仅在首次访问时构造；同一 domain 之后的 URI 会复用已缓存的 domain。 |
+| `cache.get_object_by_uri(uri)` | 根：约 4–5 RTT；**每条路径分段 +1–2 RTT** | `get_namespace`（`SISMEMBER` + namespace-meta `HGETALL` + 幂等 `SADD`，约 3 RTT）+ 根对象解析（`TYPE` + `HGETALL`，约 2–3 RTT）。每条额外路径分段是一次 `__getitem__` 读取（ListObject：`LLEN` + `LINDEX` 共 2 RTT；DictObject：`HGET` 1 RTT）。`cache.has_uri(uri)` 成本相同（它用 try/except 调用 `get_object_by_uri`）。domain 仅在首次访问时构造；同一 domain 之后的 URI 会复用已缓存的 domain。 |
 
 ---
 

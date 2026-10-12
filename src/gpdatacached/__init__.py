@@ -2,7 +2,7 @@
 
 # Software library version (SemVer), tracks feature releases and bugfixes.
 # Independent of GPDC_PROTOCOL_VERSION in domain.py.
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from .codec import GPDCCodec, GPDCContainerCodec, GPDCScalarCodec
 from .config import GPDCDomainConfig, GPDCNamespaceConfig
@@ -26,6 +26,7 @@ from .container import GPDCContainerObject
 from .data_cache import GPDataCache
 from .builtins.bool_object import BoolObject
 from .builtins.datetime_object import DateObject, DateTimeObject, TimeObject
+from .builtins.decimal_object import DecimalObject
 from .builtins.dict_object import DictObject
 from .builtins.float_object import FloatObject
 from .builtins.int_object import IntObject
@@ -45,6 +46,7 @@ _GPConfigManager.register_config_class(GPDCDomainConfig)
 
 from .builtins.bool_object import BoolCodec as BoolCodec  # noqa: F401,E402
 from .builtins.datetime_object import DateCodec as DateCodec, DateTimeCodec as DateTimeCodec, TimeCodec as TimeCodec  # noqa: F401,E402
+from .builtins.decimal_object import DecimalCodec as DecimalCodec  # noqa: F401,E402
 from .builtins.dict_object import DictCodec as DictCodec  # noqa: F401,E402
 from .builtins.float_object import FloatCodec as FloatCodec  # noqa: F401,E402
 from .builtins.int_object import IntCodec as IntCodec  # noqa: F401,E402
@@ -78,6 +80,7 @@ __all__ = [
     "DateTimeObject",
     "DateObject",
     "TimeObject",
+    "DecimalObject",
     "NoneObject",
     "ListObject",
     "DictObject",

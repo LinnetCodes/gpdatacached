@@ -134,7 +134,7 @@ Stores the entire model as a single JSON-encoded Redis string. Reads return a fr
 
 The whole object is then stored as `{type_prefix}:{json}`, where `type_prefix` is the part of the GPDC type after `scalar:`.
 
-**Field type restriction.** Every field must be encodable by a `GPDCScalarCodec` subclass (int / float / bool / str / datetime / date / time / tuple / None / any scalar-registered custom type). Container field types (`list`, `dict`, `set`, container-registered pydantic models) raise `TypeError` at encode time — use container mode instead.
+**Field type restriction.** Every field must be encodable by a `GPDCScalarCodec` subclass (int / float / bool / str / datetime / date / time / decimal / tuple / None / any scalar-registered custom type). Container field types (`list`, `dict`, `set`, container-registered pydantic models) raise `TypeError` at encode time — use container mode instead.
 
 ### `PydanticModelScalarCodec`
 

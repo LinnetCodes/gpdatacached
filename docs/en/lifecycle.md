@@ -194,7 +194,7 @@ graph TD
 
 ---
 
-## 7. The Ownership Model
+## 7. The Ownership Model { #7-the-ownership-model }
 
 Every object has an `owner` field in its metadata. Ownership determines who controls the object's lifecycle and is central to how anonymous objects work.
 
@@ -362,7 +362,7 @@ For reference, here is the complete set of user-facing lifecycle methods on `GPD
 | `take_ownership()` | Promote **the referenced object** to own itself (primary use case: a named reference to an anonymous nested object; a correct no-op on a reference to an already self-owned named object). |
 | `ttl` (property) | The declared TTL in seconds. |
 | `cache_mode` (property) | The current cache mode. |
-| `remaining_ttl()` | The actual remaining TTL reported by Redis (can be 0 or -1). |
+| `remaining_ttl()` | The actual remaining TTL reported by Redis (0; -1 = no expiry; -2 = key already gone). |
 | `created_at` / `updated_at` (properties) | Timestamps from metadata. |
 
 Plus the domain-level `domain.run_gc(namespace=None)` for manual GC.

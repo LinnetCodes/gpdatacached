@@ -38,7 +38,7 @@ graph LR
 
 ---
 
-## 2. 注册三元组
+## 2. 注册条目
 
 注册一个类型，永远是通过一次调用把四样东西配对：
 
@@ -94,8 +94,9 @@ graph TD
     C1["GPDCScalarCodec"]
     C2["GPDCContainerCodec (ABC)"]
     C0 -->|encode_value / decode_value| C1
-    C0 -->|create_raw / read_raw / delete_raw| C2
 ```
+
+两个**相互独立**的根：`GPDCCodec`（标量）与 `GPDCContainerCodec`（容器）是兄弟关系 —— 容器 codec 永远不实现 `encode_value`/`decode_value`。
 
 ### `GPDCCodec` —— 根 ABC
 

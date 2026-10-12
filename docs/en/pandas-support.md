@@ -38,7 +38,7 @@ Two corollaries:
 |---|---|
 | **Row indexes** | `RangeIndex` (default int index, stored compactly) **and** any labelled index including `pd.MultiIndex` (stored one `collection:list` child per level). `.index_names` always returns a tuple. |
 | **DataFrame columns** | Single-level (scalar names) **or** `pd.MultiIndex` (tuple names). The row and column axes are independent and compose (a DataFrame may have both a row and a column MultiIndex). |
-| **Value dtypes** | `int64`/`Int64`, `float64`/`Float64`, `bool`/`boolean`, `str`/`string`, `object`, `datetime64` (naive & tz-aware), `category`. |
+| **Value dtypes** | Integer / float / boolean dtypes of any width (e.g. `int64`/`Int64`, `float64`/`Float64`, `bool`/`boolean`), `str`/`string`, `object` (any scalar-encodable element — including `decimal.Decimal`, builtin since 0.2.1), `datetime64` (naive & tz-aware, any unit), `category`. |
 | **Mutation** | Row `extend` (Series & DataFrame); DataFrame column `__setitem__` / `__delitem__` (structural add/replace/drop). |
 
 Notes:
@@ -185,7 +185,7 @@ GPDC type `collection:pandas_dataframe`. Backed by a Redis hash with column valu
 
 | Method | Description |
 |---|---|
-| `extend(other)` | Append rows in place. Accepts a `pd.DataFrame`, a `dict` of lists, or a list of `dict` rows. For a genuine MultiIndex-row DataFrame (`L ≥ 2`), only a `DataFrame` with a matching MultiIndex is accepted (dict/list inputs synthesise positional labels a MultiIndex cannot supply → `TypeError`; use `.value`). Mutates Redis; returns `None`. |
+| `extend(other)` | Append rows in place. Accepts a `pd.DataFrame`, a `dict` of lists, or a list of `dict` rows. For a genuine MultiIndex-row DataFrame (`L ≥ 2`), only a `DataFrame` with a matching MultiIndex is accepted (dict/list inputs synthesise positional labels a MultiIndex cannot supply → `TypeError`; use `.value`). Category columns reject values outside the stored categories (`ValueError`, raised before any Redis write). Mutates Redis; returns `None`. |
 | `deepcopy()` | Return a fully independent `pd.DataFrame` (`.value.copy(deep=True)`). |
 
 **Column-axis access (single-level columns)**
@@ -248,4 +248,4 @@ Raised when a DataFrame cannot be stored element-wise by `DataFrameObject`. The 
 class UnsupportedElementTypeError(TypeError)
 ```
 
-Raised when a Series/DataFrame element is not encodable by a `GPDCScalarCodec` subclass — i.e. it is a container type (`list`/`dict`/`set`/container-registered pydantic model) or an unsupported type. Series/DataFrame elements must be scalar types encodable by a `GPDCScalarCodec` subclass. The message enumerates the allowed scalar types.
+Raised when a Series/DataFrame element is not encodable by a `GPDCScalarCodec` subclass — i.e. it is a container type (`list`/`dict`/`set`/container-registered pydantic model) or an unsupported type. Series/DataFrame elements must be scalar types encodable by a `GPDCScalarCodec` subclass. The message enumerates the allowed scalar types. Allowed builtin scalars (0.2.1+): int/float/bool/str/datetime/date/time/decimal/tuple/None, plus any scalar-registered custom type; object-dtype columns and index labels may hold any of them — including `decimal.Decimal`.
