@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+from decimal import Decimal
 
 from ..types import GPDCTypeRegistry
 from .bool_object import BoolCodec, BoolObject
@@ -12,6 +13,7 @@ from .datetime_object import (
     TimeCodec,
     TimeObject,
 )
+from .decimal_object import DecimalCodec, DecimalObject
 from .dict_object import DictCodec, DictObject
 from .float_object import FloatCodec, FloatObject
 from .int_object import IntCodec, IntObject
@@ -49,6 +51,15 @@ def _register_builtin_types() -> None:
         gpdc_type="scalar:float",
         object_class=FloatObject,
         codec_class=FloatCodec,
+        priority=0,
+    )
+    # Decimal is not an int/float/str subclass, so the default priority
+    # cannot be shadowed by (or shadow) another builtin entry.
+    GPDCTypeRegistry.register(
+        python_type=Decimal,
+        gpdc_type="scalar:decimal",
+        object_class=DecimalObject,
+        codec_class=DecimalCodec,
         priority=0,
     )
     GPDCTypeRegistry.register(

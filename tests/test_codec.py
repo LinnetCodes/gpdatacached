@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+from decimal import Decimal
 
 import pytest
 import redis as redis_lib
@@ -14,6 +15,7 @@ from gpdatacached import (
     DateTimeCodec,
     DateCodec,
     TimeCodec,
+    DecimalCodec,
     TupleCodec,
     ListCodec,
     DictCodec,
@@ -112,6 +114,15 @@ class TestScalarCodecEncode:
     def test_encode_none(self):
         assert NoneCodec.encode_value(None) == "none:None"
 
+    def test_encode_decimal(self):
+        assert DecimalCodec.encode_value(Decimal("3.14")) == "decimal:3.14"
+
+    def test_encode_decimal_preserves_significance(self):
+        assert DecimalCodec.encode_value(Decimal("1.10")) == "decimal:1.10"
+
+    def test_encode_decimal_scientific_notation(self):
+        assert DecimalCodec.encode_value(Decimal("1E+2")) == "decimal:1E+2"
+
     def test_encode_unsupported_raises(self):
         with pytest.raises(TypeError):
             IntCodec.encode_value([1, 2, 3])
@@ -159,6 +170,15 @@ class TestScalarCodecDecode:
     def test_decode_none(self):
         assert NoneCodec.decode_value("none:None") is None
 
+    def test_decode_decimal(self):
+        result = DecimalCodec.decode_value("decimal:3.14")
+        assert result == Decimal("3.14")
+        assert isinstance(result, Decimal)
+
+    def test_decode_decimal_invalid_payload_raises(self):
+        with pytest.raises(ValueError):
+            DecimalCodec.decode_value("decimal:not-a-number")
+
     def test_decode_unknown_type_raises(self):
         with pytest.raises(ValueError):
             IntCodec.decode_value("unknown:value")
@@ -183,6 +203,10 @@ class TestScalarCodecRoundtrip:
             (datetime.datetime(2024, 6, 15, 9, 0, 0), DateTimeCodec),
             (datetime.date(2024, 6, 15), DateCodec),
             (datetime.time(9, 0, 0), TimeCodec),
+            (Decimal("3.14"), DecimalCodec),
+            (Decimal("-0.5"), DecimalCodec),
+            (Decimal("1.10"), DecimalCodec),
+            (Decimal("1E+2"), DecimalCodec),
             (None, NoneCodec),
         ],
     )
@@ -191,6 +215,29 @@ class TestScalarCodecRoundtrip:
         decoded = codec.decode_value(encoded)
         assert decoded == value
         assert type(decoded) is type(value)
+
+
+class TestDecimalSpecialValues:
+    """Non-finite and signed-zero Decimals are stored as-is (same policy as
+    float nan/inf). They roundtrip losslessly by str-identity; equality
+    follows stdlib semantics (NaN != NaN, sNaN comparison raises), so these
+    must not go through the == based generic roundtrip test."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            Decimal("NaN"),
+            Decimal("sNaN"),
+            Decimal("Infinity"),
+            Decimal("-Infinity"),
+            Decimal("-0"),
+        ],
+    )
+    def test_str_identical_roundtrip(self, value):
+        encoded = DecimalCodec.encode_value(value)
+        decoded = DecimalCodec.decode_value(encoded)
+        assert type(decoded) is Decimal
+        assert str(decoded) == str(value)
 
 
 class TestTupleEncoding:
@@ -241,6 +288,10 @@ class TestTupleEncoding:
         encoded = TupleCodec.encode_value(original)
         decoded = TupleCodec.decode_value(encoded)
         assert decoded == original
+
+    def test_encode_tuple_with_decimal(self):
+        result = TupleCodec.encode_value((Decimal("2.5"), "x"))
+        assert result == 'tuple:["decimal:2.5","str:x"]'
 
     def test_encode_tuple_rejects_non_scalar(self):
         with pytest.raises(TypeError):

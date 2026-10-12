@@ -71,7 +71,7 @@ graph TD
     end
     subgraph L4["第 4 层 —— 内建类型"]
         BREG["builtins.registry<br/>（导入时自动注册）"]
-        SCALARS["标量类型<br/>int·float·str·bool·datetime·date·time·none·tuple"]
+        SCALARS["标量类型<br/>int·float·decimal·str·bool·datetime·date·time·none·tuple"]
         CONTAINERS["容器类型<br/>list·dict·set"]
     end
     subgraph L3["第 3 层 —— 类型系统"]
@@ -92,7 +92,7 @@ graph TD
         EXC["exceptions"]
     end
     REDIS[("Redis")]
-    L5 --> L4
+    L5 --> L3
     L4 --> L3
     L3 --> L2
     L3 --> L1

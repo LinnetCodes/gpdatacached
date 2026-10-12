@@ -37,7 +37,7 @@ def make_raw_key(domain: str, namespace: str, name: str) -> str:
 
 
 def make_ref_key(domain: str, namespace: str, name: str) -> str:
-    """Return the Redis key for reference tracking (Redis Set)."""
+    """Return the Redis key for reference tracking (Redis hash)."""
     return f"gpdc:{domain}:{namespace}:ref:{name}"
 
 

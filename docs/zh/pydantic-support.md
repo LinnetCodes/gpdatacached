@@ -134,7 +134,7 @@ domain.close()
 
 整个对象随后以 `{type_prefix}:{json}` 的形式存储，其中 `type_prefix` 是 GPDC 类型中 `scalar:` 之后的部分。
 
-**字段类型限制。** 每个字段都必须能被某个 `GPDCScalarCodec` 子类编码（int / float / bool / str / datetime / date / time / tuple / None / 任意标量注册的自定义类型）。容器字段类型（`list`、`dict`、`set`、容器注册的 pydantic 模型）在编码时会抛出 `TypeError` —— 请改用容器模式。
+**字段类型限制。** 每个字段都必须能被某个 `GPDCScalarCodec` 子类编码（int / float / bool / str / datetime / date / time / decimal / tuple / None / 任意标量注册的自定义类型）。容器字段类型（`list`、`dict`、`set`、容器注册的 pydantic 模型）在编码时会抛出 `TypeError` —— 请改用容器模式。
 
 ### `PydanticModelScalarCodec`
 
