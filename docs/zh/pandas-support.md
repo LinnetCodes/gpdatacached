@@ -38,7 +38,7 @@ pip install "gpdatacached[pandas]"
 |---|---|
 | **行索引** | `RangeIndex`（默认整数索引，紧凑存储）**以及**任意带标签索引，包括 `pd.MultiIndex`（按每个 level 存一个 `collection:list` 子对象）。`.index_names` 始终返回元组。 |
 | **DataFrame 列** | 单层（标量名称）**或** `pd.MultiIndex`（元组名称）。行轴与列轴相互独立，可组合（DataFrame 可同时拥有行 MultiIndex 与列 MultiIndex）。 |
-| **值 dtype** | `int64`/`Int64`、`float64`/`Float64`、`bool`/`boolean`、`str`/`string`、`object`、`datetime64`（naive 与 tz-aware）、`category`。 |
+| **值 dtype** | 任意宽度的整数/浮点/布尔 dtype（如 `int64`/`Int64`、`float64`/`Float64`、`bool`/`boolean`）、`str`/`string`、`object`（任何可标量编码的元素 —— 含 0.2.1 起内建的 `decimal.Decimal`）、`datetime64`（naive 与 tz-aware，任意单位）、`category`。 |
 | **变更** | 行 `extend`（Series 与 DataFrame）；DataFrame 的列 `__setitem__` / `__delitem__`（结构性的新增/替换/删除）。 |
 
 说明：
@@ -114,7 +114,7 @@ domain.close()
 | `.loc[key]` | O(N)，选择性 | 深度 k 的前缀标签扫描；仅解码匹配的行，但会读取所有索引 level —— **不要放进热循环** |
 | `df[col]` / `df[tuple]` | O(N)，单列 | （DataFrame）单列，返回 `pd.Series` |
 | `df[level0]` / `df[list]` | O(N_cols) + O(匹配数·N) | 列轴选择（成本低；列数少） |
-| `.value` | **完整还原**（读取所有列 + 所有索引 level，重建整个 frame —— 尽管同属 `O(N)` 量级，但远比选择性 `.loc` 重的多） | 整个 `pd.Series` / `pd.DataFrame`；最终退路 |
+| `.value` | **完整还原**（读取所有列 + 所有索引 level，重建整个 frame —— 尽管同属 `O(N)` 量级，但远比选择性 `.loc` 重得多） | 整个 `pd.Series` / `pd.DataFrame`；最终退路 |
 
 **决策规则：**
 
@@ -185,7 +185,7 @@ GPDC 类型 `collection:pandas_dataframe`。底层是一个 Redis hash：列值�
 
 | 方法 | 说明 |
 |---|---|
-| `extend(other)` | 原地追加行。接受 `pd.DataFrame`、list 的 dict，或 dict 行的列表。对于真正的 MultiIndex 行 DataFrame（`L ≥ 2`），只接受带匹配 MultiIndex 的 `DataFrame`（dict/list 输入会合成 MultiIndex 无法提供的位置标签 → `TypeError`；请使用 `.value`）。修改 Redis；返回 `None`。 |
+| `extend(other)` | 原地追加行。接受 `pd.DataFrame`、list 的 dict，或 dict 行的列表。对于真正的 MultiIndex 行 DataFrame（`L ≥ 2`），只接受带匹配 MultiIndex 的 `DataFrame`（dict/list 输入会合成 MultiIndex 无法提供的位置标签 → `TypeError`；请使用 `.value`）。category 列会拒绝不在既有分类中的值（`ValueError`，发生在任何 Redis 写入之前）。修改 Redis；返回 `None`。 |
 | `deepcopy()` | 返回完全独立的 `pd.DataFrame`（`.value.copy(deep=True)`）。 |
 
 **列轴访问（单层列）**
@@ -195,7 +195,7 @@ GPDC 类型 `collection:pandas_dataframe`。底层是一个 Redis hash：列值�
 | `df[col]` | 选取单列，返回 `pd.Series`。 |
 | `df[list_of_keys]` | 由所选列组成的子 `pd.DataFrame`（即便只有一个 key 也始终返回子 DataFrame）。 |
 | `df[col] = values` | 新增或替换列。`len(values)` 必须等于当前行数。对空 DataFrame 通过新增列来引入行会被拒绝。 |
-| `del df[col]` | 删除列。共享的索引会被保留（即便删到最后一张列）。 |
+| `del df[col]` | 删除列。共享的索引会被保留（即便删到最后一列）。 |
 | `col in df` | 列存在时为 `True`。 |
 | `iter(df)` | 遍历列名。 |
 
@@ -248,4 +248,4 @@ class UnsupportedDataFrameError(TypeError)
 class UnsupportedElementTypeError(TypeError)
 ```
 
-当某个 Series/DataFrame 元素无法被 `GPDCScalarCodec` 子类编码时抛出 —— 即它是容器类型（`list`/`dict`/`set`/容器注册的 pydantic 模型）或不支持的类型。Series/DataFrame 元素必须是能被 `GPDCScalarCodec` 子类编码的标量类型。错误信息会列举允许的标量类型。
+当某个 Series/DataFrame 元素无法被 `GPDCScalarCodec` 子类编码时抛出 —— 即它是容器类型（`list`/`dict`/`set`/容器注册的 pydantic 模型）或不支持的类型。Series/DataFrame 元素必须是能被 `GPDCScalarCodec` 子类编码的标量类型。错误信息会列举允许的标量类型。允许的内建标量（0.2.1+）：int/float/bool/str/datetime/date/time/decimal/tuple/None，外加任意标量注册的自定义类型；object 列与索引标签可持有其中任何一种 —— 包括 `decimal.Decimal`。

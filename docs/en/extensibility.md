@@ -38,7 +38,7 @@ Two value families exist, with different contracts:
 
 ---
 
-## 2. The Registration Triple
+## 2. The Registration Entry
 
 Registering a type always means pairing four things via one call:
 
@@ -94,8 +94,9 @@ graph TD
     C1["GPDCScalarCodec"]
     C2["GPDCContainerCodec (ABC)"]
     C0 -->|encode_value / decode_value| C1
-    C0 -->|create_raw / read_raw / delete_raw| C2
 ```
+
+Two **independent** roots: `GPDCCodec` (scalars) and `GPDCContainerCodec` (containers) are siblings — a container codec never implements `encode_value`/`decode_value`.
 
 ### `GPDCCodec` — the root ABC
 

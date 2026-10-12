@@ -202,7 +202,7 @@ Configuration for a `GPDCDomain`. All fields are validated; lock fields must be 
 | `gc_lock_ttl_seconds` | `int` | `30` | TTL for locks acquired by GC (must be `≥ 1`). |
 | `gc_lock_wait_seconds` | `int` | `5` | GC per-object try-lock timeout (must be `≥ 0`). |
 
-👉 These four fields are consistent across every process that opens the same domain. See [Multi-Process Locking](./locking.md) for what each controls, the cost locks impose, and the GC contract.
+👉 These four fields must be kept consistent across every process that opens the same domain (mismatch raises `GPDCLockConfigInconsistentError` at domain construction). See [Multi-Process Locking](./locking.md) for what each controls, the cost locks impose, and the GC contract.
 
 ---
 
@@ -431,11 +431,13 @@ Abstract base class for every GPDC data object. Subclasses are split into [`GPDC
 |---|---|---|
 | `type` | `str` | GPDC type string, e.g. `"scalar:int"`, `"collection:list"`. |
 | `meta` | `ObjectMeta \| None` | Full metadata record; `None` if the object has vanished. |
-| `cache_mode` | `str` | Effective cache mode; raises `ObjectGoneError` if missing. |
+| `cache_mode` | `str` | Effective cache mode. |
 | `ttl` | `int` | Declared TTL in seconds (`0` = permanent). |
 | `created_at` | `datetime \| None` | Creation timestamp. |
 | `updated_at` | `datetime \| None` | Last update timestamp. |
 | `value` | `object` | The Python value (abstract; subclasses implement). |
+
+> The meta-backed properties (`cache_mode`, `ttl`, `created_at`, `updated_at`) each raise `ObjectGoneError` if the object's metadata no longer exists.
 
 **Lifecycle methods**
 
@@ -449,6 +451,7 @@ Abstract base class for every GPDC data object. Subclasses are split into [`GPDC
 | `persist()` | Switch to `cache_mode="permanent"` with `ttl=0`. Requires ownership. |
 | `update_cache_mode_and_ttl(cache_mode, ttl)` | Replace the full cache policy. Requires ownership. |
 | `refresh_ttl()` | Re-apply this object's own TTL to its keys and cascade-refresh its owned subtree (used by the sliding-window path). No-op for permanent objects. |
+| `remaining_ttl()` | Remaining TTL in seconds on the canonical key, as reported by the Redis `TTL` command (`-1` = no expiry, `-2` = key missing). |
 | `take_ownership()` | Promote **the referenced object** to own itself (primary use case: a named reference to an anonymous nested object). On a reference to a named (already self-owned) object it is a correct no-op. The call itself must be made via a named reference handle. See [Lifecycle §7](./lifecycle.md#7-the-ownership-model). |
 
 **Locking methods** (opt-in, never called automatically by mutations)
@@ -480,7 +483,7 @@ Base class for every scalar object. A scalar stores a single encoded value in it
 - `value` getter decodes the stored value via the registered codec.
 - `value` setter validates the Python type against the registered codec, updates metadata, and refreshes TTL when `cache_mode="sliding"`.
 
-Built-in subclasses: [`IntObject`](#intobject), [`FloatObject`](#floatobject), [`StrObject`](#strobject), [`BoolObject`](#boolobject), [`DateTimeObject`](#datetimeobject), [`DateObject`](#dateobject), [`TimeObject`](#timeobject), [`NoneObject`](#noneobject), [`TupleObject`](#tupleobject).
+Built-in subclasses: [`IntObject`](#intobject), [`FloatObject`](#floatobject), [`StrObject`](#strobject), [`BoolObject`](#boolobject), [`DateTimeObject`](#datetimeobject), [`DateObject`](#dateobject), [`TimeObject`](#timeobject), [`DecimalObject`](#decimalobject), [`NoneObject`](#noneobject), [`TupleObject`](#tupleobject).
 
 ---
 
@@ -526,6 +529,7 @@ All scalar classes inherit from [`GPDCScalarObject`](#gpdcscalarobject). Reading
 | [`DateTimeObject`](#datetimeobject) | `scalar:datetime` | `datetime.datetime` | `datetime:{isoformat}` |
 | [`DateObject`](#dateobject) | `scalar:date` | `datetime.date` (excludes `datetime`) | `date:{isoformat}` |
 | [`TimeObject`](#timeobject) | `scalar:time` | `datetime.time` | `time:{isoformat}` |
+| [`DecimalObject`](#decimalobject) | `scalar:decimal` | `decimal.Decimal` | `decimal:{str(d)}` |
 | [`NoneObject`](#noneobject) | `scalar:none` | `NoneType` | `none:None` |
 | [`TupleObject`](#tupleobject) | `scalar:tuple` | `tuple` (scalar elements only) | `tuple:{json}` |
 
@@ -556,6 +560,14 @@ Wraps `datetime.date`. Note: a `datetime.datetime` is rejected by `DateCodec` ev
 ### `TimeObject`
 
 Wraps `datetime.time`.
+
+### `DecimalObject`
+
+Wraps `decimal.Decimal` (added in 0.2.1). Encoded as `decimal:{str(value)}`: the payload is `str(Decimal)`, which preserves the exact coefficient and exponent — `Decimal("1.10")` roundtrips as `1.10`, not `1.1`, and extreme exponents use scientific notation (`1E-27`). A malformed payload raises `ValueError` on decode.
+
+- **Non-finite values** (`NaN`, `sNaN`, `±Infinity`) and `-0` are stored and restored as-is, matching the `float` codec's treatment of `nan`/`inf`. Comparison semantics follow the standard library: `NaN != NaN`, and comparing an `sNaN` with `==` raises `decimal.InvalidOperation`.
+- **Exactness**: `str()` is context-independent — no rounding is applied on store or load. Construct from strings (`Decimal("0.1")`), not floats, if you mean the decimal literal; `Decimal(0.1)` faithfully stores the full binary expansion.
+- **Cross-type equality**: GPDC matches dict keys and set members by their encoded wire form, so natively-equal values of different numeric types become distinct entries once stored — `d[1] = "a"` followed by `d[Decimal(1)] = "b"` yields two entries (the same already holds for `1` vs `1.0`). A native literal like `{1: "a", Decimal(1): "b"}` collapses to one key before GPDC ever sees it.
 
 ### `NoneObject`
 
@@ -654,7 +666,7 @@ Abstract base for scalar codecs. Provides the shared helper:
 |---|---|
 | `_parse_encoded(encoded) -> tuple[str, str]` | Split a `name:payload` encoded value into `(type_name, raw)`. Raises `ValueError` on empty or colon-less input. |
 
-Built-in subclasses: `BoolCodec`, `DateTimeCodec`, `DateCodec`, `DictCodec` *(see note)*, `FloatCodec`, `IntCodec`, `ListCodec` *(see note)*, `NoneCodec`, `SetCodec` *(see note)*, `StrCodec`, `TimeCodec`, `TupleCodec`.
+Built-in subclasses: `BoolCodec`, `DateTimeCodec`, `DateCodec`, `DecimalCodec`, `DictCodec` *(see note)*, `FloatCodec`, `IntCodec`, `ListCodec` *(see note)*, `NoneCodec`, `SetCodec` *(see note)*, `StrCodec`, `TimeCodec`, `TupleCodec`.
 
 > Scalar codec classes for containers (`ListCodec`, `DictCodec`, `SetCodec`) are re-exported only for completeness — they actually inherit from [`GPDCContainerCodec`](#gpdccontainercodec).
 
@@ -761,7 +773,7 @@ All public exceptions descend from the public `GPDCError(Exception)` root. Use `
 class GPDCError(Exception)
 ```
 
-The root of the gpdatacached exception hierarchy. Every exception raised by this library is a subclass of `GPDCError`, so `except GPDCError` is the broad catch-all. Prefer catching the specific subclass when you need to distinguish failure modes.
+The root of the gpdatacached exception hierarchy. Every gpdatacached-specific exception raised by this library is a subclass of `GPDCError`, so `except GPDCError` is the broad catch-all. (Plain stdlib errors — e.g. `TypeError` for unsupported types or an invalid argument order, `ValueError` for invalid payloads — are raised as-is.) Prefer catching the specific subclass when you need to distinguish failure modes.
 
 ### `GPDCLockError`
 

@@ -106,7 +106,7 @@ class UnsupportedElementTypeError(TypeError):
 
     _GUIDANCE = (
         "\nSeries/DataFrame elements must be scalar types encodable by a "
-        "GPDCScalarCodec subclass (int/float/bool/str/datetime/date/time/tuple/None, or a "
+        "GPDCScalarCodec subclass (int/float/bool/str/datetime/date/time/decimal/tuple/None, or a "
         "scalar-registered custom type). Container types are not allowed as elements."
     )
 

@@ -194,7 +194,7 @@ graph TD
 
 ---
 
-## 7. The Ownership Model
+## 7. 所有权模型 { #7-the-ownership-model }
 
 每个对象在元信息中有一个 `owner` 字段。所有权决定谁能控制对象的生命周期，也是匿名对象运作的核心。
 
@@ -307,7 +307,7 @@ ns["alias"] = ns["original"]   # 两个名字现在都解析到同一份 canonic
 | 别名（`del ns["alias"]`） | 移除 `obj:alias` 字符串 + canonical owner 引用计数减一。若 canonical owner 是匿名的且这是其最后一个引用者，则级联删除该匿名对象。 |
 | 在存在别名时删除 canonical owner（`del ns["original"]`） | **抛出 `CanonicalObjectReferencedError`。** 你必须先删除别名。 |
 
-这种保护是有意为之：静默删除其他名字仍指向的数据会是个陷阱。错误的 `.referrers` 字段会告诉你需要清理哪些绑定。
+这种保护是有意为之：静默删除其他名字仍指向的数据会是个陷阱。该异常的 `.referrers` 字段会告诉你需要清理哪些绑定。
 
 ### 引用绑定自身的生命周期
 
@@ -362,7 +362,7 @@ domain.run_gc("analytics")      # 单个 namespace
 | `take_ownership()` | 把**被引用对象**提升为自持（主要用例：指向匿名嵌套对象的命名引用；对已自持的命名对象的引用是正确的 no-op）。 |
 | `ttl`（属性） | 声明的 TTL（秒）。 |
 | `cache_mode`（属性） | 当前缓存模式。 |
-| `remaining_ttl()` | Redis 报告的实际剩余 TTL（可为 0 或 -1）。 |
+| `remaining_ttl()` | Redis 报告的实际剩余 TTL（0；-1 = 无过期；-2 = key 已不存在）。 |
 | `created_at` / `updated_at`（属性） | 元信息中的时间戳。 |
 
 外加 domain 级的 `domain.run_gc(namespace=None)`，用于手动触发 GC。

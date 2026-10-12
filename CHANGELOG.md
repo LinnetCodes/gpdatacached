@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases (with download artifacts) are published at
 <https://github.com/LinnetCodes/gpdatacached/releases>.
 
+## [0.2.1] — 2026-10-12
+
+### Added
+
+- **`Decimal` builtin scalar type** — `decimal.Decimal` is auto-registered on
+  `import gpdatacached` as `scalar:decimal`; `DecimalObject` and `DecimalCodec`
+  are exported from the package root. Encoded losslessly as
+  `decimal:{str(value)}`: coefficient/exponent (significance) are preserved
+  exactly, extreme exponents use scientific notation, and non-finite values
+  (`NaN`, `sNaN`, `±Infinity`) plus `-0` roundtrip as-is — the same policy as
+  `float`'s `nan`/`inf`. Works everywhere a registered scalar does: standalone
+  objects, container elements, dict keys, set members, tuple elements, and
+  pandas object-dtype columns/index labels. Malformed payloads raise
+  `ValueError` on decode. Note the documented cross-type-equality caveat:
+  natively-equal values of different numeric types (`1` vs `Decimal(1)`) are
+  distinct GPDC dict keys/set members, as `1` vs `1.0` already were.
+
+### Documentation
+
+- Full docs-vs-code synchronization pass across `docs/` (English + zh-CN
+  mirrors) and both READMEs: README now lists `Decimal` among the supported
+  scalar types and its Quick Start lifecycle example is runnable as written
+  (`update_cache_mode_and_ttl` instead of mode-restricted `expire_in`);
+  `api.md` documents `remaining_ttl()` and the exact `ObjectGoneError`
+  surface; the extensibility codec diagram and the overview layer-dependency
+  edge were corrected to match the code (`GPDCContainerCodec` is a sibling
+  root of `GPDCCodec`, and the extensions depend on the type-system layer,
+  not the builtins); performance-guide RTT attributions were updated; the
+  zh-CN mirrors gained the translated §7 ownership heading (with a durable
+  explicit anchor) and several translation fixes. `keys.py`'s `make_ref_key`
+  docstring and the pandas `UnsupportedElementTypeError` guidance message
+  were corrected to match reality (hash, not set; `decimal` included). The
+  README status badge now reads Beta, aligned with the packaging
+  classifier `Development Status :: 4 - Beta`.
+
 ## [0.2.0] — 2026-07-26
 
 ### Added

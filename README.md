@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![Development Status](https://img.shields.io/badge/status-alpha-orange.svg)](https://pypi.org/project/gpdatacached/)
+[![Development Status](https://img.shields.io/badge/status-beta-blue.svg)](https://pypi.org/project/gpdatacached/)
 
 A Redis-based **cross-process data sharing and caching** library for Python. Any process that can reach the same Redis instance can share live, mutable, typed data structures — scalars, lists, dicts, sets — with reference semantics, lifecycle control, and optional distributed locking.
 
@@ -16,7 +16,7 @@ A Redis-based **cross-process data sharing and caching** library for Python. Any
 
 Sharing mutable state across processes is painful. `multiprocessing.Manager` is single-process-bottlenecked; raw Redis forces you to (de)serialize everything by hand and gives you no type safety, no reference tracking, no TTL cascades. `gpdatacached` gives you a dict-like API on top of Redis with:
 
-- **Typed objects** — store `int`, `str`, `datetime`, `list`, `dict`, `set`, … and get the same type back.
+- **Typed objects** — store `int`, `decimal.Decimal`, `str`, `datetime`, `list`, `dict`, `set`, … and get the same type back.
 - **Live containers** — `ns["tags"].append("x")` mutates Redis directly; no read-modify-write races on the whole structure.
 - **Reference sharing** — bind the same container under multiple names inside a namespace; the data is stored once.
 - **Lifecycle control** — per-object `permanent` / `ttl` / `sliding-window` cache modes, with cascade propagation to owned subtrees.
@@ -68,7 +68,7 @@ assert ns["tags"].value == ["b", "c", "d"]
 
 # Lifecycle control.
 ns["temp"] = "x"
-ns.get_object("temp").expire_in(60)   # requires cache_mode="ttl"
+ns.get_object("temp").update_cache_mode_and_ttl("ttl", 60)   # permanent → ttl, expires in 60s
 
 domain.close()
 ```

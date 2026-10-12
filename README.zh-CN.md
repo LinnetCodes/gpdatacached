@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![Development Status](https://img.shields.io/badge/status-alpha-orange.svg)](https://pypi.org/project/gpdatacached/)
+[![Development Status](https://img.shields.io/badge/status-beta-blue.svg)](https://pypi.org/project/gpdatacached/)
 
 一个基于 Redis 的**跨进程数据共享与缓存** Python 库。任何能够访问同一 Redis 实例的进程，都可以共享活跃的、可变的、带类型的数据结构 —— 标量、list、dict、set —— 并具备引用语义、生命周期控制以及可选的分布式锁。
 
@@ -16,7 +16,7 @@
 
 跨进程共享可变状态一直很麻烦：`multiprocessing.Manager` 会形成单进程瓶颈；直接使用 Redis 又需要你手动序列化所有数据，且没有类型安全、没有引用追踪、没有 TTL 级联。`gpdatacached` 在 Redis 之上提供了一套类 dict 的 API，特性包括：
 
-- **带类型的对象** —— 存储 `int`、`str`、`datetime`、`list`、`dict`、`set` …，读取时得到相同类型。
+- **带类型的对象** —— 存储 `int`、`decimal.Decimal`、`str`、`datetime`、`list`、`dict`、`set` …，读取时得到相同类型。
 - **活跃容器** —— `ns["tags"].append("x")` 直接修改 Redis，避免对整个结构的“读-改-写”竞态。
 - **引用共享** —— 在同一 namespace 内，同一个容器可绑定到多个名称；数据仅存储一份。
 - **生命周期控制** —— 每个对象可设置 `permanent` / `ttl` / `sliding`（滑动窗口）缓存模式，并将策略级联传播到所拥有的子树。
@@ -68,7 +68,7 @@ assert ns["tags"].value == ["b", "c", "d"]
 
 # 生命周期控制。
 ns["temp"] = "x"
-ns.get_object("temp").expire_in(60)   # 要求 cache_mode="ttl"
+ns.get_object("temp").update_cache_mode_and_ttl("ttl", 60)   # permanent → ttl，60 秒后过期
 
 domain.close()
 ```

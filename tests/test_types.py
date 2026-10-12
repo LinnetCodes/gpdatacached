@@ -1,5 +1,6 @@
 import threading
 from decimal import Decimal
+from fractions import Fraction
 
 import pytest
 
@@ -9,27 +10,23 @@ from gpdatacached.scalar import GPDCScalarObject
 from gpdatacached.types import GPDCTypeRegistry
 
 
-class DecimalCodec(GPDCScalarCodec):
+class FractionCodec(GPDCScalarCodec):
     @classmethod
     def encode_value(cls, value: object) -> str:
-        if not isinstance(value, Decimal):
-            raise TypeError(f"DecimalCodec cannot encode {type(value).__name__!r}")
-        return f"decimal:{value}"
+        if not isinstance(value, Fraction):
+            raise TypeError(f"FractionCodec cannot encode {type(value).__name__!r}")
+        return f"fraction:{value}"
 
     @classmethod
     def decode_value(cls, encoded: str) -> object:
-        if not encoded or ":" not in encoded:
-            raise ValueError(f"Invalid encoding: {encoded!r}")
-        colon_idx = encoded.index(":")
-        type_name = encoded[:colon_idx]
-        raw = encoded[colon_idx + 1 :]
-        if type_name != "decimal":
-            raise ValueError(f"DecimalCodec cannot decode type {type_name!r}")
-        return Decimal(raw)
+        type_name, raw = cls._parse_encoded(encoded)
+        if type_name != "fraction":
+            raise ValueError(f"FractionCodec cannot decode type {type_name!r}")
+        return Fraction(raw)
 
 
-class DecimalObject(GPDCScalarObject):
-    TYPE = "scalar:decimal"
+class FractionObject(GPDCScalarObject):
+    TYPE = "scalar:fraction"
 
 
 class LenlessContainer:
@@ -279,35 +276,40 @@ class TestTypeRegistryThreading:
         assert not errors, f"Concurrent access errors: {errors}"
 
 
-class TestRegistryExtensibility:
-    @pytest.fixture(autouse=True)
-    def register_decimal(self):
-        original_gpdc = dict(GPDCTypeRegistry._by_gpdc_type)
-        original_python = list(GPDCTypeRegistry._by_python_type)
-        original_lock = GPDCTypeRegistry._lock
-        try:
-            GPDCTypeRegistry._lock = threading.Lock()
-            GPDCTypeRegistry._by_gpdc_type = dict(original_gpdc)
-            GPDCTypeRegistry._by_python_type = list(original_python)
+class TestDecimalBuiltin:
+    """Decimal became a builtin scalar in 0.2.1 (it was previously the
+    registry-extensibility worked example in this file — see
+    TestRegistryExtensibility, now using Fraction)."""
 
-            GPDCTypeRegistry.register(
-                python_type=Decimal,
-                gpdc_type="scalar:decimal",
-                object_class=DecimalObject,
-                codec_class=DecimalCodec,
-                priority=0,
-            )
-            yield
-        finally:
-            GPDCTypeRegistry._by_gpdc_type = original_gpdc
-            GPDCTypeRegistry._by_python_type = original_python
-            GPDCTypeRegistry._lock = original_lock
+    def test_resolve_decimal(self):
+        entry = GPDCTypeRegistry.lookup_by_python_type(Decimal("3.14"))
+        assert entry.gpdc_type == "scalar:decimal"
 
-    def test_encode_decode(self):
-        encoded = DecimalCodec.encode_value(Decimal("3.14"))
-        assert encoded == "decimal:3.14"
-        decoded = DecimalCodec.decode_value(encoded)
-        assert decoded == Decimal("3.14")
+    def test_lookup_by_gpdc_type(self):
+        from gpdatacached import DecimalObject
+
+        entry = GPDCTypeRegistry.lookup_by_gpdc_type("scalar:decimal")
+        assert entry.object_class is DecimalObject
+        assert entry.object_class.TYPE == "scalar:decimal"
+
+    def test_scalar_store_roundtrip(self, ns):
+        ns["price"] = Decimal("9.99")
+        assert ns["price"] == Decimal("9.99")
+        assert type(ns["price"]) is Decimal
+        assert ns.get_object("price").type == "scalar:decimal"
+
+    def test_significance_preserved(self, ns):
+        ns["x"] = Decimal("1.100")
+        assert str(ns["x"]) == "1.100"
+
+    def test_special_values_store_roundtrip(self, ns):
+        special = ("NaN", "sNaN", "Infinity", "-Infinity", "-0")
+        for i, s in enumerate(special):
+            ns[f"sv{i}"] = Decimal(s)
+        for i, s in enumerate(special):
+            value = ns[f"sv{i}"]
+            assert type(value) is Decimal
+            assert str(value) == s
 
     def test_list_element(self, ns):
         ns["mylist"] = [Decimal("1.5"), Decimal("2.5")]
@@ -332,7 +334,28 @@ class TestRegistryExtensibility:
         assert Decimal("1") in s
         assert len(s) == 3
 
-    def test_tuple_with_custom_scalar(self):
+    def test_dict_key_numeric_equality_divergence(self, ns):
+        # Keys are matched by wire form, so natively-equal values of different
+        # types are distinct GPDC dict keys. This divergence already existed
+        # for 1 vs 1.0; Decimal extends it (documented in api.md).
+        ns["d"] = {}
+        d = ns["d"]
+        d[1] = "int"
+        d[Decimal(1)] = "decimal"
+        assert len(d) == 2
+        assert d[1] == "int"
+        assert d[Decimal(1)] == "decimal"
+
+    def test_set_member_numeric_equality_divergence(self, ns):
+        ns["s"] = set()
+        s = ns["s"]
+        s.add(1)
+        s.add(Decimal(1))
+        assert len(s) == 2
+        assert 1 in s
+        assert Decimal(1) in s
+
+    def test_tuple_with_decimal(self):
         from gpdatacached import TupleCodec
 
         original = (Decimal("1.5"), "hello", 42)
@@ -340,6 +363,69 @@ class TestRegistryExtensibility:
         decoded = TupleCodec.decode_value(encoded)
         assert decoded == original
         assert decoded[0] == Decimal("1.5")
+
+
+class TestRegistryExtensibility:
+    @pytest.fixture(autouse=True)
+    def register_fraction(self):
+        original_gpdc = dict(GPDCTypeRegistry._by_gpdc_type)
+        original_python = list(GPDCTypeRegistry._by_python_type)
+        original_lock = GPDCTypeRegistry._lock
+        try:
+            GPDCTypeRegistry._lock = threading.Lock()
+            GPDCTypeRegistry._by_gpdc_type = dict(original_gpdc)
+            GPDCTypeRegistry._by_python_type = list(original_python)
+
+            GPDCTypeRegistry.register(
+                python_type=Fraction,
+                gpdc_type="scalar:fraction",
+                object_class=FractionObject,
+                codec_class=FractionCodec,
+                priority=0,
+            )
+            yield
+        finally:
+            GPDCTypeRegistry._by_gpdc_type = original_gpdc
+            GPDCTypeRegistry._by_python_type = original_python
+            GPDCTypeRegistry._lock = original_lock
+
+    def test_encode_decode(self):
+        encoded = FractionCodec.encode_value(Fraction(3, 4))
+        assert encoded == "fraction:3/4"
+        decoded = FractionCodec.decode_value(encoded)
+        assert decoded == Fraction(3, 4)
+
+    def test_list_element(self, ns):
+        ns["mylist"] = [Fraction(1, 2), Fraction(3, 4)]
+        lst = ns.get_object("mylist")
+        assert lst[0] == Fraction(1, 2)
+        assert lst[1] == Fraction(3, 4)
+
+    def test_dict_value(self, ns):
+        ns["mydict"] = {"ratio": Fraction(22, 7)}
+        d = ns.get_object("mydict")
+        assert d["ratio"] == Fraction(22, 7)
+
+    def test_dict_key(self, ns):
+        ns["mydict"] = {Fraction(1): "one", Fraction(2): "two"}
+        d = ns.get_object("mydict")
+        assert d[Fraction(1)] == "one"
+        assert d[Fraction(2)] == "two"
+
+    def test_set_element(self, ns):
+        ns["myset"] = {Fraction(1), Fraction(2), Fraction(3)}
+        s = ns.get_object("myset")
+        assert Fraction(1) in s
+        assert len(s) == 3
+
+    def test_tuple_with_custom_scalar(self):
+        from gpdatacached import TupleCodec
+
+        original = (Fraction(1, 2), "hello", 42)
+        encoded = TupleCodec.encode_value(original)
+        decoded = TupleCodec.decode_value(encoded)
+        assert decoded == original
+        assert decoded[0] == Fraction(1, 2)
 
 
 class TestRegistryErrorPaths:
