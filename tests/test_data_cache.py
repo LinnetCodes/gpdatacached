@@ -476,6 +476,17 @@ class TestDottedDomainAtEscape:
         assert obj.value == {"score": 1}
         assert data_cache.has_uri("gpdc://domain_name.com/site.data/page.rank") is True
 
+    def test_dotted_domain_uri_path_descent(self, data_cache):
+        # Dotted domain + dotted namespace + path descent into a nested
+        # container (not just root objects).
+        d = data_cache.get_domain("domain_name.com")
+        ns = d.ensure_namespace("site.data")
+        ns["sitemap"] = {"pages": [{"url": "https://x"}, {"url": "https://y"}]}
+
+        obj = data_cache.get_object_by_uri("gpdc://domain_name.com/site.data/sitemap/pages/1")
+        assert obj["url"] == "https://y"
+        assert data_cache.has_uri("gpdc://domain_name.com/site.data/sitemap/pages/1") is True
+
     def test_contains_dotted_domain_true_at_name_false(self, data_cache):
         assert "domain_name.com" in data_cache
         # '@' is not a legal GPDC name character — must never match.
@@ -558,6 +569,100 @@ class TestFactoryPathAtEscape:
         with pytest.raises(ValueError, match="mismatch"):
             GPDCDomain(config, name="other.name")
 
+    def test_programmatic_config_name_with_at_restored(self, domain_config, clean_redis):
+        # The '@'->'.' restore applies to ANY non-empty config.name (which for
+        # file-loaded configs is the stem); a programmatically assigned name
+        # is restored the same way. '@' was never legal, so nothing that
+        # previously worked changes meaning.
+        from gpdatacached.domain import GPDCDomain
+
+        domain_config.name = "x@y"
+        d = GPDCDomain(domain_config)
+        try:
+            assert d.name == "x.y"
+        finally:
+            d.close()
+
+
+class TestURISegmentNameValidation:
+    """All three locating URI segments (domain/namespace/object) are validated
+    in _parse_uri and wrapped into ObjectNotFoundByURIError — no ValueError
+    may leak through get_object_by_uri / has_uri (review 2026-10-16 #1)."""
+
+    def test_invalid_namespace_name_raises_not_found(self, data_cache):
+        uri = "gpdc://core_domain/bad@ns/x"
+        with pytest.raises(ObjectNotFoundByURIError) as ei:
+            data_cache.get_object_by_uri(uri)
+        assert "invalid namespace name" in ei.value.reason
+        assert data_cache.has_uri(uri) is False
+
+    def test_invalid_object_name_raises_not_found(self, data_cache):
+        uri = "gpdc://core_domain/core_app/bad@obj"
+        with pytest.raises(ObjectNotFoundByURIError) as ei:
+            data_cache.get_object_by_uri(uri)
+        assert "invalid object name" in ei.value.reason
+        assert data_cache.has_uri(uri) is False
+
+    def test_invalid_domain_name_still_raises_not_found(self, data_cache):
+        uri = "gpdc://bad@domain/ns/x"
+        with pytest.raises(ObjectNotFoundByURIError) as ei:
+            data_cache.get_object_by_uri(uri)
+        assert "invalid domain name" in ei.value.reason
+        assert data_cache.has_uri(uri) is False
+
+    def test_has_uri_lockstep_all_failure_modes(self, data_cache):
+        """has_uri(x) is False ⟺ get_object_by_uri(x) raises
+        ObjectNotFoundByURIError, across every failure mode — the mechanical
+        lockstep invariant."""
+        d = data_cache.get_domain("core_domain")
+        ns = d.get_namespace("core_app")
+        ns["counter"] = 42
+        ns["cfg"] = {"server": {"host": "x"}, "a": 1}
+        ns["nums"] = [10, 20]
+        ns["s"] = {1, 2, 3}
+
+        cases = [
+            # malformed / structural
+            ("http://d/ns/x", False),
+            ("gpdc://d/ns", False),
+            ("gpdc://core_domain/core_app/cfg//x", False),  # empty segment
+            # invalid name segments
+            ("gpdc://bad@domain/ns/x", False),
+            ("gpdc://core_domain/bad@ns/x", False),
+            ("gpdc://core_domain/core_app/bad@obj", False),
+            ("gpdc://core_domain/core_app/__meta__", False),  # reserved
+            # missing segments
+            ("gpdc://no_such_domain/ns/x", False),
+            ("gpdc://core_domain/no_such_ns/x", False),
+            ("gpdc://core_domain/core_app/no_such_obj", False),
+            # broken path / terminals
+            ("gpdc://core_domain/core_app/nums/abc", False),  # non-numeric index
+            ("gpdc://core_domain/core_app/nums/0", False),  # scalar terminal
+            ("gpdc://core_domain/core_app/cfg/missing", False),  # missing key
+            ("gpdc://core_domain/core_app/s/x", False),  # set descent
+            # successes
+            ("gpdc://core_domain/core_app/counter", True),
+            ("gpdc://core_domain/core_app/cfg", True),
+            ("gpdc://core_domain/core_app/cfg/server", True),
+        ]
+        for uri, expected in cases:
+            assert data_cache.has_uri(uri) is expected, f"has_uri mismatch for {uri}"
+            if expected:
+                assert data_cache.get_object_by_uri(uri) is not None
+            else:
+                with pytest.raises(ObjectNotFoundByURIError):
+                    data_cache.get_object_by_uri(uri)
+
+
+class TestContainsEdgeCases:
+    def test_non_str_contains_is_false(self, gpdc_config_folder, clean_redis):
+        from gpdatacached.data_cache import GPDataCache
+
+        cache = GPDataCache(gpdc_config_folder)
+        assert (123 in cache) is False
+        assert (None in cache) is False
+        assert (["core_domain"] in cache) is False
+
 
 class TestDottedConfigStemWarning:
     """GPDataCache.__init__ warns once about config stems containing '.' —
@@ -572,6 +677,20 @@ class TestDottedConfigStemWarning:
         warns = [r for r in caplog.records if "bad.name" in r.getMessage()]
         assert len(warns) == 1
         assert "bad@name" in warns[0].getMessage()  # suggests the @-spelling
+
+    def test_warning_once_per_instance_not_per_lookup(self, tmp_path, caplog):
+        # "Once" is per GPDataCache instance: repeated lookups do not re-warn,
+        # a second instance over the same folder warns again.
+        from gpdatacached.data_cache import GPDataCache
+
+        folder = make_config_folder(tmp_path, {"bad.name.yaml": MINIMAL_DOMAIN_YAML})
+        with caplog.at_level(logging.WARNING, logger="gpdatacached.data_cache"):
+            cache = GPDataCache(folder)
+            "other" in cache
+            "more" in cache
+            assert len(caplog.records) == 1
+            GPDataCache(folder)
+            assert len(caplog.records) == 2
 
     def test_init_no_warning_for_at_stem(self, tmp_path, caplog):
         from gpdatacached.data_cache import GPDataCache

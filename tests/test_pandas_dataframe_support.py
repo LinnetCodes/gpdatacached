@@ -1527,5 +1527,3 @@ class TestFailedEncodeLogic01DataFrame:
             obj["v"] = cyclic
         # Parent hash unchanged; the old column 'v' was NOT released/deleted.
         assert raw_redis.hgetall(obj.raw_key) == before
-
-

@@ -340,7 +340,7 @@ gpdc://{domain}/{namespace}/{name}[/{path_segment}...]
 
 **标量终结点会被拒绝。** 嵌套在容器内部的标量以内联值形式存储（而非作为被引用对象），因此深入到一个标量元素得到的是原生 Python 值。由于 `get_object_by_uri` 只返回对象，终止于标量的路径会抛出 `ObjectNotFoundByURIError`。例如，给定 `ns["cfg"] = {"port": 8080}`，`gpdc://d/ns/cfg/port` 会抛错（值 `8080` 是标量，而非数据对象）。
 
-**错误。** 每一种失败情况都会抛出 [`ObjectNotFoundByURIError`](#objectnotfoundbyurierror)（携带 `.uri` 和 `.reason`）：URI 格式错误（缺少 `gpdc://`、分段少于三段、存在空分段）、未知的 domain、缺少 namespace、缺少根对象、某个路径分段失败（`KeyError`/`IndexError`/`TypeError`），以及标量终结点。
+**错误。** 每一种失败情况都会抛出 [`ObjectNotFoundByURIError`](#objectnotfoundbyurierror)（携带 `.uri` 和 `.reason`）：URI 格式错误（缺少 `gpdc://`、分段少于三段、存在空分段）、非法的 domain/namespace/object 名（三个定位分段都会预先校验）、未知的 domain、缺少 namespace、缺少根对象、某个路径分段失败（`KeyError`/`IndexError`/`TypeError`），以及标量终结点。
 
 **示例。** 给定 `ns["cfg"] = {"server": {"host": "x"}, "tags": ["a","b"]}`：
 
@@ -360,7 +360,7 @@ gpdc://{domain}/{namespace}/{name}[/{path_segment}...]
 class ObjectNotFoundByURIError(GPDCError)
 ```
 
-当 GPDC URI 无法解析为 `GPDCDataObject` 时，由 [`GPDataCache.get_object_by_uri`](#get_object_by_uri) 抛出。涵盖所有失败情况：URI 语法格式错误、非法的 domain 名、未知的 domain（无配置）、缺少 namespace、缺少根对象、某个路径分段失败，以及标量终结点。携带 `.uri`（URI 字符串）和 `.reason`（简短说明）。
+当 GPDC URI 无法解析为 `GPDCDataObject` 时，由 [`GPDataCache.get_object_by_uri`](#get_object_by_uri) 抛出。涵盖所有失败情况：URI 语法格式错误、非法的 domain/namespace/object 名、未知的 domain（无配置）、缺少 namespace、缺少根对象、某个路径分段失败，以及标量终结点。携带 `.uri`（URI 字符串）和 `.reason`（简短说明）。
 
 `has_uri` 只会吞掉这个异常；基础设施错误（如 Redis 连接失败）会继续向上传播。
 
@@ -721,6 +721,20 @@ def validate_object_name(name: str) -> None
 ```
 
 校验 `name` 仅包含字母、数字、`.` 或 `_`，且不是被保留的 `__xxx__` 名称。否则抛出 `ValueError`。（内部还存在等价的 domain 名称与 namespace 名称校验器。）
+
+### Domain 名 `@` 转义辅助函数
+
+```python
+DOMAIN_DOT_ESCAPE: str          # "@"
+
+def escape_domain_name(name: str) -> str
+    # "domain_name.com"  ->  "domain_name@com"   ('.' -> '@')
+
+def unescape_domain_name(stem: str) -> str
+    # "domain_name@com"  ->  "domain_name.com"   ('@' -> '.')
+```
+
+[`GPDataCache` `@` 转义约定](#gpdatacache)的辅助函数：gpconfig 以点分路径寻址配置，因此 domain 配置文件名中的 `.` 无法被寻址 —— domain 名中的每个 `.` 在文件名中写作 `@`。由于 `@` 不是 GPDC 名称的合法字符，该映射是单射的；同理 `unescape_domain_name` 可安全地作用于任何 stem 来源的名字。通常无需直接使用 —— `GPDataCache`（寻址时转义）与 `GPDCDomain`（加载时还原）会自动应用。
 
 ---
 

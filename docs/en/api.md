@@ -390,9 +390,10 @@ For example, given `ns["cfg"] = {"port": 8080}`, `gpdc://d/ns/cfg/port` raises
 
 **Errors.** Every failure mode raises [`ObjectNotFoundByURIError`](#objectnotfoundbyurierror)
 (carries `.uri` and `.reason`): malformed URI (missing `gpdc://`, fewer than
-three segments, empty segment), unknown domain, missing namespace, missing root
-object, a path segment that fails (`KeyError`/`IndexError`/`TypeError`), and a
-scalar terminal.
+three segments, empty segment), an invalid domain/namespace/object name (each
+locating segment is validated up front), unknown domain, missing namespace,
+missing root object, a path segment that fails
+(`KeyError`/`IndexError`/`TypeError`), and a scalar terminal.
 
 **Example.** Given `ns["cfg"] = {"server": {"host": "x"}, "tags": ["a","b"]}`:
 
@@ -415,7 +416,7 @@ class ObjectNotFoundByURIError(GPDCError)
 Raised by [`GPDataCache.get_object_by_uri`](#get_object_by_uri) when a GPDC URI
 cannot be resolved to a `GPDCDataObject`. Covers every failure mode: malformed
 URI syntax, unknown domain (no config), missing namespace, missing root object,
-an invalid domain name, a path segment that fails, and a scalar terminal. Carries `.uri` (the URI
+an invalid domain/namespace/object name, a path segment that fails, and a scalar terminal. Carries `.uri` (the URI
 string) and `.reason` (a short explanation).
 
 `has_uri` swallows only this exception; infrastructure errors (e.g. Redis
@@ -780,6 +781,20 @@ def validate_object_name(name: str) -> None
 ```
 
 Validate that `name` contains only letters, digits, `.` or `_` and is not a reserved `__xxx__` name. Raises `ValueError` otherwise. (Equivalent validators exist internally for domain and namespace names.)
+
+### Domain-name `@` escape helpers
+
+```python
+DOMAIN_DOT_ESCAPE: str          # "@"
+
+def escape_domain_name(name: str) -> str
+    # "domain_name.com"  ->  "domain_name@com"   ('.' -> '@')
+
+def unescape_domain_name(stem: str) -> str
+    # "domain_name@com"  ->  "domain_name.com"   ('@' -> '.')
+```
+
+Helpers for the [`GPDataCache` `@` escape convention](#gpdatacache): gpconfig addresses configs by dot-separated paths, so a `.` in a domain config filename is unaddressable — each `.` in a domain name is written as `@` in the filename instead. The mapping is injective because `@` is not a legal character in GPDC names. `unescape_domain_name` is safe to apply to any stem-derived name for the same reason. You rarely need these directly — `GPDataCache` (lookup escaping) and `GPDCDomain` (load-time restore) apply them automatically.
 
 ---
 

@@ -40,7 +40,8 @@ GitHub Releases (with download artifacts) are published at
   `config.name == addressable path component` invariant; a gpconfig-side
   request (fail-fast validation of config filenames containing `.` at manager
   init, plus a docs note) is recorded in
-  `dev_docs/issue-gpconfig-at-escape-in-config-names.md`.
+  `dev_docs/issue-gpconfig-at-escape-in-config-names.md`); that request
+  has since landed in gpconfig 0.4.0.
 - **Startup warning for unaddressable config filenames** — `GPDataCache`
   construction logs one warning per config file whose name contains a real
   `.` (listed by `list_configs()` but never loadable by gpconfig's
@@ -69,6 +70,13 @@ GitHub Releases (with download artifacts) are published at
   `ValueError` on decode. Note the documented cross-type-equality caveat:
   natively-equal values of different numeric types (`1` vs `Decimal(1)`) are
   distinct GPDC dict keys/set members, as `1` vs `1.0` already were.
+
+### Changed
+
+- Require `gpconfig>=0.4.0` (was `>=0.3.0`, a version never published).
+  gpconfig 0.4.0 ships fail-fast validation of config filenames containing
+  `.` plus the `@`-convention documentation; gpdatacached's own
+  construction-time warning remains as defense for it.
 
 ### Documentation
 

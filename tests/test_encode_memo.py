@@ -258,4 +258,3 @@ class TestFailedEncodeLeavesRedisUntouchedLogic01:
         assert d["a"] == 2
         assert d["b"] == 3
         assert list(d["c"]) == [1, 2]
-

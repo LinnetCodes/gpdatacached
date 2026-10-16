@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING
 from gpconfig import ConfigNotFoundError
 
 from .exceptions import ObjectNotFoundByURIError
-from .keys import DOMAIN_DOT_ESCAPE, escape_domain_name, validate_domain_name
+from .keys import (
+    DOMAIN_DOT_ESCAPE,
+    escape_domain_name,
+    validate_domain_name,
+    validate_namespace_name,
+    validate_object_name,
+)
 
 if TYPE_CHECKING:
     from gpconfig import GPConfigFolder
@@ -144,8 +150,9 @@ class GPDataCache:
         terminates on a scalar value raises ObjectNotFoundByURIError.
 
         Raises ObjectNotFoundByURIError for every failure mode: malformed
-        URI, invalid domain name, missing domain config, missing namespace,
-        missing root object, broken path, scalar terminal.
+        URI, invalid domain/namespace/object name, missing domain config,
+        missing namespace, missing root object, broken path, scalar
+        terminal.
         """
         self._check_open()
         domain_name, ns_name, obj_name, path_parts = self._parse_uri(uri)
@@ -200,13 +207,23 @@ class GPDataCache:
         if any(p == "" for p in parts):
             raise ObjectNotFoundByURIError(uri, "URI contains an empty segment")
         domain, ns_name, obj_name = parts[0], parts[1], parts[2]
-        # Validate the domain segment so every URI failure mode surfaces as
-        # ObjectNotFoundByURIError (get_domain's ValueError must not leak
-        # through get_object_by_uri, and has_uri relies on that contract).
-        try:
-            validate_domain_name(domain)
-        except ValueError as e:
-            raise ObjectNotFoundByURIError(uri, f"invalid domain name {domain!r}: {e}") from e
+        # Validate all three locating segments up front so every URI failure
+        # mode surfaces as ObjectNotFoundByURIError: a ValueError from any
+        # downstream validator (e.g. namespace.get_object validates object
+        # names before its existence check) must not leak through
+        # get_object_by_uri, and has_uri relies on that contract. Path
+        # segments are NOT validated here — they are dict keys / list
+        # indices, and invalid ones fail traversal with KeyError/IndexError,
+        # which _traverse already wraps.
+        for label, segment, validator in (
+            ("domain", domain, validate_domain_name),
+            ("namespace", ns_name, validate_namespace_name),
+            ("object", obj_name, validate_object_name),
+        ):
+            try:
+                validator(segment)
+            except ValueError as e:
+                raise ObjectNotFoundByURIError(uri, f"invalid {label} name {segment!r}: {e}") from e
         path_parts = parts[3:]
         return domain, ns_name, obj_name, path_parts
 
