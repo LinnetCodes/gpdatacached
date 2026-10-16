@@ -110,6 +110,7 @@ folder = mgr.get_config("gpdc")        # -> GPConfigFolder; sample layouts in te
 with GPDataCache(folder) as cache:
     "core_domain" in cache                                  # True iff a config exists (no Redis)
     domain = cache.get_domain("core_domain")                # lazy construct + cache
+    site = cache.get_domain("domain_name.com")             # dotted name -> domain_name@com.yaml
 
     # 3. Resolve objects by GPDC URI — including anonymous nested objects.
     ns = domain.get_namespace("core_app")
@@ -214,7 +215,7 @@ class GPDCNamespace(name, domain, *, config=None)   # MutableMapping
 
 A logical isolation space inside a `GPDCDomain`. Implements the full `MutableMapping` protocol backed by Redis.
 
-**Naming rule:** names may use letters, digits, `.` and `_`; names wrapped in `__xxx__` are reserved. Anonymous objects (internal names starting with `~`) are hidden from the public mapping API. Common characters that are **rejected** because they fall outside the allow-list (and, for `:`, collide with the Redis key separator): hyphen `-`, spaces, and `:` — use `_` or `.` instead.
+**Naming rule:** names may use letters, digits, `.` and `_`; names wrapped in `__xxx__` are reserved. Anonymous objects (internal names starting with `~`) are hidden from the public mapping API. Common characters that are **rejected** because they fall outside the allow-list (and, for `:`, collide with the Redis key separator): hyphen `-`, spaces, and `:` — use `_` or `.` instead. This rule applies to **object and namespace names**, and to **domain names** (a `.` in a domain name is legal everywhere in GPDC — but when the domain is driven by a config file through `GPDataCache`, the `.` must be spelled `@` in the filename; see the [`GPDataCache` `@` escape](#gpdatacache)).
 
 **Properties**
 
@@ -296,14 +297,33 @@ recommended entry point when your domains are driven by config files rather
 than constructed ad-hoc in code.
 
 **Construction.** Built from a `GPConfigFolder`. On construction it stores the
-folder reference only — **no domain is created**. Domains are constructed
-lazily (via gpconfig's object factory `folder.get_object(name)`) on first
-[`get_domain`](#gpdatacache) access, and cached in an internal dict. The cache
-is a snapshot: config files edited after construction are **not** re-read;
-rebuild the `GPDataCache` to pick up changes.
+folder reference only — **no domain is created** (it does scan the folder once
+to warn about unaddressable config filenames; see below). Domains are
+constructed lazily on first [`get_domain`](#gpdatacache) access, and cached in
+an internal dict. The cache is a snapshot: config files edited after
+construction are **not** re-read; rebuild the `GPDataCache` to pick up changes.
 
 `GPDataCache` does **not** create domains lacking a config file — for ad-hoc
 domains use [`GPDCDomain`](#gpdcdomain) directly.
+
+> **Dots in domain names — the `@` escape.** gpconfig addresses configs by
+> dot-separated paths, so a `.` in a config filename is consumed as a path
+> separator and the file becomes unaddressable. To use a dotted domain name —
+> the natural shape when a domain mirrors an internet domain, e.g.
+> `domain_name.com` — write each `.` as `@` in the config filename:
+> `domain_name@com.yaml` configures the domain `"domain_name.com"`, and
+> `cache.get_domain("domain_name.com")` /
+> `cache.get_object_by_uri("gpdc://domain_name.com/ns/obj")` resolve it
+> transparently. The mapping is unambiguous because `@` is not a legal
+> character in GPDC names. `GPDCDomain` itself performs the `@` → `.`
+> restore for names derived from a config-file stem, so gpconfig's object
+> factory path also works: `folder.get_object("domain_name@com")`
+> constructs a domain named `domain_name.com`, identical to
+> `cache.get_domain("domain_name.com")`. An explicit `name=` argument
+> containing `@` is still rejected — the escape exists for filenames;
+> in code, write the `.` directly. Config files whose names contain a real `.` are
+> listed by the folder but can never be loaded; `GPDataCache` logs a warning
+> about them once at construction.
 
 > **Registration side effect.** `import gpdatacached` registers `GPDCDomain`
 > and `GPDCDomainConfig` with gpconfig's object factory (idempotent), which is
@@ -312,7 +332,7 @@ domains use [`GPDCDomain`](#gpdcdomain) directly.
 
 **Dunder protocols**
 
-- `name in cache` → `True` iff a config named `name` exists in the folder. This is a pure config-snapshot check: it does **not** touch Redis and does not construct (or require) a `GPDCDomain` instance — the answer depends only on whether the config file is present, not on whether `get_domain(name)` has been called. The domain instance is created lazily on first `get_domain(name)` access.
+- `name in cache` → `True` iff a config for `name` exists in the folder (dotted names look up their `@`-escaped filename). This is a pure config-snapshot check: it does **not** touch Redis and does not construct (or require) a `GPDCDomain` instance — the answer depends only on whether the config file is present, not on whether `get_domain(name)` has been called. Names that are not legal GPDC domain names (e.g. containing `@`) return `False`. The domain instance is created lazily on first `get_domain(name)` access.
 - `with cache as c` / `__exit__` → closes every cached domain on exit; `close()` is idempotent.
 
 > **`close()` behaviour — the membership exception.** After `cache.close()`, the resource-touching methods (`get_domain`, `get_object_by_uri`, `has_uri`) raise `RuntimeError("GPDataCache is closed")`. The `name in cache` membership check is the **deliberate exception**: because it only reads the config snapshot and touches no resources, it keeps working after `close()`. This is intentional — "does a config for this domain exist?" is meaningful regardless of whether the cache is open.
@@ -321,7 +341,7 @@ domains use [`GPDCDomain`](#gpdcdomain) directly.
 
 | Method | Description |
 |---|---|
-| `get_domain(name)` | Return the cached `GPDCDomain` for `name`, constructing it lazily on first access. Propagates gpconfig's `ConfigNotFoundError` if no config exists for `name`. Raises `RuntimeError` after `close()`. |
+| `get_domain(name)` | Return the cached `GPDCDomain` for `name`, constructing it lazily on first access. Dotted names resolve to their `@`-escaped config file (see above). Raises `ValueError` if `name` is not a legal domain name; propagates gpconfig's `ConfigNotFoundError` if no config exists for `name`. Raises `RuntimeError` after `close()`. |
 | [`get_object_by_uri(uri)`](#get_object_by_uri) | Resolve a GPDC URI to a `GPDCDataObject`. Raises `RuntimeError` after `close()`. |
 | `has_uri(uri)` | Return `True` iff `get_object_by_uri(uri)` would succeed. Raises `RuntimeError` after `close()`. |
 | `close()` | Close every cached domain. Idempotent. |
@@ -395,7 +415,7 @@ class ObjectNotFoundByURIError(GPDCError)
 Raised by [`GPDataCache.get_object_by_uri`](#get_object_by_uri) when a GPDC URI
 cannot be resolved to a `GPDCDataObject`. Covers every failure mode: malformed
 URI syntax, unknown domain (no config), missing namespace, missing root object,
-a path segment that fails, and a scalar terminal. Carries `.uri` (the URI
+an invalid domain name, a path segment that fails, and a scalar terminal. Carries `.uri` (the URI
 string) and `.reason` (a short explanation).
 
 `has_uri` swallows only this exception; infrastructure errors (e.g. Redis

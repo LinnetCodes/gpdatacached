@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING
 from gpconfig import ConfigNotFoundError
 
 from .exceptions import ObjectNotFoundByURIError
+from .keys import DOMAIN_DOT_ESCAPE, escape_domain_name, validate_domain_name
 
 if TYPE_CHECKING:
     from gpconfig import GPConfigFolder
 
+    from .config import GPDCDomainConfig
     from .domain import GPDCDomain
     from .object import GPDCDataObject
 
@@ -21,9 +23,11 @@ logger = logging.getLogger(__name__)
 class GPDataCache:
     """Manage GPDCDomain instances from a GPConfigFolder and resolve GPDC URIs.
 
-    Domains are constructed lazily via gpconfig's object factory
-    (``folder.get_object(name)``) and cached. Construction happens on first
-    ``get_domain`` access; ``__init__`` does not create any domain.
+    Domain configs are loaded lazily on first ``get_domain`` access and
+    cached; ``__init__`` does not create any domain. Domain names may contain
+    '.' — gpconfig cannot address dotted filenames, so a '.' in a domain name
+    is written as '@' in its config file (``domain_name@com.yaml`` configures
+    domain ``"domain_name.com"``; see DOMAIN_DOT_ESCAPE).
 
     The cache is a snapshot: config files edited after construction are NOT
     re-read. Rebuild the GPDataCache to pick up changes.
@@ -38,28 +42,96 @@ class GPDataCache:
         self._folder = folder
         self._domains: dict[str, GPDCDomain] = {}
         self._closed = False
+        self._warn_dotted_config_stems()
+
+    def _warn_dotted_config_stems(self) -> None:
+        """Warn once about config stems containing '.' — they are unaddressable.
+
+        gpconfig's dot-notation consumes '.' as a path separator, so such a
+        file is listed by ``list_configs()`` but can never be loaded by name.
+        The '@' escape (DOMAIN_DOT_ESCAPE) is the supported way to spell a
+        dotted domain name in a filename.
+        """
+        try:
+            names = self._folder.list_configs()
+        except Exception:
+            # __init__ must stay side-effect-free relative to the folder; a
+            # broken listing will surface on first real use instead.
+            return
+        for name in names:
+            if "." in name:
+                logger.warning(
+                    "Config %r in config folder %r contains '.' and cannot be addressed "
+                    "by gpconfig's dot-notation; rename it to %r ('.' in a domain name "
+                    "is written as '%s' in the config filename).",
+                    name,
+                    self._folder.path,
+                    escape_domain_name(name),
+                    DOMAIN_DOT_ESCAPE,
+                )
 
     def __contains__(self, domain_name: object) -> bool:
         """Return True iff ``domain_name`` has a config in this folder.
 
         Pure config-snapshot check via ``folder.list_configs()``: does not
-        touch Redis and does not construct a GPDCDomain.
+        touch Redis and does not construct a GPDCDomain. The name is validated
+        and '@'-escaped first, so ``"domain_name.com" in cache`` matches the
+        config file ``domain_name@com.yaml``; names that are not legal GPDC
+        domain names (including any containing '@') return False.
         """
         if not isinstance(domain_name, str):
             return False
-        return domain_name in self._folder.list_configs()
+        try:
+            validate_domain_name(domain_name)
+        except ValueError:
+            return False
+        return escape_domain_name(domain_name) in self._folder.list_configs()
 
     def get_domain(self, domain_name: str) -> "GPDCDomain":
         """Return the cached GPDCDomain for ``domain_name``, creating it lazily.
 
-        Propagates gpconfig's ``ConfigNotFoundError`` if the domain has no
-        config file in this folder. GPDataCache does not create domains
-        without a config (use GPDCDomain directly for ad-hoc domains).
+        ``domain_name`` is validated against the GPDC name rules and
+        '@'-escaped for the config lookup (see DOMAIN_DOT_ESCAPE), so a
+        dotted domain name resolves to its '@'-escaped config file. The
+        config is loaded as GPDCDomainConfig and constructed directly —
+        GPDCDomain's own name resolution restores the '@'-escaped stem
+        (``domain_name@com``) to the real dotted name
+        (``domain_name.com``), so the same factory-built path via
+        ``folder.get_object("domain_name@com")`` yields an identically
+        named domain.
+
+        Raises ValueError for names that are not legal GPDC domain names,
+        and gpconfig's ``ConfigNotFoundError`` if the domain has no config
+        file in this folder. GPDataCache does not create domains without a
+        config (use GPDCDomain directly for ad-hoc domains).
         """
         self._check_open()
+        validate_domain_name(domain_name)
         if domain_name not in self._domains:
-            self._domains[domain_name] = self._folder.get_object(domain_name)
+            config = self._load_domain_config(domain_name)
+            # Imported lazily to keep this module decoupled from the
+            # package's import order (same rationale as _traverse).
+            from .domain import GPDCDomain
+
+            self._domains[domain_name] = GPDCDomain(config)
         return self._domains[domain_name]
+
+    def _load_domain_config(self, domain_name: str) -> "GPDCDomainConfig":
+        """Load the domain config for ``domain_name`` (via its '@'-escaped stem).
+
+        The config keeps its raw stem in ``config.name``; GPDCDomain's name
+        resolution performs the '@' -> '.' restore. Raises
+        ConfigNotFoundError when no config answers to the escaped name, or
+        when something other than a domain config does (e.g. a subfolder
+        shadows the config file).
+        """
+        from .config import GPDCDomainConfig
+
+        escaped = escape_domain_name(domain_name)
+        config = self._folder.get_config(escaped, config_cls=GPDCDomainConfig)
+        if not isinstance(config, GPDCDomainConfig):
+            raise ConfigNotFoundError(escaped, f"resolves to {type(config).__name__}, not a GPDCDomainConfig")
+        return config
 
     def get_object_by_uri(self, uri: str) -> "GPDCDataObject":
         """Resolve a GPDC URI to a GPDCDataObject.
@@ -72,8 +144,8 @@ class GPDataCache:
         terminates on a scalar value raises ObjectNotFoundByURIError.
 
         Raises ObjectNotFoundByURIError for every failure mode: malformed
-        URI, missing domain config, missing namespace, missing root object,
-        broken path, scalar terminal.
+        URI, invalid domain name, missing domain config, missing namespace,
+        missing root object, broken path, scalar terminal.
         """
         self._check_open()
         domain_name, ns_name, obj_name, path_parts = self._parse_uri(uri)
@@ -88,17 +160,13 @@ class GPDataCache:
         try:
             ns = domain.get_namespace(ns_name)
         except KeyError as e:
-            raise ObjectNotFoundByURIError(
-                uri, f"namespace {ns_name!r} not found in domain {domain_name!r}"
-            ) from e
+            raise ObjectNotFoundByURIError(uri, f"namespace {ns_name!r} not found in domain {domain_name!r}") from e
 
         # Root object: get_object returns the object itself (not a value).
         try:
             root = ns.get_object(obj_name)
         except KeyError as e:
-            raise ObjectNotFoundByURIError(
-                uri, f"object {obj_name!r} not found in namespace {ns_name!r}"
-            ) from e
+            raise ObjectNotFoundByURIError(uri, f"object {obj_name!r} not found in namespace {ns_name!r}") from e
 
         # _traverse descends path_parts via __getitem__ (int-coercing ListObject
         # segments) and enforces the object-only terminal contract; with no
@@ -125,15 +193,20 @@ class GPDataCache:
         """Split a GPDC URI into (domain, namespace, name, path_parts)."""
         if not uri.startswith("gpdc://"):
             raise ObjectNotFoundByURIError(uri, "URI must start with 'gpdc://'")
-        rest = uri[len("gpdc://"):]
+        rest = uri[len("gpdc://") :]
         parts = rest.split("/")
         if len(parts) < 3:
-            raise ObjectNotFoundByURIError(
-                uri, "URI must have at least domain/namespace/name segments"
-            )
+            raise ObjectNotFoundByURIError(uri, "URI must have at least domain/namespace/name segments")
         if any(p == "" for p in parts):
             raise ObjectNotFoundByURIError(uri, "URI contains an empty segment")
         domain, ns_name, obj_name = parts[0], parts[1], parts[2]
+        # Validate the domain segment so every URI failure mode surfaces as
+        # ObjectNotFoundByURIError (get_domain's ValueError must not leak
+        # through get_object_by_uri, and has_uri relies on that contract).
+        try:
+            validate_domain_name(domain)
+        except ValueError as e:
+            raise ObjectNotFoundByURIError(uri, f"invalid domain name {domain!r}: {e}") from e
         path_parts = parts[3:]
         return domain, ns_name, obj_name, path_parts
 
@@ -164,16 +237,14 @@ class GPDataCache:
             if not hasattr(current, "__getitem__"):
                 raise ObjectNotFoundByURIError(
                     uri,
-                    f"path segment {part!r} cannot descend: "
-                    f"{current.canonical_uri} does not support subscript access",
+                    f"path segment {part!r} cannot descend: {current.canonical_uri} does not support subscript access",
                 )
             # Type-based key coercion (decision D9).
             if isinstance(current, ListObject):
                 if not part.isdigit():
                     raise ObjectNotFoundByURIError(
                         uri,
-                        f"path segment {part!r} invalid for ListObject: "
-                        f"must be a non-negative integer",
+                        f"path segment {part!r} invalid for ListObject: must be a non-negative integer",
                     )
                 key = int(part)
             else:
@@ -186,9 +257,7 @@ class GPDataCache:
                 ) from e
         # Terminal check: must be a GPDCDataObject, not a scalar value.
         if not isinstance(current, GPDCDataObject):
-            raise ObjectNotFoundByURIError(
-                uri, "terminal is a scalar value; get_object_by_uri returns objects only"
-            )
+            raise ObjectNotFoundByURIError(uri, "terminal is a scalar value; get_object_by_uri returns objects only")
         return current
 
     def close(self) -> None:

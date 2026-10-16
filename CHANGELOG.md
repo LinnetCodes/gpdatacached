@@ -8,6 +8,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases (with download artifacts) are published at
 <https://github.com/LinnetCodes/gpdatacached/releases>.
 
+## [0.3.0] — 2026-10-16
+
+### Added
+
+- **Dotted domain names via the `@` filename escape (`GPDataCache`)** —
+  domain names may now contain `.` end-to-end through the config-file path.
+  gpconfig addresses configs by dot-separated paths, so a `.` in a config
+  filename is consumed as a path separator and the file becomes
+  unaddressable; the new convention writes each `.` in a domain name as `@`
+  in the filename (chosen for its internet-address connotation — the natural
+  spelling when a domain mirrors an internet domain):
+  `domain_name@com.yaml` configures the domain `"domain_name.com"`, and
+  `cache.get_domain("domain_name.com")`, `name in cache`, and
+  `gpdc://domain_name.com/{ns}/{obj}[...]` URIs resolve it transparently.
+  The mapping is injective because `@` is not a legal character in GPDC
+  names. `GPDataCache.get_domain` now validates the requested name against
+  the GPDC domain-name rules (`ValueError` otherwise; URI resolution reports
+  the same case as `ObjectNotFoundByURIError`, and `has_uri` stays aligned).
+  `GPDCDomain`'s name resolution restores `@` → `.` for names derived from
+  a config-file stem (before the name-mismatch check), so gpconfig's
+  object factory path also constructs correctly-named domains:
+  `folder.get_object("domain_name@com")` yields the domain
+  `"domain_name.com"`, identical to `GPDataCache.get_domain(
+  "domain_name.com")`. An explicit `name=` argument containing `@` is
+  still rejected. The escape helpers (`DOMAIN_DOT_ESCAPE`,
+  `escape_domain_name`, `unescape_domain_name`) are exported from the
+  package root. **No gpconfig-side change is
+  needed or wanted** (owner ruling 2026-10-16): gpconfig keeps
+  `config.name` as the raw stem, preserving the
+  `config.name == addressable path component` invariant; a gpconfig-side
+  request (fail-fast validation of config filenames containing `.` at manager
+  init, plus a docs note) is recorded in
+  `dev_docs/issue-gpconfig-at-escape-in-config-names.md`.
+- **Startup warning for unaddressable config filenames** — `GPDataCache`
+  construction logs one warning per config file whose name contains a real
+  `.` (listed by `list_configs()` but never loadable by gpconfig's
+  dot-notation), suggesting the `@` spelling.
+
+### Fixed
+
+- `GPDataCache.__contains__` and `get_domain` no longer disagree for
+  config files whose stem contains `.` (previously `in` returned `True`
+  while `get_domain` raised `ConfigNotFoundError`; such files are now
+  warned about at construction and looked up only through valid names).
+
 ## [0.2.1] — 2026-10-12
 
 ### Added

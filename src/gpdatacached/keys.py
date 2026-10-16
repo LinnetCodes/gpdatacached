@@ -112,6 +112,35 @@ def validate_namespace_name(name: str) -> None:
     _validate_name(name, "namespace name")
 
 
+DOMAIN_DOT_ESCAPE = "@"
+"""Escape for '.' in domain config filenames (internet-domain adaptation).
+
+gpconfig addresses configs by dot-separated paths, so a '.' in a config file
+stem is consumed as a path separator and the file becomes unaddressable
+(listed by ``list_configs`` but never found). A '@' in the stem instead
+stands for a literal '.' in the domain name: ``domain_name@com.yaml``
+configures the domain ``"domain_name.com"``. The '@' was chosen for its
+internet-address connotation (user@host); the mapping is injective because
+'@' is not a legal character in GPDC names, so two distinct domain names can
+never escape to the same filename.
+"""
+
+
+def escape_domain_name(name: str) -> str:
+    """Return the config-file form of a domain name ('.' -> '@')."""
+    return name.replace(".", DOMAIN_DOT_ESCAPE)
+
+
+def unescape_domain_name(stem: str) -> str:
+    """Return the domain name for a config-file stem ('@' -> '.').
+
+    Inverse of :func:`escape_domain_name`. Safe to apply unconditionally to
+    a stem-derived name: '@' cannot occur in a legal GPDC domain name, so
+    this never alters an already-valid name.
+    """
+    return stem.replace(DOMAIN_DOT_ESCAPE, ".")
+
+
 def collect_ref_names_from_raw(r, raw_key: str, raw_type: str) -> list[str]:
     """Scan a container's raw Redis data and return the names of all referenced objects.
 

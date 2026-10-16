@@ -1,6 +1,7 @@
 # tests/test_data_cache.py
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,16 @@ import pytest
 from gpdatacached.exceptions import ObjectNotFoundByURIError, GPDCError
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
+
+MINIMAL_DOMAIN_YAML = (
+    "cfg_class_name: GPDCDomainConfig\n"
+    "configured_class_name: GPDCDomain\n"
+    "redis_host: 127.0.0.1\n"
+    "redis_port: 6379\n"
+    "redis_db: 1\n"
+    'redis_password: "123456"\n'
+    "gc_enabled: false\n"
+)
 
 
 @pytest.fixture
@@ -64,6 +75,7 @@ class TestImportTimeRegistration:
         from gpdatacached.domain import GPDCDomain
 
         import gpdatacached  # noqa: F401  # ensure registration ran
+
         assert GPConfigManager._configurable_classes.get("GPDCDomain") is GPDCDomain
 
     def test_gpdc_domain_config_is_registered(self):
@@ -71,6 +83,7 @@ class TestImportTimeRegistration:
         from gpdatacached.config import GPDCDomainConfig
 
         import gpdatacached  # noqa: F401  # ensure registration ran
+
         assert GPConfigManager._config_classes.get("GPDCDomainConfig") is GPDCDomainConfig
 
 
@@ -424,3 +437,158 @@ class TestGPDataCacheContainsContract:
         with pytest.raises(RuntimeError, match="closed"):
             cache.has_uri("gpdc://core_domain/core_app/x")
 
+
+def make_config_folder(tmp_path: Path, gpdc_files: dict[str, str]) -> object:
+    """Build a GPConfigFolder over a temp config tree with the given gpdc/*.yaml files."""
+    from gpconfig import GPConfigManager
+
+    (tmp_path / "global_env.yaml").write_text("project: gpdatacached\nenvironment: test\n")
+    (tmp_path / "gpdc").mkdir()
+    for fname, content in gpdc_files.items():
+        (tmp_path / "gpdc" / fname).write_text(content)
+    return GPConfigManager("gpdatacached", cfg_folder=str(tmp_path)).get_config("gpdc")
+
+
+class TestDottedDomainAtEscape:
+    """'@' in a domain config filename stands for '.' in the domain name
+    (DOMAIN_DOT_ESCAPE): domain_name@com.yaml configures "domain_name.com"."""
+
+    def test_get_domain_unescapes_at_to_dot(self, data_cache):
+        d = data_cache.get_domain("domain_name.com")
+        assert d.name == "domain_name.com"
+
+    def test_get_domain_caches_under_dotted_name(self, data_cache):
+        d1 = data_cache.get_domain("domain_name.com")
+        d2 = data_cache.get_domain("domain_name.com")
+        assert d1 is d2
+
+    def test_dotted_domain_redis_keys_use_dots(self, data_cache, raw_redis):
+        data_cache.get_domain("domain_name.com")
+        keys = [k for k in raw_redis.scan_iter("gpdc:domain_name.com:*")]
+        assert keys, "expected keys under the dotted domain name"
+
+    def test_get_object_by_uri_dotted_domain(self, data_cache):
+        d = data_cache.get_domain("domain_name.com")
+        ns = d.ensure_namespace("site.data")
+        ns["page.rank"] = {"score": 1}
+
+        obj = data_cache.get_object_by_uri("gpdc://domain_name.com/site.data/page.rank")
+        assert obj.value == {"score": 1}
+        assert data_cache.has_uri("gpdc://domain_name.com/site.data/page.rank") is True
+
+    def test_contains_dotted_domain_true_at_name_false(self, data_cache):
+        assert "domain_name.com" in data_cache
+        # '@' is not a legal GPDC name character — must never match.
+        assert "domain_name@com" not in data_cache
+
+    def test_get_domain_rejects_at_in_name(self, data_cache):
+        with pytest.raises(ValueError, match="domain name"):
+            data_cache.get_domain("domain_name@com")
+
+    def test_uri_with_at_domain_raises_not_found(self, data_cache):
+        # URI failures must surface as ObjectNotFoundByURIError only — the
+        # ValueError raised inside get_domain must not leak through.
+        uri = "gpdc://domain_name@com/site.data/x"
+        with pytest.raises(ObjectNotFoundByURIError) as ei:
+            data_cache.get_object_by_uri(uri)
+        assert "invalid domain name" in ei.value.reason
+        assert data_cache.has_uri(uri) is False
+
+    def test_missing_dotted_domain_not_found(self, data_cache):
+        from gpconfig import ConfigNotFoundError
+
+        with pytest.raises(ConfigNotFoundError):
+            data_cache.get_domain("no.such.domain")
+        uri = "gpdc://no.such.domain/ns/x"
+        with pytest.raises(ObjectNotFoundByURIError):
+            data_cache.get_object_by_uri(uri)
+        assert data_cache.has_uri(uri) is False
+
+    def test_plain_domain_still_resolves_unescaped_config(self, data_cache):
+        # Backward compatibility: dot-free names load exactly as before.
+        d = data_cache.get_domain("core_domain")
+        assert d.name == "core_domain"
+
+
+class TestFactoryPathAtEscape:
+    """gpconfig's object factory constructs GPDCDomain from '@'-named configs:
+    GPDCDomain's own name resolution restores '@' -> '.' (stem-derived names
+    only; an explicit name= containing '@' is still rejected)."""
+
+    def test_factory_constructs_dotted_domain(self, gpdc_config_folder, clean_redis):
+        d = gpdc_config_folder.get_object("domain_name@com")
+        try:
+            assert type(d).__name__ == "GPDCDomain"
+            assert d.name == "domain_name.com"  # restored, not the raw stem
+        finally:
+            d.close()
+
+    def test_factory_and_gpdatacache_agree_on_name(self, data_cache, gpdc_config_folder, clean_redis):
+        via_cache = data_cache.get_domain("domain_name.com")
+        via_factory = gpdc_config_folder.get_object("domain_name@com")
+        try:
+            assert via_cache.name == via_factory.name == "domain_name.com"
+        finally:
+            via_factory.close()
+
+    def test_explicit_name_with_at_rejected(self, domain_config, clean_redis):
+        # '@' in an EXPLICIT name is a caller error: the escape exists only to
+        # smuggle dots through filenames, and explicit names can just use '.'.
+        from gpdatacached.domain import GPDCDomain
+
+        with pytest.raises(ValueError, match="domain name"):
+            GPDCDomain(domain_config, name="x@y")
+
+    def test_explicit_name_matching_escaped_config(self, gpdc_config_folder, clean_redis):
+        # name="domain_name.com" must not "mismatch" the @-stem: the restore
+        # happens before the comparison.
+        from gpdatacached.domain import GPDCDomain
+
+        config = gpdc_config_folder.get_config("domain_name@com")
+        d = GPDCDomain(config, name="domain_name.com")
+        try:
+            assert d.name == "domain_name.com"
+        finally:
+            d.close()
+
+    def test_explicit_name_conflicting_with_escaped_config(self, gpdc_config_folder, clean_redis):
+        from gpdatacached.domain import GPDCDomain
+
+        config = gpdc_config_folder.get_config("domain_name@com")
+        with pytest.raises(ValueError, match="mismatch"):
+            GPDCDomain(config, name="other.name")
+
+
+class TestDottedConfigStemWarning:
+    """GPDataCache.__init__ warns once about config stems containing '.' —
+    they are listed by list_configs() but unaddressable via gpconfig."""
+
+    def test_init_warns_for_dotted_stem(self, tmp_path, caplog):
+        from gpdatacached.data_cache import GPDataCache
+
+        folder = make_config_folder(tmp_path, {"bad.name.yaml": MINIMAL_DOMAIN_YAML})
+        with caplog.at_level(logging.WARNING, logger="gpdatacached.data_cache"):
+            GPDataCache(folder)
+        warns = [r for r in caplog.records if "bad.name" in r.getMessage()]
+        assert len(warns) == 1
+        assert "bad@name" in warns[0].getMessage()  # suggests the @-spelling
+
+    def test_init_no_warning_for_at_stem(self, tmp_path, caplog):
+        from gpdatacached.data_cache import GPDataCache
+
+        folder = make_config_folder(tmp_path, {"domain_name@com.yaml": MINIMAL_DOMAIN_YAML})
+        with caplog.at_level(logging.WARNING, logger="gpdatacached.data_cache"):
+            GPDataCache(folder)
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    def test_subfolder_shadowing_config_name_raises_not_found(self, tmp_path):
+        # A directory named like the escaped config: get_config returns a
+        # GPConfigFolder, which must surface as ConfigNotFoundError.
+        from gpconfig import ConfigNotFoundError
+        from gpdatacached.data_cache import GPDataCache
+
+        folder = make_config_folder(tmp_path, {})
+        (tmp_path / "gpdc" / "nope@x").mkdir()
+        cache = GPDataCache(folder)
+        with pytest.raises(ConfigNotFoundError):
+            cache.get_domain("nope.x")
