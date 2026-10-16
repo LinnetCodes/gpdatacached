@@ -96,7 +96,7 @@ graph TD
 
 ## 4. Excessive Container Nesting { #perf-nesting }
 
-GPDC supports nesting containers to arbitrary depth (`ns["x"] = [[[[1]]]]` works). Each nesting level has a real cost.
+GPDC has **no designed depth limit** for nesting containers (`ns["x"] = [[[[1]]]]` works), but two real constraints apply: every level has a concrete cost, and the **write path recurses** — so depth is bounded by the Python recursion limit. Keep nesting shallow.
 
 ### What nesting costs
 
@@ -112,8 +112,17 @@ On **read**, `.value` loads each anonymous child's meta (one `HGETALL` per `ref:
 
 On **mutation**, the sliding-refresh and cascade-delete costs scale with the subtree size (see [§3](#3-sliding-ttl-overuse) and [§10](#perf-ref-churn)).
 
+### Depth limit (recursion boundary)
+
+The write path (`encode_element` → anonymous-object creation → `create_raw` → per-element `encode_element`…) recurses at roughly **5 stack frames per nesting level**. With the default `sys.setrecursionlimit()` of 1000, encoding **fails with `RecursionError` at a depth of roughly 200–300** (verified empirically: depth 100 writes fine, depth 300 raises). There is no pre-write depth check — treat deep structures as unsupported.
+
+> **Do not attempt very deep writes.** A `RecursionError` escaping mid-write is not a clean failure: Redis-side rollback may be incomplete, and **subsequent GPDC operations in the same process can fail with misleading errors** (e.g. `ValueError: invalid literal for int() with base 10: 'ttl'`) because the interrupted call sequence desynchronises the Redis connection's responses. Restart the process if this happens.
+
+Reads are safer than writes: element access descends lazily one level per `__getitem__` (no recursion), but `.deepcopy()` / full materialisation also recurses and shares the same boundary.
+
 ### Recommendation
 
+- **Keep nesting at ≤ 5 levels** (owner ruling, 2026-10-16). One or two levels is the common case; beyond five, restructure the data model instead.
 - **Keep nesting shallow.** One or two levels is usually fine. Beyond that, reconsider your data model.
 - **Prefer flat structures** when the nested representation is not semantically essential. A flat list of scalar tuples often expresses the same data with one level instead of three.
 - **Store large sub-structures as named objects** and reference them by name, instead of nesting them as anonymous children. Named objects are cheaper to update independently (no subtree walk on the parent).

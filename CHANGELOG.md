@@ -79,6 +79,7 @@ GitHub Releases (with download artifacts) are published at
   construction-time warning remains as defense for it.
 
 ### Documentation
+- Performance guide §4: corrected "arbitrary nesting depth" — the write path recurses (~5 frames/level), so depth is bounded by `sys.setrecursionlimit()` (RecursionError around depth 200–300 at the default 1000; verified empirically). New recommendation: **keep nesting ≤ 5 levels** (owner ruling 2026-10-16); a mid-write `RecursionError` is not a clean failure — subsequent operations in the same process can fail misleadingly, restart the process. No depth pre-check is planned (owner ruling: cost outweighs benefit).
 
 - Full docs-vs-code synchronization pass across `docs/` (English + zh-CN
   mirrors) and both READMEs: README now lists `Decimal` among the supported
