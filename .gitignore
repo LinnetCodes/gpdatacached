@@ -192,6 +192,9 @@ __marimo__/
 draft/
 dev_docs/
 
+# Agent demo scripts (runnable demos for review/verification workflows)
+demos/
+
 # user progress
 PROGRESS.md
 progress.md

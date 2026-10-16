@@ -1,0 +1,24 @@
+# Integration-test domain config: "domain_name.com".
+#
+# Exercises the '@'-escape convention (see gpdatacached.data_cache.DOMAIN_DOT_ESCAPE):
+# a '.' in a domain name is written as '@' in the config filename because
+# gpconfig's dot-notation would otherwise consume the '.' as a path separator.
+# GPDataCache.get_domain("domain_name.com") resolves this file and restores
+# the dotted name.
+#
+# Same shared default test Redis instance as the other domain configs
+# (see tests/conftest.py): host 127.0.0.1, port 6379, db 1, password "123456".
+cfg_class_name: GPDCDomainConfig
+configured_class_name: GPDCDomain
+redis_host: 127.0.0.1
+redis_port: 6379
+redis_db: 1
+redis_password: "123456"
+default_cache_mode: permanent
+default_ttl_seconds: 0
+gc_enabled: false
+gc_interval_seconds: 300
+default_lock_ttl_seconds: 30
+default_lock_acquire_timeout_seconds: 30
+gc_lock_ttl_seconds: 30
+gc_lock_wait_seconds: 5

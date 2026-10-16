@@ -12,6 +12,7 @@ post-condition, so the docs cannot silently drift back.
 
 These are real Redis integration tests (same fixtures as the rest of the suite).
 """
+
 from __future__ import annotations
 
 from gpdatacached.keys import make_object_key

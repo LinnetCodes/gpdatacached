@@ -15,6 +15,7 @@ from .keys import (
     make_domain_meta_key,
     make_domain_namespaces_key,
     make_namespace_meta_key,
+    unescape_domain_name,
     validate_domain_name,
 )
 
@@ -52,7 +53,22 @@ class GPDCDomain(GPConfigurable):
         # loaded from a file (== filename stem); it is "" for a programmatically
         # constructed config. Prefer config.name, fall back to the explicit name
         # argument, and reject a conflict between the two.
+        #
+        # A '@' in config.name is the filename escape for '.' (see
+        # keys.DOMAIN_DOT_ESCAPE): gpconfig's dot-notation cannot address
+        # dotted filenames, so domain_name@com.yaml spells the domain
+        # "domain_name.com". Restore it here — before the mismatch check and
+        # validation — so both gpconfig's object factory
+        # (folder.get_object("domain_name@com")) and GPDataCache construct the
+        # identically-named domain. The restore applies to any non-empty
+        # config.name (which for a file-loaded config IS the stem; a
+        # programmatically assigned name containing '@' is restored the same
+        # way — '@' cannot occur in a legal domain name, so this never alters
+        # an already-valid name). An explicit name= argument containing '@' is
+        # NOT restored and is rejected loudly by validate_domain_name below.
         config_name = config.name
+        if config_name:
+            config_name = unescape_domain_name(config_name)
         if name is not None and config_name:
             if name != config_name:
                 raise ValueError(

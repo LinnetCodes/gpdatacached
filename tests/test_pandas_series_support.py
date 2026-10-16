@@ -311,7 +311,6 @@ class TestRangeIndexNonUnitStepLogic03:
         assert obj.series_name == "x"
 
 
-
 class TestIndexVariety:
     def test_duplicate_labels_round_trip(self, ns):
         from gpdatacached.extensions.pandas_support import SeriesCodec
@@ -1049,4 +1048,3 @@ class TestStaleHandleLogic02Series:
             obj.extend(pd.Series([4, 5]))
         # raw: contents must be unchanged (the stale write must not have appended).
         assert raw_redis.hgetall(obj.raw_key) == before
-
