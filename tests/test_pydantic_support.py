@@ -578,9 +578,7 @@ class TestPydanticContainerNamespaceIntegration:
                     raise ValueError("end must be > start")
                 return self
 
-        IntervalObject = type(
-            "IntervalObject", (BaseModelContainerObject,), {"TYPE": "collection:IntervalChecked"}
-        )
+        IntervalObject = type("IntervalObject", (BaseModelContainerObject,), {"TYPE": "collection:IntervalChecked"})
         GPDCTypeRegistry.register(
             python_type=IntervalChecked,
             gpdc_type="collection:IntervalChecked",
@@ -711,4 +709,3 @@ class TestStaleHandleLogic02Pydantic:
         with pytest.raises(ObjectGoneError, match="no longer exists"):
             obj["total"] = 199.5
         assert raw_redis.hgetall(obj.raw_key) == before
-

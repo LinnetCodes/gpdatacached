@@ -2,7 +2,7 @@
 
 # Software library version (SemVer), tracks feature releases and bugfixes.
 # Independent of GPDC_PROTOCOL_VERSION in domain.py.
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 from .codec import GPDCCodec, GPDCContainerCodec, GPDCScalarCodec
 from .config import GPDCDomainConfig, GPDCNamespaceConfig
@@ -17,7 +17,14 @@ from .exceptions import (
     ObjectNotFoundByURIError,
 )
 from .domain import GPDCDomain, reset_domain_config
-from .keys import make_uri, uri_to_redis_key, validate_object_name
+from .keys import (
+    DOMAIN_DOT_ESCAPE,
+    escape_domain_name,
+    make_uri,
+    unescape_domain_name,
+    uri_to_redis_key,
+    validate_object_name,
+)
 from .namespace import GPDCNamespace
 from .types import GPDCTypeRegistry
 from .object import GPDCDataObject
@@ -91,6 +98,9 @@ __all__ = [
     "GPDCContainerCodec",
     "GPDCScalarCodec",
     "GPDCTypeRegistry",
+    "DOMAIN_DOT_ESCAPE",
+    "escape_domain_name",
+    "unescape_domain_name",
     "validate_object_name",
     "make_uri",
     "uri_to_redis_key",

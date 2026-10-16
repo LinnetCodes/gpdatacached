@@ -218,4 +218,3 @@ class TestGPDCDomainConfigLockFields:
         for v in (MIN_GC_INTERVAL_SECONDS, MIN_GC_INTERVAL_SECONDS + 1, 300, 3600):
             cfg = GPDCDomainConfig(gc_interval_seconds=v)
             assert cfg.gc_interval_seconds == v
-
