@@ -9,7 +9,6 @@ from gpconfig import ConfigNotFoundError
 
 from .exceptions import ObjectNotFoundByURIError
 from .keys import (
-    DOMAIN_DOT_ESCAPE,
     escape_domain_name,
     validate_domain_name,
     validate_namespace_name,
@@ -48,33 +47,11 @@ class GPDataCache:
         self._folder = folder
         self._domains: dict[str, GPDCDomain] = {}
         self._closed = False
-        self._warn_dotted_config_stems()
-
-    def _warn_dotted_config_stems(self) -> None:
-        """Warn once about config stems containing '.' — they are unaddressable.
-
-        gpconfig's dot-notation consumes '.' as a path separator, so such a
-        file is listed by ``list_configs()`` but can never be loaded by name.
-        The '@' escape (DOMAIN_DOT_ESCAPE) is the supported way to spell a
-        dotted domain name in a filename.
-        """
-        try:
-            names = self._folder.list_configs()
-        except Exception:
-            # __init__ must stay side-effect-free relative to the folder; a
-            # broken listing will surface on first real use instead.
-            return
-        for name in names:
-            if "." in name:
-                logger.warning(
-                    "Config %r in config folder %r contains '.' and cannot be addressed "
-                    "by gpconfig's dot-notation; rename it to %r ('.' in a domain name "
-                    "is written as '%s' in the config filename).",
-                    name,
-                    self._folder.path,
-                    escape_domain_name(name),
-                    DOMAIN_DOT_ESCAPE,
-                )
+        # No dotted-stem scan here: gpconfig >= 0.5.1 fail-fasts at manager
+        # construction (ConfigFolderError) for any '.yaml' stem or directory
+        # name containing '.', so an unaddressable config can never reach a
+        # GPDataCache. (0.3.0 shipped a construction-time warning for this;
+        # it was removed as unreachable under the dependency floor.)
 
     def __contains__(self, domain_name: object) -> bool:
         """Return True iff ``domain_name`` has a config in this folder.

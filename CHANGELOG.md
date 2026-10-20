@@ -49,6 +49,24 @@ GitHub Releases (with download artifacts) are published at
   `py.typed`/stubs are adopted — see `dev_docs/py-typed.md`), and `mypy` joins
   the dev extras so the bar is locally checkable.
 
+### Changed
+
+- **Require `gpconfig>=0.5.1`** (was `>=0.4.0`). 0.5.1 ships the `py.typed`
+  marker (PEP 561), so `gpdatacached`'s own annotations now type-check against
+  gpconfig's real signatures: the `gpconfig` per-module mypy override is
+  removed, and `GPDCDomain.__init__` re-declares `self._config:
+  GPDCDomainConfig` (gpconfig's `GPConfigurable.__init__` pins the attribute
+  to the base `GPConfig` type, which hid our config fields from checkers —
+  a static narrowing, no behaviour change).
+- **Removed the construction-time dotted-stem warning** (shipped in the
+  unreleased 0.3.0). gpconfig ≥0.5.1 validates the config tree at manager
+  construction and raises `ConfigFolderError` for any `.yaml` stem or
+  subdirectory name containing `.`, so an unaddressable config can never
+  reach a `GPDataCache` — the warning was unreachable under the new
+  dependency floor. Spell each `.` as `@` in config filenames as before
+  (§ `@` filename escape, 0.3.0). Tests now assert the fail-fast contract
+  at folder construction instead.
+
 ## [0.3.0] — 2026-10-16
 
 ### Added
@@ -87,6 +105,10 @@ GitHub Releases (with download artifacts) are published at
   construction logs one warning per config file whose name contains a real
   `.` (listed by `list_configs()` but never loadable by gpconfig's
   dot-notation), suggesting the `@` spelling.
+  *(Superseded in 0.3.1: removed as unreachable — gpconfig ≥0.5.1
+  fail-fasts at manager construction before a `GPDataCache` can observe
+  such files. Since 0.3.0 was never published, no released behaviour
+  changes.)*
 
 ### Fixed
 

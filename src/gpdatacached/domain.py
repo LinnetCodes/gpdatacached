@@ -48,6 +48,12 @@ class GPDCDomain(GPConfigurable):
             )
 
         super().__init__(config)
+        # gpconfig>=0.5.1 is typed: GPConfigurable.__init__ declares its
+        # parameter as the base `GPConfig`, which pins self._config to that
+        # type and hides GPDCDomainConfig's fields from type checkers.
+        # Re-declare the attribute with the concrete subclass (same object;
+        # a static narrowing, no behaviour change).
+        self._config: GPDCDomainConfig = config
 
         # Resolve the domain name. config.name is populated when the config was
         # loaded from a file (== filename stem); it is "" for a programmatically

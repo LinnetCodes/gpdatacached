@@ -664,35 +664,27 @@ class TestContainsEdgeCases:
         assert (["core_domain"] in cache) is False
 
 
-class TestDottedConfigStemWarning:
-    """GPDataCache.__init__ warns once about config stems containing '.' —
-    they are listed by list_configs() but unaddressable via gpconfig."""
+class TestDottedConfigStemHandling:
+    """Dotted config stems under gpconfig>=0.5.1.
 
-    def test_init_warns_for_dotted_stem(self, tmp_path, caplog):
-        from gpdatacached.data_cache import GPDataCache
+    gpconfig fail-fasts at manager construction (ConfigFolderError) for any
+    '.yaml' stem or directory name containing '.', so an unaddressable config
+    never reaches a GPDataCache. (0.3.0 shipped a GPDataCache construction-time
+    warning for this; it was removed in 0.3.1 as unreachable under the
+    dependency floor.)"""
 
-        folder = make_config_folder(tmp_path, {"bad.name.yaml": MINIMAL_DOMAIN_YAML})
-        with caplog.at_level(logging.WARNING, logger="gpdatacached.data_cache"):
-            GPDataCache(folder)
-        warns = [r for r in caplog.records if "bad.name" in r.getMessage()]
-        assert len(warns) == 1
-        assert "bad@name" in warns[0].getMessage()  # suggests the @-spelling
+    def test_dotted_stem_rejected_by_gpconfig_at_folder_construction(self, tmp_path):
+        # The combined contract with the typed gpconfig floor: the folder
+        # itself refuses to construct over an unaddressable dotted stem —
+        # fail-fast, earlier and louder than GPDataCache could ever warn.
+        from gpconfig import ConfigFolderError
 
-    def test_warning_once_per_instance_not_per_lookup(self, tmp_path, caplog):
-        # "Once" is per GPDataCache instance: repeated lookups do not re-warn,
-        # a second instance over the same folder warns again.
-        from gpdatacached.data_cache import GPDataCache
+        with pytest.raises(ConfigFolderError):
+            make_config_folder(tmp_path, {"bad.name.yaml": MINIMAL_DOMAIN_YAML})
 
-        folder = make_config_folder(tmp_path, {"bad.name.yaml": MINIMAL_DOMAIN_YAML})
-        with caplog.at_level(logging.WARNING, logger="gpdatacached.data_cache"):
-            cache = GPDataCache(folder)
-            "other" in cache
-            "more" in cache
-            assert len(caplog.records) == 1
-            GPDataCache(folder)
-            assert len(caplog.records) == 2
-
-    def test_init_no_warning_for_at_stem(self, tmp_path, caplog):
+    def test_at_stem_still_constructs_cleanly(self, tmp_path, caplog):
+        # '@'-escaped stems are the supported spelling of a dotted domain
+        # name and must stay legal (no ConfigFolderError, no warnings).
         from gpdatacached.data_cache import GPDataCache
 
         folder = make_config_folder(tmp_path, {"domain_name@com.yaml": MINIMAL_DOMAIN_YAML})
