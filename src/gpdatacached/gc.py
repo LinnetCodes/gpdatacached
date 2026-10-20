@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import redis
@@ -61,8 +61,10 @@ def _scan_all_keys(
     ):
         cursor = 0
         while True:
+            # decode_responses=True client: SCAN results are str at runtime
+            # (the redis-py stubs say bytes | str — see refset.py).
             cursor, keys = r.scan(cursor=cursor, match=f"{prefix}*", count=100)
-            sink.extend(keys)
+            sink.extend(cast("list[str]", keys))
             if cursor == 0:
                 break
 
@@ -98,7 +100,7 @@ def _gc_process_obj_key(r: "redis.Redis", obj_key: str, raw_to_obj: dict[str, st
         # "ref:<canonical_owner_obj_key>", so the only thing referencing an alias is the
         # name→canonical mapping itself. See docs/lifecycle.md §10 (GC) and container.py
         # _encode_as_ref_value / namespace.py _setitem_container_ref.
-        ref_value = r.get(obj_key)
+        ref_value = cast("str | None", r.get(obj_key))
         if not ref_value or not ref_value.startswith("ref:"):
             r.delete(obj_key)
             return 1
@@ -129,7 +131,7 @@ def _gc_process_ref_key(
         member_obj_key = make_object_key(domain, namespace, member)
         member_type = r.type(member_obj_key)
         if member_type == "string":
-            member_ref = r.get(member_obj_key)
+            member_ref = cast("str | None", r.get(member_obj_key))
             if not member_ref or not member_ref.startswith("ref:"):
                 remove_referrer(r, ref_key, member)
                 continue

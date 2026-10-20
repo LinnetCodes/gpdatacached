@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import collections.abc
 import json
-from typing import Any
+from typing import Any, cast
 
 from ..codec import GPDCContainerCodec, GPDCScalarCodec
 from ..container import GPDCContainerObject
@@ -30,7 +30,7 @@ class PydanticModelScalarCodec(GPDCScalarCodec):
                     f"PydanticModelScalarCodec does not support container field type "
                     f"{type(field_value).__name__!r} in field {field_name!r}"
                 )
-            encoded_fields[field_name] = entry.codec_class.encode_value(field_value)
+            encoded_fields[field_name] = entry.scalar_codec_class.encode_value(field_value)
 
         type_name = _gpdc_type_to_prefix(value)
         return f"{type_name}:{json.dumps(encoded_fields, separators=(',', ':'))}"
@@ -42,7 +42,9 @@ class PydanticModelScalarCodec(GPDCScalarCodec):
 
         gpdc_type = f"scalar:{type_name}"
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
-        model_class = entry.python_type
+        # Scalar entries register a single python type (tuples are only used
+        # for multi-type registrations like int/float str aliases).
+        model_class = cast("type", entry.python_type)
 
         raw_fields = json.loads(json_part)
         decoded_fields = {}

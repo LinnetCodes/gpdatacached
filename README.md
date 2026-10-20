@@ -23,6 +23,7 @@ Sharing mutable state across processes is painful. `multiprocessing.Manager` is 
 - **Background GC** — reclaims expired and orphaned anonymous objects.
 - **Opt-in distributed locking** — serialize writes across processes with `obj.lock()`.
 - **URI-based access** — manage multiple domains from config and resolve `gpdc://{domain}/{namespace}/{name}` URIs to data objects via `GPDataCache`, including traversal into anonymous nested containers.
+- **PEP 561 typed package** — ships a `py.typed` marker, so `mypy` / `pyright` strict-mode users get the library's full inline type hints instead of `Any`.
 - **Optional extensions** — cache [pydantic](https://docs.pydantic.dev/) `BaseModel` records and [pandas](https://pandas.pydata.org/) `Series` / `DataFrame` (see [Extensions](#extensions)).
 
 ---

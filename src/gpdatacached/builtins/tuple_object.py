@@ -18,7 +18,7 @@ class TupleCodec(GPDCScalarCodec):
             if isinstance(elem, (list, dict, set)):
                 raise TypeError(f"Cannot encode non-scalar tuple element: {type(elem).__name__!r}")
             entry = GPDCTypeRegistry.lookup_by_python_type(elem)
-            encoded_elems.append(entry.codec_class.encode_value(elem))
+            encoded_elems.append(entry.scalar_codec_class.encode_value(elem))
         return "tuple:" + json.dumps(encoded_elems, separators=(",", ":"))
 
     @classmethod
@@ -38,7 +38,7 @@ class TupleCodec(GPDCScalarCodec):
             type_name = elem_encoded[:colon_idx]
             gpdc_type = f"scalar:{type_name}"
             entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
-            result.append(entry.codec_class.decode_value(elem_encoded))
+            result.append(entry.scalar_codec_class.decode_value(elem_encoded))
         return tuple(result)
 
 

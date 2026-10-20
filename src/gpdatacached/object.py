@@ -132,7 +132,7 @@ class GPDCDataObject(ABC):
         updated_meta = ctx.meta.with_updates(
             cache_mode=policy.cache_mode,
             ttl=policy.declared_ttl,
-            updated_at=datetime.datetime.now(datetime.UTC),
+            updated_at=datetime.datetime.now(datetime.timezone.utc),
         )
         updated_meta.save(ctx.r, ctx.key)
 
@@ -236,7 +236,7 @@ class GPDCDataObject(ABC):
         if ctx.meta.cache_mode != "ttl":
             raise TypeError("expire_at() only applies to objects with cache_mode='ttl'")
         self._check_owner_permission(ctx.meta)
-        seconds = max(0, int((when - datetime.datetime.now(datetime.UTC)).total_seconds()))
+        seconds = max(0, int((when - datetime.datetime.now(datetime.timezone.utc)).total_seconds()))
         if seconds == 0:
             # Past timestamp → "delete immediately" (per docs/api.md & lifecycle.md).
             self._expire_now()
@@ -282,7 +282,9 @@ class GPDCDataObject(ABC):
     def remaining_ttl(self) -> int:
         return self._redis().ttl(self._canonical_redis_key())
 
-    __hash__ = None
+    # Deliberately unhashable: data objects are mutable Redis handles compared
+    # by identity-of-target (see __eq__), not usable as dict/set keys.
+    __hash__ = None  # type: ignore[assignment]
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, GPDCDataObject):

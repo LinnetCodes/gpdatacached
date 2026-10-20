@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections.abc
+from typing import cast
 
 from ..codec import GPDCContainerCodec
 from ..container import GPDCContainerObject
@@ -11,12 +12,16 @@ class SetCodec(GPDCContainerCodec):
     """Codec for Python set values stored as Redis Sets."""
 
     @classmethod
-    def create_raw(cls, namespace, raw_key: str, value: set, owner_name: str, cache_mode: str, ttl: int) -> None:
-        if not value:
+    def create_raw(cls, namespace, raw_key: str, value: object, owner_name: str, cache_mode: str, ttl: int) -> None:
+        # Codec API contract is ``object`` (matches GPDCContainerCodec); this
+        # codec's values are sets — the runtime caller guaranteed that via
+        # the type registry before reaching here.
+        members = cast("set[object]", value)
+        if not members:
             return
         from ..types import encode_key
 
-        encoded = [encode_key(elem) for elem in value]
+        encoded = [encode_key(elem) for elem in members]
         namespace._redis().sadd(raw_key, *encoded)
 
     @classmethod
@@ -47,7 +52,7 @@ class SetObject(GPDCContainerObject, collections.abc.MutableSet):
         return SetCodec.read_raw(self._namespace, self.raw_key)
 
     @value.setter
-    def value(self, new_value: set) -> None:
+    def value(self, new_value: object) -> None:
         self._reject_value_replacement()
 
     def __len__(self) -> int:

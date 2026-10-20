@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, model_validator
+
+CacheMode = Literal["permanent", "ttl", "sliding"]
 
 
 def _encode_extra_value(value: Any) -> str:
@@ -12,7 +14,7 @@ def _encode_extra_value(value: Any) -> str:
     entry = GPDCTypeRegistry.lookup_by_python_type(value)
     if entry.is_container:
         raise TypeError(f"Container type {type(value).__name__!r} is not supported in extra metadata")
-    return entry.codec_class.encode_value(value)
+    return entry.scalar_codec_class.encode_value(value)
 
 
 def _decode_extra_value(encoded: str) -> Any:
@@ -28,7 +30,7 @@ def _decode_extra_value(encoded: str) -> Any:
     except ValueError:
         return encoded
     try:
-        return entry.codec_class.decode_value(encoded)
+        return entry.scalar_codec_class.decode_value(encoded)
     except ValueError:
         return encoded
 
@@ -36,7 +38,7 @@ def _decode_extra_value(encoded: str) -> Any:
 class ObjectMeta(BaseModel):
     type: str
     value: str = ""
-    cache_mode: Literal["permanent", "ttl", "sliding"] = "permanent"
+    cache_mode: CacheMode = "permanent"
     ttl: int = 0
     owner: str = ""
     created_at: datetime | None = None
@@ -71,10 +73,13 @@ class ObjectMeta(BaseModel):
         created_at_str = builtin.get("created_at")
         updated_at_str = builtin.get("updated_at")
         item_count_str = builtin.get("item_count")
+        # Values in the Redis hash were written by to_redis_mapping, whose
+        # cache_mode field is typed CacheMode — the runtime value space is
+        # already constrained, pydantic re-validates on construction.
         return cls(
             type=builtin.get("type", ""),
             value=builtin.get("value", ""),
-            cache_mode=cache_mode,
+            cache_mode=cast(CacheMode, cache_mode),
             ttl=ttl,
             owner=builtin.get("owner", ""),
             created_at=datetime.fromisoformat(created_at_str) if created_at_str else None,

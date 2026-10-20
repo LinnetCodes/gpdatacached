@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections.abc
+from typing import cast
 
 from ..codec import GPDCContainerCodec
 from ..container import GPDCContainerObject
@@ -12,15 +13,19 @@ class DictCodec(GPDCContainerCodec):
     """Codec for Python dict values stored as Redis Hashes."""
 
     @classmethod
-    def create_raw(cls, namespace, raw_key: str, value: dict, owner_name: str, cache_mode: str, ttl: int) -> None:
+    def create_raw(cls, namespace, raw_key: str, value: object, owner_name: str, cache_mode: str, ttl: int) -> None:
         from ..lifecycle import policy_from_defaults
         from ..types import encode_element, encode_key
 
-        if not value:
+        # Codec API contract is ``object`` (matches GPDCContainerCodec); this
+        # codec's values are dicts — the runtime caller guaranteed that via
+        # the type registry before reaching here.
+        items = cast("dict[object, object]", value)
+        if not items:
             return
         policy = policy_from_defaults(cache_mode, ttl)
         mapping = {}
-        for k, v in value.items():
+        for k, v in items.items():
             encoded_key = encode_key(k)
             mapping[encoded_key] = encode_element(v, namespace, owner_name, policy)
         namespace._redis().hset(raw_key, mapping=mapping)
@@ -57,7 +62,7 @@ class DictObject(GPDCContainerObject, collections.abc.MutableMapping):
         return DictCodec.read_raw(self._namespace, self.raw_key)
 
     @value.setter
-    def value(self, new_value: dict) -> None:
+    def value(self, new_value: object) -> None:
         self._reject_value_replacement()
 
     def __len__(self) -> int:

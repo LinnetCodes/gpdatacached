@@ -8,6 +8,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases (with download artifacts) are published at
 <https://github.com/LinnetCodes/gpdatacached/releases>.
 
+## [0.3.1] — 2026-10-20
+
+### Added
+
+- **`py.typed` marker (PEP 561)** — the package now ships the inline-type
+  marker, so downstream `mypy` / `pyright` users (including `--strict` mode)
+  get the library's real type hints instead of `Any` for the whole API
+  surface (`import-untyped` on `from gpdatacached import ...`). Downstream
+  projects carrying an `ignore_missing_imports` per-module override as a
+  workaround can drop it once they require `gpdatacached>=0.3.1`. Packaging
+  only — no code changes; the annotations were already in place, the marker
+  simply makes them authoritative for type checkers. Guarded by
+  `tests/test_packaging.py` (marker presence); wheel inclusion verified
+  against the built artifact (hatchling packages the whole `src/gpdatacached`
+  directory, so no build-config change was needed).
+
+### Fixed
+
+- **Python 3.10 compatibility** — `datetime.UTC` (a 3.11+ alias) was used in
+  7 places while `requires-python >= 3.10`; replaced with the identical
+  `datetime.timezone.utc` (the same object, available on every supported
+  version). Surfaced by mypy under `python_version = "3.10"`.
+- **Internal type-annotation cleanup — default-mode mypy is now clean across
+  `src/` (99 errors → 0)**, with runtime behaviour unchanged (the full
+  1501-test suite is green before and after). Highlights: `TypeEntry.codec_class`
+  is a typed union with a `scalar_codec_class` narrowed view replacing bare
+  `type` annotations; container codecs' `create_raw` parameter now matches the
+  codec ABC contract (`object`, cast internally to the concrete type);
+  `ListObject.__getitem__` gained proper `int`/`slice` overloads; the
+  intentional int-only `__setitem__`/`__delitem__` (vs `MutableSequence`) and
+  the deliberately unhashable `GPDCDataObject` (`__hash__ = None`) are
+  documented `type: ignore`s; redis-py's stub responses (`bytes | str`, while
+  every pool here is `decode_responses=True`) and its over-strict
+  `hset(mapping=...)` parameter type are handled at the call sites with
+  why-comments; `_decode_scalar` returns `Any` (a dynamic decoder — the
+  `json.loads` precedent). `GPDCDomain.__contains__` now returns a real
+  `bool` as declared (was the raw 0/1 int). A `[tool.mypy]` config lands in
+  `pyproject.toml` (gpconfig and pandas stay per-module untyped until their
+  `py.typed`/stubs are adopted — see `dev_docs/py-typed.md`), and `mypy` joins
+  the dev extras so the bar is locally checkable.
+
+### Changed
+
+- **Require `gpconfig>=0.5.1`** (was `>=0.4.0`). 0.5.1 ships the `py.typed`
+  marker (PEP 561), so `gpdatacached`'s own annotations now type-check against
+  gpconfig's real signatures: the `gpconfig` per-module mypy override is
+  removed, and `GPDCDomain.__init__` re-declares `self._config:
+  GPDCDomainConfig` (gpconfig's `GPConfigurable.__init__` pins the attribute
+  to the base `GPConfig` type, which hid our config fields from checkers —
+  a static narrowing, no behaviour change).
+- **Removed the construction-time dotted-stem warning** (shipped in the
+  unreleased 0.3.0). gpconfig ≥0.5.1 validates the config tree at manager
+  construction and raises `ConfigFolderError` for any `.yaml` stem or
+  subdirectory name containing `.`, so an unaddressable config can never
+  reach a `GPDataCache` — the warning was unreachable under the new
+  dependency floor. Spell each `.` as `@` in config filenames as before
+  (§ `@` filename escape, 0.3.0). Tests now assert the fail-fast contract
+  at folder construction instead.
+
 ## [0.3.0] — 2026-10-16
 
 ### Added
@@ -46,6 +105,10 @@ GitHub Releases (with download artifacts) are published at
   construction logs one warning per config file whose name contains a real
   `.` (listed by `list_configs()` but never loadable by gpconfig's
   dot-notation), suggesting the `@` spelling.
+  *(Superseded in 0.3.1: removed as unreachable — gpconfig ≥0.5.1
+  fail-fasts at manager construction before a `GPDataCache` can observe
+  such files. Since 0.3.0 was never published, no released behaviour
+  changes.)*
 
 ### Fixed
 
@@ -79,6 +142,7 @@ GitHub Releases (with download artifacts) are published at
   construction-time warning remains as defense for it.
 
 ### Documentation
+- Performance guide §4: corrected "arbitrary nesting depth" — the write path recurses (~5 frames/level), so depth is bounded by `sys.setrecursionlimit()` (RecursionError around depth 200–300 at the default 1000; verified empirically). New recommendation: **keep nesting ≤ 5 levels** (owner ruling 2026-10-16); a mid-write `RecursionError` is not a clean failure — subsequent operations in the same process can fail misleadingly, restart the process. No depth pre-check is planned (owner ruling: cost outweighs benefit).
 
 - Full docs-vs-code synchronization pass across `docs/` (English + zh-CN
   mirrors) and both READMEs: README now lists `Decimal` among the supported

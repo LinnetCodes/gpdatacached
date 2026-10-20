@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import redis
 from gpconfig import GPConfigurable
@@ -48,6 +48,12 @@ class GPDCDomain(GPConfigurable):
             )
 
         super().__init__(config)
+        # gpconfig>=0.5.1 is typed: GPConfigurable.__init__ declares its
+        # parameter as the base `GPConfig`, which pins self._config to that
+        # type and hides GPDCDomainConfig's fields from type checkers.
+        # Re-declare the attribute with the concrete subclass (same object;
+        # a static narrowing, no behaviour change).
+        self._config: GPDCDomainConfig = config
 
         # Resolve the domain name. config.name is populated when the config was
         # loaded from a file (== filename stem); it is "" for a programmatically
@@ -132,7 +138,9 @@ class GPDCDomain(GPConfigurable):
         """
         cfg = self._config
         meta_key = make_domain_meta_key(self._name)
-        existing = self._redis.hgetall(meta_key)
+        # decode_responses=True client: hash reads are str at runtime (the
+        # redis-py stubs say bytes | str — see refset.py).
+        existing = cast("dict[str, str]", self._redis.hgetall(meta_key))
 
         lock_fields = {
             "default_lock_ttl_seconds": str(cfg.default_lock_ttl_seconds),
@@ -143,12 +151,21 @@ class GPDCDomain(GPConfigurable):
 
         if not existing:
             # New domain: write legacy + lock fields in one shot.
+            # (type: ignore — redis-py's stub types hset's mapping parameter as
+            # Mapping[FieldT, EncodableT] with union keys; in a contravariant
+            # parameter position that rejects dict[str, str], though the impl
+            # only iterates it. Our keys/values are always str.)
             self._redis.hset(
                 meta_key,
                 mapping={
                     "default_cache_mode": cfg.default_cache_mode,
                     "default_ttl_seconds": str(cfg.default_ttl_seconds),
-                    **lock_fields,
+                    # redis-py's stub types hset's mapping parameter as
+                    # Mapping[FieldT, EncodableT] with union keys; in a
+                    # contravariant parameter position that rejects
+                    # dict[str, str], though the impl only iterates it.
+                    # Our keys/values are always str.
+                    **lock_fields,  # type: ignore[dict-item]
                 },
             )
         else:
@@ -175,7 +192,7 @@ class GPDCDomain(GPConfigurable):
                 )
 
             if to_write:
-                self._redis.hset(meta_key, mapping=to_write)
+                self._redis.hset(meta_key, mapping=to_write)  # type: ignore[arg-type]  # see hset note above
 
         # Always register this domain in the global domains set.
         self._redis.sadd(GLOBAL_DOMAINS_KEY, self._name)
@@ -224,7 +241,7 @@ class GPDCDomain(GPConfigurable):
         self._check_open()
         if not isinstance(name, str):
             return False
-        return self._redis.sismember(make_domain_namespaces_key(self._name), name)
+        return bool(self._redis.sismember(make_domain_namespaces_key(self._name), name))
 
     def __iter__(self):
         self._check_open()
@@ -247,7 +264,7 @@ class GPDCDomain(GPConfigurable):
     def get_default_cache_mode(self) -> str:
         """Effective default_cache_mode for this domain."""
         meta_key = make_domain_meta_key(self._name)
-        val = self._redis.hget(meta_key, "default_cache_mode")
+        val = cast("str | None", self._redis.hget(meta_key, "default_cache_mode"))
         if val:
             return val
         return self._config.default_cache_mode
@@ -336,7 +353,7 @@ class GPDCDomain(GPConfigurable):
     def destroy(self) -> None:
         self._check_open()
         ns_key = make_domain_namespaces_key(self._name)
-        for ns_name in list(self._redis.smembers(ns_key)):
+        for ns_name in list(cast("set[str]", self._redis.smembers(ns_key))):
             self.delete_namespace(ns_name)
         self._redis.delete(make_domain_meta_key(self._name))
         self._redis.delete(ns_key)
@@ -355,7 +372,9 @@ class GPDCDomain(GPConfigurable):
         self._gc_thread = None
         if self._redis is not None:
             self._redis.close()
-            self._redis = None
+            # Guarded by _closed/_check_open everywhere; the attribute keeps
+            # its non-Optional type so call sites need no None-narrowing.
+            self._redis = None  # type: ignore[assignment]
 
     def __enter__(self):
         return self

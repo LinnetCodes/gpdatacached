@@ -23,6 +23,7 @@
 - **后台 GC** —— 自动回收过期或成为孤儿的匿名对象。
 - **可选的分布式锁** —— 通过 `obj.lock()` 在多进程间串行化写入。
 - **基于 URI 的访问** —— 通过 `GPDataCache` 从配置管理多个 domain，并将 `gpdc://{domain}/{namespace}/{name}` 形式的 URI 解析为数据对象，包括对匿名嵌套容器的遍历。
+- **PEP 561 类型化包** —— 随包发布 `py.typed` 标记，`mypy` / `pyright` 严格模式用户可获得完整的内联类型标注，而不是 `Any`。
 - **可选扩展** —— 可缓存 [pydantic](https://docs.pydantic.dev/) `BaseModel` 记录与 [pandas](https://pandas.pydata.org/) `Series` / `DataFrame`（见[扩展](#扩展)）。
 
 ---

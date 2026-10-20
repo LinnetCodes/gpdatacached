@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "gpconfig>=0.4.0",
+    "gpconfig>=0.5.1",
     "pydantic>=2.0",
     "redis>=5.0",
 ]
@@ -31,6 +31,7 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",
     "ruff>=0.4.0",
+    "mypy>=1.11",
 ]
 pandas = ["pandas>=2.0"]
 docs = [
@@ -48,6 +49,20 @@ markers = [
 [tool.ruff]
 src = ["src", "tests"]
 line-length = 120
+
+[tool.mypy]
+# The bar this codebase is held to: default-mode mypy must be clean.
+# (Full --strict is not yet enabled — ~137 defs still lack annotations.)
+python_version = "3.10"
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# pandas has no bundled stubs; adopting pandas-stubs is a separate, larger
+# pass (~40 new precise-signature errors at the time of writing) and is not
+# part of the 0.3.1 typing cleanup. (gpconfig ships py.typed since 0.5.1 and
+# needs no override.)
+module = "pandas.*"
+ignore_missing_imports = true
 
 [project.urls]
 Homepage = "https://github.com/linnetcodes/gpdatacached"

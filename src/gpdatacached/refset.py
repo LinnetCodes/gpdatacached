@@ -14,10 +14,14 @@ name, each value is the number of slots referencing the target.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import redis
+
+# redis-py's inline types hardcode hash-value reads as ``bytes | str`` because
+# the stubs are not parameterized over ``decode_responses``; every client in
+# this library is built with ``decode_responses=True``, so reads are ``str``.
 
 
 def add_referrer(r: "redis.Redis", ref_key: str, referrer_name: str) -> None:
@@ -46,7 +50,7 @@ def remove_referrer(r: "redis.Redis", ref_key: str, referrer_name: str) -> None:
 
 def get_referrers(r: "redis.Redis", ref_key: str) -> set[str]:
     """Return the set of referrer names."""
-    return set(r.hkeys(ref_key))
+    return set(cast("list[str]", r.hkeys(ref_key)))
 
 
 def has_referrers(r: "redis.Redis", ref_key: str) -> bool:
