@@ -6,11 +6,12 @@ import datetime
 import threading
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from .namespace import GPDCNamespace
 
+from .codec import GPDCCodec, GPDCContainerCodec
 from .keys import make_object_key, make_raw_key, make_ref_key, parse_ref_encoded
 from .object import GPDCDataObject
 from .refset import add_referrer, release_ref
@@ -68,7 +69,12 @@ class TypeEntry:
     python_type: type | tuple[type, ...]
     gpdc_type: str
     object_class: type[GPDCDataObject]
-    codec_class: type
+    # Scalar entries carry a GPDCCodec subclass, container entries a
+    # GPDCContainerCodec subclass (a sibling root, not a GPDCCodec subtype).
+    # Use the scalar_codec_class / container_codec_class views below at call
+    # sites that have already checked ``is_container`` — the bare attribute
+    # alone does not tell mypy which method family exists.
+    codec_class: type[GPDCCodec] | type[GPDCContainerCodec]
     priority: int
 
     @property
@@ -76,6 +82,15 @@ class TypeEntry:
         from .container import GPDCContainerObject
 
         return issubclass(self.object_class, GPDCContainerObject)
+
+    @property
+    def scalar_codec_class(self) -> type[GPDCCodec]:
+        """Typed codec view for scalar entries.
+
+        Callers must have established ``is_container is False`` (the scalar
+        code paths all do); this is a plain cast so behaviour is identical.
+        """
+        return cast("type[GPDCCodec]", self.codec_class)
 
 
 class GPDCTypeRegistry:
@@ -90,7 +105,7 @@ class GPDCTypeRegistry:
         python_type: type | tuple[type, ...],
         gpdc_type: str,
         object_class: type[GPDCDataObject],
-        codec_class: type,
+        codec_class: type[GPDCCodec] | type[GPDCContainerCodec],
         priority: int = 0,
     ) -> None:
         entry = TypeEntry(
@@ -139,7 +154,7 @@ def encode_element(
             with encode_session(namespace):
                 return _encode_container_value(value, namespace, owner_name, policy)
         return _encode_container_value(value, namespace, owner_name, policy)
-    return entry.codec_class.encode_value(value)
+    return entry.scalar_codec_class.encode_value(value)
 
 
 def _encode_container_value(
@@ -157,6 +172,9 @@ def _encode_container_value(
         state, ref_val = memo[vid]
         if state == "in-progress":
             raise CyclicReferenceError(type(value).__name__)
+        # A "complete" memo entry always carries its ref string (the anon
+        # object was created successfully before the entry was finalized).
+        assert ref_val is not None
         _add_alias_ref(namespace, ref_val, owner_name)
         return ref_val
     memo[vid] = ("in-progress", None)
@@ -207,14 +225,16 @@ def _rollback_encode_memo(
             release_ref(r, ref_key, referrer_name)
 
 
-def _decode_scalar(encoded: str) -> object:
+def _decode_scalar(encoded: str) -> Any:
+    # Returns Any by design: this is the dynamic-value decoder (same contract
+    # as json.loads) — the decoded scalar's type is only knowable at runtime.
     if not encoded or ":" not in encoded:
         raise ValueError(f"Invalid encoding: {encoded!r}")
     colon_idx = encoded.index(":")
     type_name = encoded[:colon_idx]
     gpdc_type = f"scalar:{type_name}"
     entry = GPDCTypeRegistry.lookup_by_gpdc_type(gpdc_type)
-    return entry.codec_class.decode_value(encoded)
+    return entry.scalar_codec_class.decode_value(encoded)
 
 
 def decode_element(encoded: str, namespace: GPDCNamespace) -> object:
@@ -229,7 +249,7 @@ def encode_key(value: object) -> str:
         raise TypeError(f"Cannot use container type as key: {type(value).__name__!r}")
     if isinstance(value, tuple) and len(value) == 0:
         raise TypeError("Cannot use empty tuple as key")
-    return entry.codec_class.encode_value(value)
+    return entry.scalar_codec_class.encode_value(value)
 
 
 def decode_key(encoded: str) -> object:
@@ -288,7 +308,7 @@ def _create_anonymous_object(
     from .meta import ObjectMeta
 
     entry = GPDCTypeRegistry.lookup_by_python_type(python_value)
-    now = datetime.datetime.now(datetime.UTC)
+    now = datetime.datetime.now(datetime.timezone.utc)
 
     anon_name = f"~anon:{uuid.uuid4()}"
     obj_key = make_object_key(namespace.domain.name, namespace.name, anon_name)

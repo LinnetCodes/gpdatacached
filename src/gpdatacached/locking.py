@@ -88,9 +88,11 @@ class HeldLock:
     def __enter__(self) -> "HeldLock":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        # Never suppress exceptions: returning None (≡ False for the with
+        # protocol) — annotated None because mypy's exit-return check rejects
+        # `-> bool` on an __exit__ that can only ever return False.
         self.release()
-        return False
 
 
 def try_lock(

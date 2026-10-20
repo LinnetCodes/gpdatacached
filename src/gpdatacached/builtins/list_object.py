@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import collections.abc
 import uuid
+from typing import Any, cast, overload
 
 from ..codec import GPDCContainerCodec
 from ..container import GPDCContainerObject
@@ -13,14 +14,18 @@ class ListCodec(GPDCContainerCodec):
     """Codec for Python list values stored as Redis lists."""
 
     @classmethod
-    def create_raw(cls, namespace, raw_key: str, value: list, owner_name: str, cache_mode: str, ttl: int) -> None:
+    def create_raw(cls, namespace, raw_key: str, value: object, owner_name: str, cache_mode: str, ttl: int) -> None:
         from ..lifecycle import policy_from_defaults
         from ..types import encode_element
 
-        if not value:
+        # The codec API contract is ``object`` (matches GPDCContainerCodec);
+        # this codec's values are lists — the runtime caller guaranteed that
+        # via the type registry before reaching here.
+        items = cast("list[object]", value)
+        if not items:
             return
         policy = policy_from_defaults(cache_mode, ttl)
-        encoded = [encode_element(v, namespace, owner_name, policy) for v in value]
+        encoded = [encode_element(v, namespace, owner_name, policy) for v in items]
         namespace._redis().rpush(raw_key, *encoded)
 
     @classmethod
@@ -49,7 +54,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         return ListCodec.read_raw(self._namespace, self.raw_key)
 
     @value.setter
-    def value(self, new_value: list) -> None:
+    def value(self, new_value: object) -> None:
         self._reject_value_replacement()
 
     def __len__(self) -> int:
@@ -65,6 +70,12 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
             raise IndexError(message)
         return index
 
+    @overload
+    def __getitem__(self, index: int) -> object: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[object]: ...
+
     def __getitem__(self, index: int | slice) -> object:
         if isinstance(index, slice):
             items = self._redis().lrange(self.raw_key, 0, -1)
@@ -76,7 +87,9 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
             raise IndexError("list index out of range")
         return decode_element(encoded, self._namespace)
 
-    def __setitem__(self, index: int, value: object) -> None:
+    def __setitem__(self, index: int, value: object) -> None:  # type: ignore[override]
+        # Intentionally int-only: MutableSequence's slice-assignment overload is
+        # dropped — slices raise TypeError at runtime (see _normalize_index).
         r = self._redis()
         index = self._normalize_index(index, "list assignment index out of range")
         old_encoded = r.lindex(self.raw_key, index)
@@ -103,7 +116,8 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         self._touch()
         return old_encoded
 
-    def __delitem__(self, index: int) -> None:
+    def __delitem__(self, index: int) -> None:  # type: ignore[override]
+        # Intentionally int-only — see the __setitem__ override note.
         self._delete_index(index)
 
     def insert(self, index: int, value: object) -> None:
@@ -198,7 +212,13 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         r = self._redis()
         raw_items = r.lrange(self.raw_key, 0, -1)
         pairs = [(decode_element(enc, self._namespace), enc) for enc in raw_items]
-        pairs.sort(key=lambda p: key(p[0]) if key else p[0], reverse=reverse)
+
+        # Comparability of decoded elements is a runtime property (GPDC stores
+        # heterogeneous scalars); an Any-returning key lets list.sort accept it.
+        def _sort_key(p: tuple[object, str]) -> Any:
+            return key(p[0]) if key else p[0]
+
+        pairs.sort(key=_sort_key, reverse=reverse)
         encoded = [enc for _, enc in pairs]
         pipe = r.pipeline()
         pipe.delete(self.raw_key)
@@ -211,7 +231,7 @@ class ListObject(GPDCContainerObject, collections.abc.MutableSequence):
         items = self.value
         return items.count(value)
 
-    def index(self, value: object, start: int = 0, stop: int = None) -> int:  # type: ignore[override]
+    def index(self, value: object, start: int = 0, stop: int | None = None) -> int:
         items = self.value
         if stop is None:
             return items.index(value, start)

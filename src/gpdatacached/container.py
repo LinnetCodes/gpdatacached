@@ -34,6 +34,10 @@ class GPDCContainerObject(GPDCDataObject, ABC):
             objects.
     """
 
+    # Mirrors GPDCScalarObject.TYPE: the registry invariant requires every
+    # concrete object class to override this with its gpdc_type string.
+    TYPE: str = ""
+
     def __init__(self, name: str, namespace: "GPDCNamespace", *, canonical_name: str | None = None) -> None:
         super().__init__(name, namespace, canonical_name=canonical_name)
         domain_name = namespace.domain.name
@@ -80,7 +84,7 @@ class GPDCContainerObject(GPDCDataObject, ABC):
         from .exceptions import ObjectGoneError
 
         key = self._canonical_redis_key()
-        now = datetime.datetime.now(datetime.UTC)
+        now = datetime.datetime.now(datetime.timezone.utc)
         r = self._redis()
         item_count = self._current_item_count()
         if meta is None:
@@ -98,7 +102,10 @@ class GPDCContainerObject(GPDCDataObject, ABC):
 
     def _current_item_count(self) -> int:
         """Return the current number of elements in this container."""
-        return len(self)
+        # Every concrete container subclass defines __len__; the abstract base
+        # intentionally does not declare it (adding an abstract __len__ would
+        # break third-party subclasses that choose not to be Sized).
+        return len(self)  # type: ignore[arg-type]
 
     def _propagate_sliding_ttl_upward(self, owner_name: str, r) -> None:
         """Propagate a sliding-window TTL refresh up the owner chain to the first self-owned ancestor."""

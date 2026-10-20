@@ -31,7 +31,7 @@ class GPDCScalarObject(GPDCDataObject):
         from .types import GPDCTypeRegistry
 
         entry = GPDCTypeRegistry.lookup_by_gpdc_type(self.TYPE)
-        return entry.codec_class.decode_value(meta.value)
+        return entry.scalar_codec_class.decode_value(meta.value)
 
     @value.setter
     def value(self, new_value: object) -> None:
@@ -43,9 +43,9 @@ class GPDCScalarObject(GPDCDataObject):
         expected_python_type = entry.python_type
         if not isinstance(new_value, expected_python_type):
             raise TypeError(f"Cannot assign {type(new_value).__name__!r} to {self.TYPE}")
-        encoded = entry.codec_class.encode_value(new_value)
+        encoded = entry.scalar_codec_class.encode_value(new_value)
         key = self._canonical_redis_key()
-        now = datetime.datetime.now(datetime.UTC)
+        now = datetime.datetime.now(datetime.timezone.utc)
         r = self._redis()
         meta = ObjectMeta.load(r, key)
         if meta is None:

@@ -24,6 +24,31 @@ GitHub Releases (with download artifacts) are published at
   against the built artifact (hatchling packages the whole `src/gpdatacached`
   directory, so no build-config change was needed).
 
+### Fixed
+
+- **Python 3.10 compatibility** — `datetime.UTC` (a 3.11+ alias) was used in
+  7 places while `requires-python >= 3.10`; replaced with the identical
+  `datetime.timezone.utc` (the same object, available on every supported
+  version). Surfaced by mypy under `python_version = "3.10"`.
+- **Internal type-annotation cleanup — default-mode mypy is now clean across
+  `src/` (99 errors → 0)**, with runtime behaviour unchanged (the full
+  1501-test suite is green before and after). Highlights: `TypeEntry.codec_class`
+  is a typed union with a `scalar_codec_class` narrowed view replacing bare
+  `type` annotations; container codecs' `create_raw` parameter now matches the
+  codec ABC contract (`object`, cast internally to the concrete type);
+  `ListObject.__getitem__` gained proper `int`/`slice` overloads; the
+  intentional int-only `__setitem__`/`__delitem__` (vs `MutableSequence`) and
+  the deliberately unhashable `GPDCDataObject` (`__hash__ = None`) are
+  documented `type: ignore`s; redis-py's stub responses (`bytes | str`, while
+  every pool here is `decode_responses=True`) and its over-strict
+  `hset(mapping=...)` parameter type are handled at the call sites with
+  why-comments; `_decode_scalar` returns `Any` (a dynamic decoder — the
+  `json.loads` precedent). `GPDCDomain.__contains__` now returns a real
+  `bool` as declared (was the raw 0/1 int). A `[tool.mypy]` config lands in
+  `pyproject.toml` (gpconfig and pandas stay per-module untyped until their
+  `py.typed`/stubs are adopted — see `dev_docs/py-typed.md`), and `mypy` joins
+  the dev extras so the bar is locally checkable.
+
 ## [0.3.0] — 2026-10-16
 
 ### Added

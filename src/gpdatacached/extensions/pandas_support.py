@@ -66,9 +66,12 @@ Notes
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 
+from ..builtins.list_object import ListObject
 from ..container import GPDCContainerObject
 from ..codec import GPDCContainerCodec
 from ..meta import _encode_extra_value
@@ -80,6 +83,16 @@ from ..types import (
     encode_key,
     encode_session,
 )
+
+
+def _read_ref_list(ref: str, namespace) -> list:
+    """Decode a ``ref:`` element into its anonymous ListObject and read the value.
+
+    Shared shape for every per-column / per-level read: the raw-hash field
+    holds a ref pointer to a ListObject, and the caller wants the Python list.
+    """
+    return cast(ListObject, decode_element(ref, namespace)).value
+
 
 __all__ = [
     "SeriesObject",
@@ -311,7 +324,7 @@ def _build_levels_index(fields: dict, namespace, prefix: str = "") -> "pd.Index 
     L = len(names)
     arrays = []
     for i in range(L):
-        labels = decode_element(fields[f"{prefix}index_l{i}"], namespace).value
+        labels = _read_ref_list(fields[f"{prefix}index_l{i}"], namespace)
         try:
             arrays.append(pd.array(labels, dtype=dtypes[i]))
         except (TypeError, ValueError):
@@ -350,7 +363,10 @@ def _reconstruct_series(
     """
     family = _value_dtype_family(pd.api.types.pandas_dtype(dtype_str))
     if family == "category":
-        cats = decode_element(cats_ref, namespace).value
+        # Callers only set cats_ref for the category family (see
+        # _reconstruct_column), so the parameter is non-None on this path.
+        assert cats_ref is not None
+        cats = _read_ref_list(cats_ref, namespace)
         cat = pd.Categorical(values, categories=cats, ordered=ordered)
         return pd.Series(cat, index=index_obj, name=name)
     if family == "datetime":
@@ -418,14 +434,14 @@ def _normalize_extend_input(other) -> tuple[list, list, int]:
         idx = other.index
         nlevels = getattr(idx, "nlevels", 1)
         if isinstance(idx, pd.MultiIndex):
-            labels = [tuple(r) for r in idx]
+            labels: list = [tuple(r) for r in idx]
         else:
             labels = [(r,) for r in idx]
         return labels, _python_values(other), nlevels
     if isinstance(other, (list, tuple)) and len(other) > 0 and isinstance(other[0], pd.Series):
         idx0 = other[0].index
         nlevels = getattr(idx0, "nlevels", 1)
-        labels: list = []
+        labels = []
         vals: list = []
         for s in other:
             si = s.index
@@ -609,7 +625,7 @@ class DataFrameCodec(GPDCContainerCodec):
         data_dict = {}
         for col in column_names:
             col_key = encode_key(col)
-            values = decode_element(fields[col_key], namespace).deepcopy()
+            values = cast(ListObject, decode_element(fields[col_key], namespace)).deepcopy()
             data_dict[col] = _reconstruct_column(values, index_obj, fields, col, namespace)
         columns = _build_columns_index(fields, column_names)
         return pd.DataFrame(data_dict, columns=columns, index=index_obj)
@@ -888,7 +904,7 @@ class DataFrameObject(GPDCContainerObject):
             if family in _ELEMENT_SCAN_FAMILIES:
                 _assert_scalar_encodable(raw_values, f"DataFrame column {col!r} element")
             if family == "category":
-                existing_cats = decode_element(fields[f"~cat:{col_key}"], self._namespace).value
+                existing_cats = _read_ref_list(fields[f"~cat:{col_key}"], self._namespace)
                 for v in raw_values:
                     if not pd.isna(v) and v not in existing_cats:
                         raise ValueError(
@@ -1333,7 +1349,7 @@ class SeriesCodec(GPDCContainerCodec):
         fields = namespace._redis().hgetall(raw_key)
         if not fields:
             return pd.Series([], dtype="object")
-        data = decode_element(fields["data"], namespace)
+        data = cast(ListObject, decode_element(fields["data"], namespace))
         values = data.deepcopy()
         index_kind = _decode_scalar(fields["index_kind"])
         if index_kind == "range":

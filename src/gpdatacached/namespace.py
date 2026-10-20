@@ -318,7 +318,7 @@ class GPDCNamespace(MutableMapping):
             value = value.value
 
         entry = GPDCTypeRegistry.lookup_by_python_type(value)
-        now = datetime.datetime.now(datetime.UTC)
+        now = datetime.datetime.now(datetime.timezone.utc)
 
         is_new = True
         policy = None
@@ -356,7 +356,9 @@ class GPDCNamespace(MutableMapping):
         if entry.is_container:
             raw_key = make_raw_key(self._domain.name, self._name, key)
             try:
-                count = len(value)
+                # Non-Sized container values (pydantic models) fall through to
+                # the model_fields branch below via the TypeError.
+                count = len(value)  # type: ignore[arg-type]
             except TypeError:
                 model_fields = getattr(type(value), "model_fields", None)
                 if model_fields is not None:
@@ -387,7 +389,7 @@ class GPDCNamespace(MutableMapping):
             ref_key = make_ref_key(self._domain.name, self._name, key)
             apply_ttl(r, [obj_key, raw_key, ref_key], policy)
         else:
-            codec = entry.codec_class
+            codec = entry.scalar_codec_class
             encoded = codec.encode_value(value)
             self._write_scalar_meta(obj_key, entry, encoded, policy, now, is_new=is_new, obj_name=key)
 

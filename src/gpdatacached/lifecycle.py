@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from .keys import collect_ref_names_from_raw, make_object_key, make_ref_key
 from .meta import ObjectMeta
@@ -96,7 +96,7 @@ def _propagate_lifecycle(
 
     if updates:
         pipe = r.pipeline(transaction=False)
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         for child_name, child_obj_key, child_meta in updates:
             updated = child_meta.with_updates(
                 cache_mode=policy.cache_mode,
@@ -138,7 +138,9 @@ def _propagate_ttl_refresh(r, domain: str, namespace: str, parent_name: str, vis
     # single pipeline (one round-trip per level instead of one per child).
     # Owned children with no expiry are skipped for TTL re-apply but still
     # recursed into so deeper descendants are reached.
-    children = []
+    # (name, ttl_keys, policy): keys/policy are None for children that declare
+    # no expiry — they are only recursed into, not re-applied.
+    children: list[tuple[str, list[str] | None, TTLPolicy | None]] = []
     for child_name in dict.fromkeys(collect_ref_names_from_raw(r, parent_meta.value, parent_meta.type)):
         if child_name in visited:
             continue
@@ -162,9 +164,9 @@ def _propagate_ttl_refresh(r, domain: str, namespace: str, parent_name: str, vis
 
     if any(keys is not None for _, keys, _ in children):
         pipe = r.pipeline(transaction=False)
-        for _, keys, child_policy in children:
-            if keys is not None:
-                apply_ttl(pipe, keys, child_policy)
+        for _, child_keys, child_pol in children:
+            if child_keys is not None and child_pol is not None:
+                apply_ttl(pipe, child_keys, child_pol)
         pipe.execute()
 
     for child_name, _, _ in children:
