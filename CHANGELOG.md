@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub Releases (with download artifacts) are published at
 <https://github.com/LinnetCodes/gpdatacached/releases>.
 
+## [0.3.1] — 2026-10-20
+
+### Added
+
+- **`py.typed` marker (PEP 561)** — the package now ships the inline-type
+  marker, so downstream `mypy` / `pyright` users (including `--strict` mode)
+  get the library's real type hints instead of `Any` for the whole API
+  surface (`import-untyped` on `from gpdatacached import ...`). Downstream
+  projects carrying an `ignore_missing_imports` per-module override as a
+  workaround can drop it once they require `gpdatacached>=0.3.1`. Packaging
+  only — no code changes; the annotations were already in place, the marker
+  simply makes them authoritative for type checkers. Guarded by
+  `tests/test_packaging.py` (marker presence); wheel inclusion verified
+  against the built artifact (hatchling packages the whole `src/gpdatacached`
+  directory, so no build-config change was needed).
+
 ## [0.3.0] — 2026-10-16
 
 ### Added
